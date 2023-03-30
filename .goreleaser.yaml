@@ -6,18 +6,20 @@ builds:
   - env:
       - CGO_ENABLED=0
     goos:
-      - aix
+      # - aix
+      # - android
       - darwin
-      - dragonfly
+      # - dragonfly
       - freebsd
-      - illumos
+      # - illumos
+      # - ios
       - js
       - linux
       - netbsd
       - openbsd
-      - plan9
+      # - plan9
       - solaris
-      - windows
+      # - windows # weird behaviour NDP packages not received
     goarch:
       - ppc64
       - 386
