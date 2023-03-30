@@ -116,7 +116,7 @@ func (w *Worker) StartInterfaceAddr(iface net.Interface, addr netip.Addr) {
 
 	ndpConn, err = ndp.ListenForNDP(&iface, addr, onFoundLinkLayerAddr)
 	if err != nil {
-		w.logger.Fatalf("error listening for NDP on interface: %s: %s", iface.Name, err)
+		w.logger.Fatalf("error listening for NDP on interface %s: %s", iface.Name, err)
 	}
 	defer ndpConn.Close()
 
@@ -130,14 +130,14 @@ func (w *Worker) StartInterfaceAddr(iface net.Interface, addr netip.Addr) {
 	// manage SSDP
 	ssdpConn, err = ssdp.ListenForSSDP(addr, onFoundAddrFunc(ndpConn, &iface, w.logger, "SSDP announcement"))
 	if err != nil {
-		w.logger.Fatalf("error listening for NDP on interface: %s: %s", iface.Name, err)
+		w.logger.Fatalf("error listening for SSDP on interface %s: %s", iface.Name, err)
 	}
 	defer ssdpConn.Close()
 
 	// manage WSD
 	wsdConn, err = wsd.ListenForWSD(addr, onFoundAddrFunc(ndpConn, &iface, w.logger, "WSD message"))
 	if err != nil {
-		w.logger.Fatalf("error listening for NDP on interface: %s: %s", iface.Name, err)
+		w.logger.Fatalf("error listening for WSD on interface %s: %s", iface.Name, err)
 	}
 	defer wsdConn.Close()
 
@@ -184,39 +184,51 @@ func startNDPDiscovery(ndpConn *ndp.Conn, logger *zap.SugaredLogger) {
 
 	err := ndpConn.DiscoverMulticast()
 	if err != nil {
-		logger.Fatalf("send ICMPv6 Neighbor Solicitation failed: %s", err)
+		logger.Fatalw("send ICMPv6 Neighbor Solicitation failed",
+			err,
+			zap.String("source", ndpConn.GetListenAddr().String()),
+		)
 	}
 }
 
 func startPingMulticast(pingConn *ping.Conn, logger *zap.SugaredLogger) {
-	logger.Debugw("ping all-nodes link-local multicast",
+	logger.Debugw("PING all-nodes link-local multicast",
 		zap.String("listener", pingConn.GetListenAddr().String()),
 	)
 
 	err := pingConn.DiscoverMulticast()
 	if err != nil {
-		logger.Fatalf("ping discover multicast failed: %s", err)
+		logger.Fatalf("PING discover multicast failed",
+			err,
+			zap.String("source", pingConn.GetListenAddr().String()),
+		)
 	}
 }
 
 func startSSDPDiscovery(ssdpConn *ssdp.Conn, logger *zap.SugaredLogger) {
-	logger.Debugw("ssdp discover multicast",
+	logger.Debugw("SSDP discover multicast",
 		zap.String("listener", ssdpConn.GetListenAddrPort().String()),
 	)
 
 	err := ssdpConn.DiscoverMulticast()
 	if err != nil {
-		logger.Fatalf("ssdp discover multicast failed: %s", err)
+		logger.Fatalf("SSDP discover multicast failed",
+			err,
+			zap.String("source", ssdpConn.GetListenAddrPort().String()),
+		)
 	}
 }
 
 func startWSDiscovery(wsdConn *wsd.Conn, logger *zap.SugaredLogger) {
-	logger.Debugw("wsd discover multicast",
+	logger.Debugw("WSD discover multicast",
 		zap.String("listener", wsdConn.GetListenAddrPort().String()),
 	)
 
 	err := wsdConn.DiscoverMulticast()
 	if err != nil {
-		logger.Fatalf("wsd discover multicast failed: %s", err)
+		logger.Fatalf("WSD discover multicast failed",
+			err,
+			zap.String("source", wsdConn.GetListenAddrPort().String()),
+		)
 	}
 }
