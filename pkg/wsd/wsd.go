@@ -52,11 +52,13 @@ func (conn *Conn) SendProbe(target *netip.Addr) error {
 }
 
 func ListenForWSD(addr netip.Addr, onFoundAddr func(netip.Addr)) (*Conn, error) {
-	listenAddr := netip.AddrPortFrom(addr, wsDiscoveryPort)
-	conn, err := net.ListenPacket("udp6", listenAddr.String())
+	listenAddrPort := netip.AddrPortFrom(addr, 0)
+	conn, err := net.ListenPacket("udp6", listenAddrPort.String())
 	if err != nil {
-		return nil, fmt.Errorf("failed to listen: %v", err)
+		return nil, fmt.Errorf("failed to listen for WSD packets: %v", err)
 	}
+
+	listenAddrPort = netip.MustParseAddrPort(conn.LocalAddr().(*net.UDPAddr).String())
 
 	//conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 
@@ -78,5 +80,5 @@ func ListenForWSD(addr netip.Addr, onFoundAddr func(netip.Addr)) (*Conn, error) 
 		}
 	}()
 
-	return &Conn{conn, &listenAddr}, nil
+	return &Conn{conn, &listenAddrPort}, nil
 }

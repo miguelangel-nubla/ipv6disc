@@ -44,11 +44,13 @@ func (conn *Conn) SendSSDPRequest(target *netip.Addr) error {
 }
 
 func ListenForSSDP(addr netip.Addr, onFoundAddr func(netip.Addr)) (*Conn, error) {
-	listenAddr := netip.AddrPortFrom(addr, ssdpPort)
-	conn, err := net.ListenPacket("udp6", listenAddr.String())
+	listenAddrPort := netip.AddrPortFrom(addr, 0)
+	conn, err := net.ListenPacket("udp6", listenAddrPort.String())
 	if err != nil {
-		log.Fatalf("failed to listen: %v", err)
+		log.Fatalf("failed to listen for SSDP packets: %v", err)
 	}
+
+	listenAddrPort = netip.MustParseAddrPort(conn.LocalAddr().(*net.UDPAddr).String())
 
 	//conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 
@@ -69,5 +71,5 @@ func ListenForSSDP(addr netip.Addr, onFoundAddr func(netip.Addr)) (*Conn, error)
 		}
 	}()
 
-	return &Conn{conn, &listenAddr}, nil
+	return &Conn{conn, &listenAddrPort}, nil
 }

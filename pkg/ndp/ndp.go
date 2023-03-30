@@ -50,7 +50,7 @@ func (conn *Conn) SendNeighborSolicitation(target *netip.Addr) error {
 func ListenForNDP(iface *net.Interface, addr netip.Addr, onFoundLinkLayerAddr func(netip.Addr, net.HardwareAddr)) (*Conn, error) {
 	conn, _, err := ndp.Listen(iface, ndp.Addr(addr.String()))
 	if err != nil {
-		return nil, fmt.Errorf("failed to open NDP connection: %v", err)
+		return nil, fmt.Errorf("failed to listen for NDP packets: %v", err)
 	}
 
 	go func() {
