@@ -25,12 +25,12 @@ sudo ipv6disc | jq 'select(.msg == "host identified") | .ipv6,.iface'
 
 Alternatively, using `-live` the data will be displayed on the screen in a human-readable form.
 
-If you need to pause and select/copy data use `screen`, launch `ipv6disc -live [...]` and press `Ctrl+a` and then `ESC` to enter copy mode. When finished `ESC` again will continue updating.
+If you need to pause and select/copy data use `screen`, launch `ipv6disc -live [...]` and press `Ctrl+a` and then `ESC` to enter copy mode. Now you can use the mouse to copy text. When finished `ESC` again will continue updating.
 
 ## Flags
 
 - `-log_level`: Set the logging level (default: "info"). Available options: "debug", "info", "warn", "error", "fatal", "panic".
-- `-ttl`: Set the time-to-live (TTL) for a discovered host entry in the table after it has been last seen (default: 4 hours). This is not the TTL of the DDNS record.
+- `-ttl`: Set the time-to-live (TTL) for a discovered host entry in the table after it has been last seen (default: 4 hours).
 - `-live`: Show the current state live on the terminal (default: false).
 
 ## License
