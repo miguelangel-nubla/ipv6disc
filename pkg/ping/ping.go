@@ -43,12 +43,12 @@ func (conn *Conn) SendPing(target *netip.Addr) error {
 
 	b, err := m.Marshal(nil)
 	if err != nil {
-		return fmt.Errorf("error marshaling echo request: %s", err)
+		return fmt.Errorf("error marshaling echo request: %w", err)
 	}
 
 	destination := &net.IPAddr{IP: net.IP(target.AsSlice())}
 	if _, err := conn.WriteTo(b, destination); err != nil {
-		return fmt.Errorf("error sending echo request: %s", err)
+		return fmt.Errorf("error sending echo request: %w", err)
 	}
 
 	return nil

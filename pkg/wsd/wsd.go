@@ -45,7 +45,7 @@ func (conn *Conn) SendProbe(target *netip.Addr) error {
 
 	msg := fmt.Sprintf(wsDiscoveryMessage, uuid.New().String())
 	if _, err := conn.WriteTo([]byte(msg), destination); err != nil {
-		return fmt.Errorf("failed to write message: %v", err)
+		return fmt.Errorf("failed to write message: %w", err)
 	}
 
 	return nil

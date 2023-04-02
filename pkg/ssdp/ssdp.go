@@ -37,7 +37,7 @@ func (conn *Conn) SendSSDPRequest(target *netip.Addr) error {
 
 	msg := fmt.Sprintf(ssdpMessage, conn.listenAddrPort)
 	if _, err := conn.WriteTo([]byte(msg), destination); err != nil {
-		return fmt.Errorf("failed to write message: %v", err)
+		return fmt.Errorf("failed to write message: %w", err)
 	}
 
 	return nil

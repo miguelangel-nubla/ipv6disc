@@ -27,7 +27,7 @@ func (conn *Conn) SendNeighborSolicitation(target *netip.Addr) error {
 	// Always multicast to the target's solicited-node multicast address to discover MAC address.
 	solicitedNodeMulticast, err := ndp.SolicitedNodeMulticast(*target)
 	if err != nil {
-		return fmt.Errorf("failed to determine solicited-node multicast address: %v", err)
+		return fmt.Errorf("failed to determine solicited-node multicast address: %w", err)
 	}
 
 	m := &ndp.NeighborSolicitation{
@@ -41,7 +41,7 @@ func (conn *Conn) SendNeighborSolicitation(target *netip.Addr) error {
 	}
 
 	if err := conn.WriteTo(m, nil, solicitedNodeMulticast); err != nil {
-		return fmt.Errorf("failed to write message: %v", err)
+		return fmt.Errorf("failed to write message: %w", err)
 	}
 
 	return nil

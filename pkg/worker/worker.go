@@ -1,6 +1,8 @@
 package worker
 
 import (
+	"errors"
+	"fmt"
 	"net"
 	"net/netip"
 	"time"
@@ -11,6 +13,14 @@ import (
 	"github.com/miguelangel-nubla/ipv6disc/pkg/wsd"
 	"go.uber.org/zap"
 )
+
+type InvalidInterfaceError struct {
+	iface *net.Interface
+}
+
+func (e *InvalidInterfaceError) Error() string {
+	return fmt.Sprintf("invalid interface: %s", e.iface.Name)
+}
 
 type Worker struct {
 	logger *zap.SugaredLogger
@@ -26,32 +36,53 @@ func NewWorker(table *Table, ttl time.Duration, logger *zap.SugaredLogger) *Work
 	}
 }
 
-func (w *Worker) Start() {
+func (w *Worker) Start() error {
 	ifaces, err := net.Interfaces()
 	if err != nil {
-		w.logger.Fatalf("Error getting interfaces: %s", err)
+		return fmt.Errorf("error getting interfaces: %w", err)
 	}
+
+	noValidAddr := fmt.Errorf("no valid IPv6 address found")
+	var invalidIface = &InvalidInterfaceError{}
 	for _, iface := range ifaces {
-		w.StartInterface(&iface)
+		err = w.StartInterface(&iface)
+		switch {
+		case err == nil:
+			// At least one address was valid
+			noValidAddr = nil
+			continue
+		case errors.As(err, &invalidIface):
+			// Ignore invalid interfaces
+			continue
+		default:
+			return err
+		}
 	}
+
+	return noValidAddr
 }
 
-func (w *Worker) StartInterface(iface *net.Interface) {
-	if !isValidInterface(iface) {
-		return
+func (w *Worker) StartInterface(iface *net.Interface) error {
+	err := isValidInterface(iface)
+	if err != nil {
+		return err
 	}
 
 	addrs, err := iface.Addrs()
 	if err != nil {
-		w.logger.Fatalf("Error getting IPv6 addresses for interface %s:", iface.Name, err)
+		return fmt.Errorf("error getting IPv6 addresses for interface %s: %w", iface.Name, err)
 	}
 
+	noValidAddr := fmt.Errorf("no valid IPv6 addresses found: %w", &InvalidInterfaceError{iface: iface})
 	for _, a := range addrs {
 		addr := netip.MustParseAddr(a.(*net.IPNet).IP.String())
 		if !addr.Is4() && !addr.IsLinkLocalUnicast() {
+			noValidAddr = nil
 			go w.StartInterfaceAddr(*iface, addr)
 		}
 	}
+
+	return noValidAddr
 }
 
 func (w *Worker) StartInterfaceAddr(iface net.Interface, addr netip.Addr) {
@@ -159,10 +190,14 @@ func (w *Worker) StartInterfaceAddr(iface net.Interface, addr netip.Addr) {
 	}
 }
 
-func isValidInterface(iface *net.Interface) bool {
-	return iface.Flags&net.FlagUp != 0 &&
+func isValidInterface(iface *net.Interface) error {
+	if iface.Flags&net.FlagUp != 0 &&
 		iface.Flags&net.FlagMulticast != 0 &&
-		iface.Flags&net.FlagLoopback == 0
+		iface.Flags&net.FlagLoopback == 0 {
+		return nil
+	} else {
+		return &InvalidInterfaceError{iface}
+	}
 }
 
 func onFoundAddrFunc(ndpConn *ndp.Conn, iface *net.Interface, logger *zap.SugaredLogger, logString string) func(remoteIP netip.Addr) {
