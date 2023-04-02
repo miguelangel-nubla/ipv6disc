@@ -19,6 +19,9 @@ go install github.com/miguelangel-nubla/ipv6disc
 ## Usage
 
 By default, it will output the discovered hosts as JSON messages to `stdout`. You can easily parse the output with [`jq`](https://stedolan.github.io/jq/).
+
+>:warning: This utility needs to be executed as a superuser to be able to listen for IPv6 ICMP packets.
+
 ```
 sudo ipv6disc | jq 'select(.msg == "host identified") | .ipv6,.iface'
 ```
@@ -40,6 +43,6 @@ This project is licensed under Apache License 2.0
 It uses libraries from the following projects:
 - github.com/google/uuid - BSD 3-Clause License
 - github.com/mdlayher/ndp - MIT License
-- github.com/nsf/termbox-go - BSD 2-Clause License
+- github.com/nsf/termbox-go - MIT License
 - go.uber.org/zap - MIT License
 - golang.org/x/net - BSD 3-Clause License
