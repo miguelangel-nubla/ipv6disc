@@ -1,0 +1,3 @@
+FROM scratch
+ENTRYPOINT ["/ipv6disc"]
+COPY ipv6disc /

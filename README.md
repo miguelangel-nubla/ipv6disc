@@ -16,6 +16,12 @@ Ensure you have Go installed on your system. If not, follow the instructions on 
 go install github.com/miguelangel-nubla/ipv6disc
 ```
 
+### Or use the docker image
+This may or may not work on your system. I was able to make it work with host networking and without `ipv6:true` in `/etc/docker/daemon.json`???. If you have experience and can help with ipv6 docker please let me know.
+```
+docker run -it --rm --network host gcr.io/miguelangel-nubla/ipv6disc -live
+```
+
 ## Usage
 
 By default, it will output the discovered hosts as JSON messages to `stdout`. You can easily parse the output with [`jq`](https://stedolan.github.io/jq/).
