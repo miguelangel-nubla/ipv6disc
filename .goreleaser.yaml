@@ -41,7 +41,7 @@ builds:
 dockers:
   -
     image_templates:
-    - "gcr.io/miguelangel-nubla/{{.ProjectName}}:{{ .Tag }}-amd64"
+    - "ghcr.io/miguelangel-nubla/{{.ProjectName}}:{{ .Tag }}-amd64"
     dockerfile: 'Dockerfile.goreleaser'
     use: buildx
     build_flag_templates:
@@ -57,7 +57,7 @@ dockers:
     - LICENSE.txt
   -
     image_templates:
-    - "gcr.io/miguelangel-nubla/{{.ProjectName}}:{{ .Tag }}-arm64v8"
+    - "ghcr.io/miguelangel-nubla/{{.ProjectName}}:{{ .Tag }}-arm64v8"
     dockerfile: 'Dockerfile.goreleaser'
     use: buildx
     build_flag_templates:
@@ -73,20 +73,20 @@ dockers:
     - LICENSE.txt
 docker_manifests:
   - 
-    name_template: gcr.io/miguelangel-nubla/{{ .ProjectName }}:latest
+    name_template: ghcr.io/miguelangel-nubla/{{ .ProjectName }}:latest
     image_templates:
-    - gcr.io/miguelangel-nubla/{{ .ProjectName }}:{{ .Tag }}-amd64
-    - gcr.io/miguelangel-nubla/{{ .ProjectName }}:{{ .Tag }}-arm64v8
+    - ghcr.io/miguelangel-nubla/{{ .ProjectName }}:{{ .Tag }}-amd64
+    - ghcr.io/miguelangel-nubla/{{ .ProjectName }}:{{ .Tag }}-arm64v8
   - 
-    name_template: gcr.io/miguelangel-nubla/{{ .ProjectName }}:{{ .Tag }}
+    name_template: ghcr.io/miguelangel-nubla/{{ .ProjectName }}:{{ .Tag }}
     image_templates:
-    - gcr.io/miguelangel-nubla/{{ .ProjectName }}:{{ .Tag }}-amd64
-    - gcr.io/miguelangel-nubla/{{ .ProjectName }}:{{ .Tag }}-arm64v8
+    - ghcr.io/miguelangel-nubla/{{ .ProjectName }}:{{ .Tag }}-amd64
+    - ghcr.io/miguelangel-nubla/{{ .ProjectName }}:{{ .Tag }}-arm64v8
   - 
-    name_template: gcr.io/miguelangel-nubla/{{.ProjectName}}:v{{ .Major }}
+    name_template: ghcr.io/miguelangel-nubla/{{.ProjectName}}:v{{ .Major }}
     image_templates:
-    - gcr.io/miguelangel-nubla/{{ .ProjectName }}:{{ .Tag }}-amd64
-    - gcr.io/miguelangel-nubla/{{ .ProjectName }}:{{ .Tag }}-arm64v8
+    - ghcr.io/miguelangel-nubla/{{ .ProjectName }}:{{ .Tag }}-amd64
+    - ghcr.io/miguelangel-nubla/{{ .ProjectName }}:{{ .Tag }}-arm64v8
 
 archives:
   - 
