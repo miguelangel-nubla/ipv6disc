@@ -96,6 +96,7 @@ func (w *Worker) StartInterfaceAddr(iface net.Interface, addr netip.Addr) {
 	onFoundLinkLayerAddr := func(hostAddr netip.Addr, linkLayerAddr net.HardwareAddr) {
 		onExpiration := func(info *IPAddressInfo, attempt int) {
 			address := info.GetAddress()
+
 			if attempt == 0 {
 				w.logger.Infow("host expired",
 					zap.String("ipv6", netip.AddrFrom16(address.As16()).String()),
@@ -128,6 +129,9 @@ func (w *Worker) StartInterfaceAddr(iface net.Interface, addr netip.Addr) {
 				w.logger.Errorw("unable to ping, connection not available",
 					zap.String("ipv6", address.String()),
 				)
+			}
+			if time.Now().After(info.GetExpiration()) {
+				w.Table.macs[linkLayerAddr.String()].Remove(hostAddr)
 			}
 		}
 		existing := w.Table.Add(linkLayerAddr, hostAddr, w.ttl, onExpiration)
