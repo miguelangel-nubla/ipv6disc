@@ -131,15 +131,12 @@ func (s *IPAddressSet) Remove(addr netip.Addr) {
 	}
 }
 
-// Check if an IPv6 address exists in the set and is not expired.
+// Check if an IPv6 address exists in the set weather or not it is expired.
 func (s *IPAddressSet) Contains(addr netip.Addr) bool {
 	s.addressesMapMutex.RLock()
-	info, ok := s.addresses[addr]
+	_, ok := s.addresses[addr]
 	s.addressesMapMutex.RUnlock()
-	if !ok {
-		return false
-	}
-	return time.Now().Before(info.GetExpiration())
+	return ok
 }
 
 func (s *IPAddressSet) PrettyPrint(tabSize int) string {
