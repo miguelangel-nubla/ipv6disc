@@ -164,7 +164,7 @@ func (s *IPAddressSet) PrettyPrint(tabSize int) string {
 	// Iterate ordered
 	for _, key := range keys {
 		ipAddressInfo := s.addresses[key]
-		fmt.Fprintf(&result, indent(2)+"%s %.0f\n", ipAddressInfo.Address.String(), time.Until(ipAddressInfo.GetExpiration()).Seconds())
+		fmt.Fprintf(&result, indent(2)+"%s %s\n", ipAddressInfo.Address.String(), time.Until(ipAddressInfo.GetExpiration()).Round(time.Second))
 	}
 	s.addressesMapMutex.RUnlock()
 
