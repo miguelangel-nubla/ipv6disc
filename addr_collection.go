@@ -69,13 +69,24 @@ func (c *AddrCollection) Equal(other *AddrCollection) bool {
 		return false
 	}
 
-	for addrKey, _ := range c.addresses {
+	for addrKey := range c.addresses {
 		if _, ok := other.addresses[addrKey]; !ok {
 			return false
 		}
 	}
 
 	return true
+}
+
+func (c *AddrCollection) Copy() *AddrCollection {
+	c.addressesMutex.RLock()
+	defer c.addressesMutex.RUnlock()
+
+	result := NewAddrCollection()
+	for _, addr := range c.addresses {
+		result.Enlist(addr)
+	}
+	return result
 }
 
 func (c *AddrCollection) FilterPrefix(prefix netip.Prefix) *AddrCollection {
