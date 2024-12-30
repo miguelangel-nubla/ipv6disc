@@ -1,4 +1,4 @@
-package ipv6disc
+package main
 
 import (
 	"flag"
@@ -9,21 +9,21 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
+	"github.com/miguelangel-nubla/ipv6disc"
 	"github.com/miguelangel-nubla/ipv6disc/pkg/terminal"
-	"github.com/miguelangel-nubla/ipv6disc/pkg/worker"
 )
 
 var logLevel string
-var ttl time.Duration
+var lifetime time.Duration
 var live bool
 
 func init() {
 	flag.StringVar(&logLevel, "log_level", "info", "Logging level (debug, info, warn, error, fatal, panic) default: info")
-	flag.DurationVar(&ttl, "ttl", 4*time.Hour, "Time to keep a discovered host entry in the table after it has been last seen. This is not the TTL of the DDNS record. Default: 4h")
+	flag.DurationVar(&lifetime, "lifetime", 4*time.Hour, "Time to keep a discovered host entry after it has been last seen. Default: 4h")
 	flag.BoolVar(&live, "live", false, "Show the currrent state live on the terminal, default: false")
 }
 
-func Start() {
+func main() {
 	flag.Parse()
 
 	startUpdater()
@@ -34,8 +34,11 @@ func startUpdater() {
 
 	sugar := initializeLogger()
 
-	table := worker.NewTable()
-	err := worker.NewWorker(table, ttl, sugar).Start()
+	rediscover := lifetime / 3
+
+	worker := ipv6disc.NewWorker(sugar, rediscover, lifetime)
+
+	err := worker.Start()
 	if err != nil {
 		sugar.Fatalf("can't start worker: %s", err)
 	}
@@ -44,7 +47,7 @@ func startUpdater() {
 		for {
 			if live {
 				var result strings.Builder
-				result.WriteString(table.PrettyPrint(4))
+				result.WriteString(worker.State.PrettyPrint("    "))
 				liveOutput <- result.String()
 			}
 

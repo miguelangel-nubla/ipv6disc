@@ -1,9 +1,11 @@
+version: 2
 before:
   hooks:
-    - go mod tidy
     - go generate ./...
+    - go mod tidy
 builds:
-  - env:
+  - main: cmd/ipv6disc/ipv6disc.go
+    env:
       - CGO_ENABLED=0
     goos:
       # - aix
@@ -85,6 +87,8 @@ dockers:
     - "--label=org.opencontainers.image.version={{.Version}}"
     - "--label=org.opencontainers.image.url=https://github.com/miguelangel-nubla/{{ .ProjectName }}"
     - "--label=org.opencontainers.image.source=https://github.com/miguelangel-nubla/{{ .ProjectName }}"
+    extra_files:
+    - LICENSE.txt
   -
     image_templates:
     - "ghcr.io/miguelangel-nubla/{{.ProjectName}}:{{ .Tag }}-armv7"
@@ -99,6 +103,8 @@ dockers:
     - "--label=org.opencontainers.image.version={{.Version}}"
     - "--label=org.opencontainers.image.url=https://github.com/miguelangel-nubla/{{ .ProjectName }}"
     - "--label=org.opencontainers.image.source=https://github.com/miguelangel-nubla/{{ .ProjectName }}"
+    extra_files:
+    - LICENSE.txt
   -
     image_templates:
     - "ghcr.io/miguelangel-nubla/{{.ProjectName}}:{{ .Tag }}-arm64v8"
@@ -151,7 +157,6 @@ docker_manifests:
 
 archives:
   - 
-    rlcp: true
     files:
       - LICENSE*
       - README*
@@ -171,7 +176,7 @@ archives:
 checksum:
   name_template: 'checksums.txt'
 snapshot:
-  name_template: "{{ incpatch .Version }}-next"
+  version_template: "{{ incpatch .Version }}-next"
 changelog:
   sort: asc
   filters:

@@ -47,7 +47,7 @@ func (conn *Conn) SendNeighborSolicitation(target *netip.Addr) error {
 	return nil
 }
 
-func ListenForNDP(iface *net.Interface, addr netip.Addr, onFoundLinkLayerAddr func(netip.Addr, net.HardwareAddr)) (*Conn, error) {
+func ListenForNDP(iface *net.Interface, addr netip.Addr, processNDP func(netip.Addr, net.HardwareAddr)) (*Conn, error) {
 	conn, _, err := ndp.Listen(iface, ndp.Addr(addr.String()))
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen for NDP packets: %v", err)
@@ -61,28 +61,28 @@ func ListenForNDP(iface *net.Interface, addr netip.Addr, onFoundLinkLayerAddr fu
 				continue
 			}
 
-			processNDPPacket(msg, from, onFoundLinkLayerAddr)
+			processNDPPacket(msg, from, processNDP)
 		}
 	}()
 
 	return &Conn{conn, iface, &addr}, nil
 }
 
-func processNDPPacket(message ndp.Message, from netip.Addr, onFoundLinkLayerAddr func(netip.Addr, net.HardwareAddr)) {
+func processNDPPacket(message ndp.Message, from netip.Addr, processNDP func(netip.Addr, net.HardwareAddr)) {
 	switch msg := message.(type) {
 	case *ndp.NeighborAdvertisement:
-		processNDPOptions(&msg.Options, from, onFoundLinkLayerAddr)
+		processNDPOptions(&msg.Options, from, processNDP)
 	case *ndp.NeighborSolicitation:
-		processNDPOptions(&msg.Options, from, onFoundLinkLayerAddr)
+		processNDPOptions(&msg.Options, from, processNDP)
 	default:
 
 	}
 }
 
-func processNDPOptions(options *[]ndp.Option, from netip.Addr, onFoundLinkLayerAddr func(netip.Addr, net.HardwareAddr)) {
+func processNDPOptions(options *[]ndp.Option, from netip.Addr, processNDP func(netip.Addr, net.HardwareAddr)) {
 	for _, o := range *options {
 		if linkLayerAddr, ok := o.(*ndp.LinkLayerAddress); ok {
-			onFoundLinkLayerAddr(from, linkLayerAddr.Addr)
+			processNDP(from, linkLayerAddr.Addr)
 		}
 	}
 }

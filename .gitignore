@@ -1,2 +1,3 @@
-/ipv6disc
+cmd/ipv6disc/ipv6disc
+cmd/ipv6disc/ipv6disc.exe
 dist/

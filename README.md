@@ -13,7 +13,7 @@ Download the [latest release](https://github.com/miguelangel-nubla/ipv6disc/rele
 
 Ensure you have Go installed on your system. If not, follow the instructions on the official [Go website](https://golang.org/doc/install) to install it. Then:
 ```
-go install github.com/miguelangel-nubla/ipv6disc
+go install github.com/miguelangel-nubla/ipv6disc/cmd/ipv6disc
 ```
 
 ### Or use the docker image
@@ -39,7 +39,7 @@ If you need to pause and select/copy data use `screen`, launch `ipv6disc -live [
 ## Flags
 
 - `-log_level`: Set the logging level (default: "info"). Available options: "debug", "info", "warn", "error", "fatal", "panic".
-- `-ttl`: Set the time-to-live (TTL) for a discovered host entry in the table after it has been last seen (default: 4 hours).
+- `-lifetime`: Set the lifetime for a discovered host entry after it has been last seen (default: 4 hours).
 - `-live`: Show the current state live on the terminal (default: false).
 
 ## License

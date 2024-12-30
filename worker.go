@@ -1,4 +1,4 @@
-package worker
+package ipv6disc
 
 import (
 	"errors"
@@ -23,16 +23,18 @@ func (e *InvalidInterfaceError) Error() string {
 }
 
 type Worker struct {
-	logger *zap.SugaredLogger
-	Table  *Table
-	ttl    time.Duration
+	*State
+	logger     *zap.SugaredLogger
+	rediscover time.Duration
+	lifetime   time.Duration
 }
 
-func NewWorker(table *Table, ttl time.Duration, logger *zap.SugaredLogger) *Worker {
+func NewWorker(logger *zap.SugaredLogger, rediscover time.Duration, lifetime time.Duration) *Worker {
 	return &Worker{
-		logger: logger,
-		Table:  table,
-		ttl:    ttl,
+		State:      NewState(lifetime),
+		logger:     logger,
+		rediscover: rediscover,
+		lifetime:   lifetime,
 	}
 }
 
@@ -92,60 +94,52 @@ func (w *Worker) StartInterfaceAddr(iface net.Interface, addr netip.Addr) {
 	var ssdpConn *ssdp.Conn
 	var wsdConn *wsd.Conn
 
-	// manage NDP
-	onFoundLinkLayerAddr := func(hostAddr netip.Addr, linkLayerAddr net.HardwareAddr) {
-		onExpiration := func(info *IPAddressInfo, attempt int) {
-			address := info.GetAddress()
-			if attempt == 0 {
-				w.logger.Infow("host expired",
-					zap.String("ipv6", netip.AddrFrom16(address.As16()).String()),
-					zap.String("mac", linkLayerAddr.String()),
-					zap.String("iface", address.Zone()),
-				)
-			} else {
-				w.logger.Debugw("host not seen for a while",
-					zap.String("ipv6", netip.AddrFrom16(address.As16()).String()),
-					zap.String("mac", linkLayerAddr.String()),
-					zap.String("iface", address.Zone()),
-					zap.Int("attempt", attempt),
-				)
-			}
-
-			// do ping
-			if pingConn != nil {
-				w.logger.Debugw("ping",
-					zap.String("ipv6", address.String()),
-				)
-				target := netip.MustParseAddr(address.String())
-				err := pingConn.SendPing(&target)
-				if err != nil {
-					w.logger.Errorw("ping failed",
-						zap.String("ipv6", address.String()),
-						zap.Error(err),
-					)
-				}
-			} else {
-				w.logger.Errorw("unable to ping, connection not available",
-					zap.String("ipv6", address.String()),
-				)
-			}
-		}
-		existing := w.Table.Add(linkLayerAddr, hostAddr, w.ttl, onExpiration)
-		if existing {
-			w.logger.Debugw("ttl refreshed",
-				zap.String("ipv6", hostAddr.String()),
-				zap.String("mac", linkLayerAddr.String()),
+	w.State.addrDefaultOnExpiration = func(addr *Addr, remainingEvents AddrExpirationRemainingEvents) {
+		if remainingEvents == 0 {
+			w.logger.Infow("host expired",
+				zap.String("ipv6", netip.AddrFrom16(addr.As16()).String()),
+				zap.String("mac", addr.Hw.String()),
+				zap.String("iface", addr.Zone()),
 			)
-		} else {
-			w.logger.Infow("host identified",
-				zap.String("ipv6", netip.AddrFrom16(hostAddr.As16()).String()),
-				zap.String("mac", linkLayerAddr.String()),
-				zap.String("iface", hostAddr.Zone()),
+			return
+		}
+
+		w.logger.Debugw("host not seen for a while, pinging",
+			zap.String("ipv6", netip.AddrFrom16(addr.As16()).String()),
+			zap.String("mac", addr.Hw.String()),
+			zap.String("iface", addr.Zone()),
+			zap.Int("remainingEvents", int(remainingEvents)),
+		)
+
+		err := pingConn.SendPing(&addr.Addr)
+		if err != nil {
+			w.logger.Errorw("ping failed",
+				zap.String("ipv6", netip.AddrFrom16(addr.As16()).String()),
+				zap.String("mac", addr.Hw.String()),
+				zap.String("iface", addr.Zone()),
+				zap.Error(err),
 			)
 		}
 	}
 
-	ndpConn, err = ndp.ListenForNDP(&iface, addr, onFoundLinkLayerAddr)
+	processNDP := func(netipAddr netip.Addr, netHardwareAddr net.HardwareAddr) {
+		addr, existing := w.State.Enlist(netHardwareAddr, netipAddr, 0, nil)
+		if existing {
+			w.logger.Debugw("ttl refreshed",
+				zap.String("ipv6", netipAddr.String()),
+				zap.String("mac", netHardwareAddr.String()),
+			)
+		} else {
+			addr.Watch()
+			w.logger.Infow("host identified",
+				zap.String("ipv6", netip.AddrFrom16(netipAddr.As16()).String()),
+				zap.String("mac", netHardwareAddr.String()),
+				zap.String("iface", netipAddr.Zone()),
+			)
+		}
+	}
+
+	ndpConn, err = ndp.ListenForNDP(&iface, addr, processNDP)
 	if err != nil {
 		w.logger.Fatalf("error listening for NDP on interface %s: %s", iface.Name, err)
 	}
@@ -183,7 +177,7 @@ func (w *Worker) StartInterfaceAddr(iface net.Interface, addr netip.Addr) {
 	discover()
 
 	// Periodic re-discovery
-	ticker := time.NewTicker(w.ttl / 3)
+	ticker := time.NewTicker(w.rediscover)
 	defer ticker.Stop()
 	for range ticker.C {
 		discover()
