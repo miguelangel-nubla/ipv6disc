@@ -43,14 +43,16 @@ func (s *State) Enlist(hw net.HardwareAddr, netipAddr netip.Addr, ttl time.Durat
 
 func (s *State) Filter(hws []net.HardwareAddr, prefixes []netip.Prefix) *AddrCollection {
 	results := NewAddrCollection()
+
+	s.macsMutex.Lock()
+	defer s.macsMutex.Unlock()
+
 	for _, prefix := range prefixes {
 		for _, hw := range hws {
-			s.macsMutex.RLock()
 			collection, exists := s.macs[hw.String()]
 			if exists {
 				results.Join(collection.FilterPrefix(prefix))
 			}
-			s.macsMutex.RUnlock()
 		}
 	}
 
@@ -60,9 +62,10 @@ func (s *State) Filter(hws []net.HardwareAddr, prefixes []netip.Prefix) *AddrCol
 func (s *State) PrettyPrint(prefix string) string {
 	var result strings.Builder
 
-	fmt.Fprintf(&result, "%sDiscovery:\n", prefix)
+	s.macsMutex.Lock()
+	defer s.macsMutex.Unlock()
 
-	s.macsMutex.RLock()
+	fmt.Fprintf(&result, "%sDiscovery:\n", prefix)
 
 	// Get the keys from the map
 	keys := make([]string, 0, len(s.macs))
@@ -78,8 +81,6 @@ func (s *State) PrettyPrint(prefix string) string {
 		fmt.Fprintf(&result, "%s    %s\n", prefix, key)
 		fmt.Fprint(&result, s.macs[key].PrettyPrint(prefix+"        "))
 	}
-
-	s.macsMutex.RUnlock()
 
 	return result.String()
 }

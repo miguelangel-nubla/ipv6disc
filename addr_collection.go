@@ -168,7 +168,6 @@ func (c *AddrCollection) PrettyPrint(prefix string) string {
 	defer c.addressesMutex.RUnlock()
 
 	var result strings.Builder
-	c.addressesMutex.RLock()
 
 	// Get the keys from the map
 	keys := make([]netip.Addr, 0, len(c.addresses))
@@ -186,7 +185,6 @@ func (c *AddrCollection) PrettyPrint(prefix string) string {
 		ipAddressInfo := c.addresses[key.String()]
 		fmt.Fprintf(&result, prefix+"%s %s\n", ipAddressInfo.Addr.String(), time.Until(ipAddressInfo.GetExpiration()).Round(time.Second))
 	}
-	c.addressesMutex.RUnlock()
 
 	return result.String()
 }
