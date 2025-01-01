@@ -45,12 +45,15 @@ func (c *AddrCollection) Remove(addr *Addr) {
 	}
 }
 
-func (c *AddrCollection) Join(addr *AddrCollection) {
+func (c *AddrCollection) Join(addrCollection *AddrCollection) {
 	c.addressesMutex.Lock()
 	defer c.addressesMutex.Unlock()
 
-	for addr, info := range addr.addresses {
-		c.addresses[addr] = info
+	addrCollection.addressesMutex.RLock()
+	defer addrCollection.addressesMutex.RUnlock()
+
+	for key, addr := range addrCollection.addresses {
+		c.addresses[key] = addr
 	}
 }
 
@@ -59,18 +62,18 @@ func (c *AddrCollection) Contains(addr *Addr) bool {
 	return ok
 }
 
-func (c *AddrCollection) Equal(other *AddrCollection) bool {
+func (c *AddrCollection) Equal(addrCollection *AddrCollection) bool {
 	c.addressesMutex.RLock()
 	defer c.addressesMutex.RUnlock()
-	other.addressesMutex.RLock()
-	defer other.addressesMutex.RUnlock()
+	addrCollection.addressesMutex.RLock()
+	defer addrCollection.addressesMutex.RUnlock()
 
-	if len(c.addresses) != len(other.addresses) {
+	if len(c.addresses) != len(addrCollection.addresses) {
 		return false
 	}
 
 	for addrKey := range c.addresses {
-		if _, ok := other.addresses[addrKey]; !ok {
+		if _, ok := addrCollection.addresses[addrKey]; !ok {
 			return false
 		}
 	}
