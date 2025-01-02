@@ -43,7 +43,7 @@ func (s *State) FilterMACs(hws []net.HardwareAddr) *AddrCollection {
 	return results
 }
 
-func (s *State) PrettyPrint(prefix string) string {
+func (s *State) PrettyPrint(prefix string, hideSensible bool) string {
 	var result strings.Builder
 
 	s.macsMutex.Lock()

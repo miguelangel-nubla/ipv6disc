@@ -47,7 +47,7 @@ func startUpdater() {
 		for {
 			if live {
 				var result strings.Builder
-				result.WriteString(worker.State.PrettyPrint("    "))
+				result.WriteString(worker.State.PrettyPrint("    ", true))
 				liveOutput <- result.String()
 			}
 
