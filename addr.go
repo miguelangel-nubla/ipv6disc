@@ -41,7 +41,7 @@ func (a *Addr) resetTimers(resetExpirationTime bool) {
 	}
 }
 
-func (a *Addr) IsStillValid() bool {
+func (a *Addr) Valid() bool {
 	return a.expirationTime.After(time.Now())
 }
 

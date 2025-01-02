@@ -136,6 +136,19 @@ func (c *AddrCollection) Filter4() *AddrCollection {
 	return result
 }
 
+func (c *AddrCollection) FilterValid() *AddrCollection {
+	c.addressesMutex.RLock()
+	defer c.addressesMutex.RUnlock()
+
+	result := NewAddrCollection()
+	for _, addr := range c.addresses {
+		if addr.Valid() {
+			result.Enlist(addr)
+		}
+	}
+	return result
+}
+
 func (c *AddrCollection) Get() []*Addr {
 	c.addressesMutex.RLock()
 	defer c.addressesMutex.RUnlock()
