@@ -31,7 +31,7 @@ type Worker struct {
 
 func NewWorker(logger *zap.SugaredLogger, rediscover time.Duration, lifetime time.Duration) *Worker {
 	return &Worker{
-		State:      NewState(lifetime),
+		State:      NewState(),
 		logger:     logger,
 		rediscover: rediscover,
 		lifetime:   lifetime,
@@ -94,47 +94,48 @@ func (w *Worker) StartInterfaceAddr(iface net.Interface, addr netip.Addr) {
 	var ssdpConn *ssdp.Conn
 	var wsdConn *wsd.Conn
 
-	w.State.addrDefaultOnExpiration = func(addr *Addr, remainingEvents AddrExpirationRemainingEvents) {
+	addrOnExpiration := func(expiredAddr *Addr, remainingEvents AddrExpirationRemainingEvents) {
 		if remainingEvents == 0 {
 			w.logger.Infow("host expired",
-				zap.String("ipv6", netip.AddrFrom16(addr.As16()).String()),
-				zap.String("mac", addr.Hw.String()),
-				zap.String("iface", addr.Zone()),
+				zap.String("ipv6", netip.AddrFrom16(expiredAddr.As16()).String()),
+				zap.String("mac", expiredAddr.Hw.String()),
+				zap.String("iface", expiredAddr.Zone()),
 			)
 			return
 		}
 
 		w.logger.Debugw("host not seen for a while, pinging",
-			zap.String("ipv6", netip.AddrFrom16(addr.As16()).String()),
-			zap.String("mac", addr.Hw.String()),
-			zap.String("iface", addr.Zone()),
+			zap.String("ipv6", netip.AddrFrom16(expiredAddr.As16()).String()),
+			zap.String("mac", expiredAddr.Hw.String()),
+			zap.String("iface", expiredAddr.Zone()),
 			zap.Int("remainingEvents", int(remainingEvents)),
 		)
 
-		err := pingConn.SendPing(&addr.Addr)
+		err := pingConn.SendPing(&expiredAddr.Addr)
 		if err != nil {
 			w.logger.Errorw("ping failed",
-				zap.String("ipv6", netip.AddrFrom16(addr.As16()).String()),
-				zap.String("mac", addr.Hw.String()),
-				zap.String("iface", addr.Zone()),
+				zap.String("ipv6", netip.AddrFrom16(expiredAddr.As16()).String()),
+				zap.String("mac", expiredAddr.Hw.String()),
+				zap.String("iface", expiredAddr.Zone()),
 				zap.Error(err),
 			)
 		}
 	}
 
-	processNDP := func(netipAddr netip.Addr, netHardwareAddr net.HardwareAddr) {
-		addr, existing := w.State.Enlist(netHardwareAddr, netipAddr, 0, nil)
+	processNDP := func(receivedAddr netip.Addr, receivedNetHardwareAddr net.HardwareAddr) {
+		newAddr := NewAddr(receivedNetHardwareAddr, receivedAddr, w.lifetime, addrOnExpiration)
+		addr, existing := w.State.Enlist(newAddr)
 		if existing {
 			w.logger.Debugw("ttl refreshed",
-				zap.String("ipv6", netipAddr.String()),
-				zap.String("mac", netHardwareAddr.String()),
+				zap.String("ipv6", receivedAddr.String()),
+				zap.String("mac", receivedNetHardwareAddr.String()),
 			)
 		} else {
 			addr.Watch()
 			w.logger.Infow("host identified",
-				zap.String("ipv6", netip.AddrFrom16(netipAddr.As16()).String()),
-				zap.String("mac", netHardwareAddr.String()),
-				zap.String("iface", netipAddr.Zone()),
+				zap.String("ipv6", netip.AddrFrom16(receivedAddr.As16()).String()),
+				zap.String("mac", receivedNetHardwareAddr.String()),
+				zap.String("iface", receivedAddr.Zone()),
 			)
 		}
 	}

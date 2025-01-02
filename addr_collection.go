@@ -92,14 +92,18 @@ func (c *AddrCollection) Copy() *AddrCollection {
 	return result
 }
 
-func (c *AddrCollection) FilterPrefix(prefix netip.Prefix) *AddrCollection {
+func (c *AddrCollection) FilterSubnets(subnets []netip.Prefix) *AddrCollection {
 	c.addressesMutex.RLock()
 	defer c.addressesMutex.RUnlock()
 
 	result := NewAddrCollection()
+
 	for _, addr := range c.addresses {
-		if prefix.Contains(addr.Addr.WithZone("")) {
-			result.Enlist(addr)
+		ip := addr.Addr.WithZone("")
+		for _, sub := range subnets {
+			if sub.Contains(ip) {
+				result.Enlist(addr)
+			}
 		}
 	}
 

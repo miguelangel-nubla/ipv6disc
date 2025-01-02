@@ -3,56 +3,40 @@ package ipv6disc
 import (
 	"fmt"
 	"net"
-	"net/netip"
 	"sort"
 	"strings"
 	"sync"
-	"time"
 )
 
 type State struct {
-	macs                    map[string]*AddrCollection
-	macsMutex               sync.RWMutex
-	addrDefaultLifetime     time.Duration
-	addrDefaultOnExpiration func(*Addr, AddrExpirationRemainingEvents)
+	macs      map[string]*AddrCollection
+	macsMutex sync.RWMutex
 }
 
 // accepts default TTL and onExpiration function
-func (s *State) Enlist(hw net.HardwareAddr, netipAddr netip.Addr, ttl time.Duration, onExpiration func(*Addr, AddrExpirationRemainingEvents)) (*Addr, bool) {
+func (s *State) Enlist(addr *Addr) (*Addr, bool) {
 	s.macsMutex.Lock()
 	defer s.macsMutex.Unlock()
 
-	mac := hw.String()
+	mac := addr.Hw.String()
 	_, exists := s.macs[mac]
 	if !exists {
 		s.macs[mac] = NewAddrCollection()
 	}
 
-	if ttl == 0 {
-		ttl = s.addrDefaultLifetime
-	}
-
-	if onExpiration == nil {
-		onExpiration = s.addrDefaultOnExpiration
-	}
-
-	newAddr := NewAddr(hw, netipAddr, ttl, onExpiration)
-
-	return s.macs[mac].Enlist(newAddr)
+	return s.macs[mac].Enlist(addr)
 }
 
-func (s *State) Filter(hws []net.HardwareAddr, prefixes []netip.Prefix) *AddrCollection {
+func (s *State) FilterMACs(hws []net.HardwareAddr) *AddrCollection {
 	results := NewAddrCollection()
 
 	s.macsMutex.Lock()
 	defer s.macsMutex.Unlock()
 
-	for _, prefix := range prefixes {
-		for _, hw := range hws {
-			collection, exists := s.macs[hw.String()]
-			if exists {
-				results.Join(collection.FilterPrefix(prefix))
-			}
+	for _, hw := range hws {
+		collection, exists := s.macs[hw.String()]
+		if exists {
+			results.Join(collection)
 		}
 	}
 
@@ -85,10 +69,8 @@ func (s *State) PrettyPrint(prefix string) string {
 	return result.String()
 }
 
-func NewState(lifetime time.Duration) *State {
+func NewState() *State {
 	return &State{
-		macs:                    make(map[string]*AddrCollection),
-		addrDefaultLifetime:     lifetime,
-		addrDefaultOnExpiration: func(addr *Addr, remainingEvents AddrExpirationRemainingEvents) {},
+		macs: make(map[string]*AddrCollection),
 	}
 }
