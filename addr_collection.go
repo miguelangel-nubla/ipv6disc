@@ -17,7 +17,7 @@ type AddrCollection struct {
 	addressesMutex sync.RWMutex
 }
 
-func (c *AddrCollection) Enlist(addr *Addr) (*Addr, bool) {
+func (c *AddrCollection) Add(addr *Addr) (*Addr, bool) {
 	c.addressesMutex.Lock()
 	defer c.addressesMutex.Unlock()
 
@@ -30,9 +30,16 @@ func (c *AddrCollection) Enlist(addr *Addr) (*Addr, bool) {
 		c.addresses[addString] = addr
 	}
 
-	c.addresses[addString].Seen()
-
 	return c.addresses[addString], existing
+}
+
+func (c *AddrCollection) Seen(addr *Addr) (*Addr, bool) {
+	addr, existing := c.Add(addr)
+	if existing {
+		addr.Seen()
+	}
+
+	return addr, existing
 }
 
 func (c *AddrCollection) Remove(addr *Addr) {
@@ -87,7 +94,7 @@ func (c *AddrCollection) Copy() *AddrCollection {
 
 	result := NewAddrCollection()
 	for _, addr := range c.addresses {
-		result.Enlist(addr)
+		result.Add(addr)
 	}
 	return result
 }
@@ -102,7 +109,7 @@ func (c *AddrCollection) FilterSubnets(subnets []netip.Prefix) *AddrCollection {
 		ip := addr.Addr.WithZone("")
 		for _, sub := range subnets {
 			if sub.Contains(ip) {
-				result.Enlist(addr)
+				result.Add(addr)
 			}
 		}
 	}
@@ -117,7 +124,7 @@ func (c *AddrCollection) Filter6() *AddrCollection {
 	result := NewAddrCollection()
 	for _, addr := range c.addresses {
 		if addr.Addr.Is6() {
-			result.Enlist(addr)
+			result.Add(addr)
 		}
 	}
 	return result
@@ -130,7 +137,7 @@ func (c *AddrCollection) Filter4() *AddrCollection {
 	result := NewAddrCollection()
 	for _, addr := range c.addresses {
 		if addr.Addr.Is4() {
-			result.Enlist(addr)
+			result.Add(addr)
 		}
 	}
 	return result
@@ -143,7 +150,7 @@ func (c *AddrCollection) FilterValid() *AddrCollection {
 	result := NewAddrCollection()
 	for _, addr := range c.addresses {
 		if addr.Valid() {
-			result.Enlist(addr)
+			result.Add(addr)
 		}
 	}
 	return result

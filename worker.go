@@ -124,7 +124,7 @@ func (w *Worker) StartInterfaceAddr(iface net.Interface, addr netip.Addr) {
 
 	processNDP := func(receivedAddr netip.Addr, receivedNetHardwareAddr net.HardwareAddr) {
 		newAddr := NewAddr(receivedNetHardwareAddr, receivedAddr, w.lifetime, addrOnExpiration)
-		addr, existing := w.State.Enlist(newAddr)
+		addr, existing := w.State.Seen(newAddr)
 		if existing {
 			w.logger.Debugw("ttl refreshed",
 				zap.String("ipv6", receivedAddr.String()),
