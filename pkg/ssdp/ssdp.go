@@ -21,6 +21,7 @@ MX: 3
 type Conn struct {
 	net.PacketConn
 	listenAddrPort *netip.AddrPort
+	iface          *net.Interface
 }
 
 func (conn *Conn) GetListenAddrPort() *netip.AddrPort {
@@ -33,7 +34,7 @@ func (conn *Conn) DiscoverMulticast() error {
 }
 
 func (conn *Conn) SendSSDPRequest(target *netip.Addr) error {
-	destination := &net.UDPAddr{IP: net.IP(target.AsSlice()), Port: ssdpPort}
+	destination := &net.UDPAddr{IP: net.IP(target.AsSlice()), Port: ssdpPort, Zone: conn.iface.Name}
 
 	msg := fmt.Sprintf(ssdpMessage, conn.listenAddrPort)
 	if _, err := conn.WriteTo([]byte(msg), destination); err != nil {
@@ -43,7 +44,7 @@ func (conn *Conn) SendSSDPRequest(target *netip.Addr) error {
 	return nil
 }
 
-func ListenForSSDP(addr netip.Addr, onFoundAddr func(netip.Addr)) (*Conn, error) {
+func ListenForSSDP(iface *net.Interface, addr netip.Addr, onFoundAddr func(netip.Addr)) (*Conn, error) {
 	listenAddrPort := netip.AddrPortFrom(addr, 0)
 	conn, err := net.ListenPacket("udp6", listenAddrPort.String())
 	if err != nil {
@@ -71,5 +72,5 @@ func ListenForSSDP(addr netip.Addr, onFoundAddr func(netip.Addr)) (*Conn, error)
 		}
 	}()
 
-	return &Conn{conn, &listenAddrPort}, nil
+	return &Conn{conn, &listenAddrPort, iface}, nil
 }

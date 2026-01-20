@@ -18,6 +18,7 @@ func getNextICMPID() int {
 
 type Conn struct {
 	*icmp.PacketConn
+	iface *net.Interface
 }
 
 func (conn *Conn) GetListenAddr() *netip.Addr {
@@ -46,7 +47,7 @@ func (conn *Conn) SendPing(target *netip.Addr) error {
 		return fmt.Errorf("error marshaling echo request: %w", err)
 	}
 
-	destination := &net.IPAddr{IP: net.IP(target.AsSlice())}
+	destination := &net.IPAddr{IP: net.IP(target.AsSlice()), Zone: conn.iface.Name}
 	if _, err := conn.WriteTo(b, destination); err != nil {
 		return fmt.Errorf("error sending echo request: %w", err)
 	}
@@ -54,7 +55,7 @@ func (conn *Conn) SendPing(target *netip.Addr) error {
 	return nil
 }
 
-func ListenForICMP(addr netip.Addr, onFoundAddr func(netip.Addr)) (*Conn, error) {
+func ListenForICMP(iface *net.Interface, addr netip.Addr, onFoundAddr func(netip.Addr)) (*Conn, error) {
 	conn, err := icmp.ListenPacket("ip6:ipv6-icmp", addr.String())
 	if err != nil {
 		return nil, fmt.Errorf("error listening for ICMPv6 packets on %v: %v", addr, err)
@@ -89,5 +90,5 @@ func ListenForICMP(addr netip.Addr, onFoundAddr func(netip.Addr)) (*Conn, error)
 		}
 	}()
 
-	return &Conn{conn}, nil
+	return &Conn{conn, iface}, nil
 }

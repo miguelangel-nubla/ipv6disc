@@ -147,21 +147,21 @@ func (w *Worker) StartInterfaceAddr(iface net.Interface, addr netip.Addr) {
 	defer ndpConn.Close()
 
 	// manage ICMP
-	pingConn, err = ping.ListenForICMP(addr, onFoundAddrFunc(ndpConn, &iface, w.logger, "ICMP echo response"))
+	pingConn, err = ping.ListenForICMP(&iface, addr, onFoundAddrFunc(ndpConn, &iface, w.logger, "ICMP echo response"))
 	if err != nil {
 		w.logger.Fatalf("Error listening for ICMP on interface %s: %s", iface.Name, err)
 	}
 	defer pingConn.Close()
 
 	// manage SSDP
-	ssdpConn, err = ssdp.ListenForSSDP(addr, onFoundAddrFunc(ndpConn, &iface, w.logger, "SSDP announcement"))
+	ssdpConn, err = ssdp.ListenForSSDP(&iface, addr, onFoundAddrFunc(ndpConn, &iface, w.logger, "SSDP announcement"))
 	if err != nil {
 		w.logger.Fatalf("error listening for SSDP on interface %s: %s", iface.Name, err)
 	}
 	defer ssdpConn.Close()
 
 	// manage WSD
-	wsdConn, err = wsd.ListenForWSD(addr, onFoundAddrFunc(ndpConn, &iface, w.logger, "WSD message"))
+	wsdConn, err = wsd.ListenForWSD(&iface, addr, onFoundAddrFunc(ndpConn, &iface, w.logger, "WSD message"))
 	if err != nil {
 		w.logger.Fatalf("error listening for WSD on interface %s: %s", iface.Name, err)
 	}
