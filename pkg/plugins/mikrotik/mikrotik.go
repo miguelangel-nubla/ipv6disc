@@ -152,8 +152,7 @@ func (p *MikrotikPlugin) Discover(state *ipv6disc.State) error {
 		// However, the worker expects a netip.Addr which may include a zone.
 		// We use the plugin name as the source to indicate which router this address was discovered on.
 
-		addr := ipv6disc.NewAddr(hw, ip, p.Name(), p.lifetime, nil)
-		if _, existing := state.Seen(addr, p.Name()); !existing {
+		if _, existing := state.Register(hw, ip, p.Name(), p.lifetime, nil); !existing {
 			p.discoveryCount++
 		}
 	}

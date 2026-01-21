@@ -56,8 +56,11 @@ type InterfaceProcesses struct {
 }
 
 func NewWorker(logger *zap.SugaredLogger, rediscover time.Duration, lifetime time.Duration) *Worker {
+	s := NewState()
+	s.SetLogger(logger)
+
 	return &Worker{
-		State:         NewState(),
+		State:         s,
 		logger:        logger,
 		rediscover:    rediscover,
 		lifetime:      lifetime,
@@ -245,21 +248,9 @@ func (w *Worker) StartInterfaceAddr(iface net.Interface, addr netip.Addr) {
 	}
 
 	processNDP := func(receivedAddr netip.Addr, receivedNetHardwareAddr net.HardwareAddr) {
-		newAddr := NewAddr(receivedNetHardwareAddr, receivedAddr, iface.Name, w.lifetime, addrOnExpiration)
-		addr, existing := w.State.Seen(newAddr, iface.Name)
-		if existing {
-			w.logger.Debugw("ttl refreshed",
-				zap.String("ipv6", receivedAddr.String()),
-				zap.String("mac", receivedNetHardwareAddr.String()),
-			)
-		} else {
+		_, existing := w.State.Register(receivedNetHardwareAddr, receivedAddr, iface.Name, w.lifetime, addrOnExpiration)
+		if !existing {
 			ndpConn.IncrementHostsFound()
-			addr.Watch()
-			w.logger.Infow("host identified",
-				zap.String("ipv6", netip.AddrFrom16(receivedAddr.As16()).String()),
-				zap.String("mac", receivedNetHardwareAddr.String()),
-				zap.String("iface", iface.Name),
-			)
 		}
 	}
 
