@@ -94,6 +94,12 @@ func (p *MikrotikPlugin) Discover(state *ipv6disc.State) error {
 	var client *routeros.Client
 	var err error
 
+	defaultPort := "8728"
+	if p.config.UseTLS {
+		defaultPort = "8729"
+	}
+	addr := plugins.FormatAddress(p.config.Address, defaultPort)
+
 	if p.config.UseTLS {
 		var tlsConfig *tls.Config
 		if p.config.TLSFingerprint != "" {
@@ -112,9 +118,9 @@ func (p *MikrotikPlugin) Discover(state *ipv6disc.State) error {
 				},
 			}
 		}
-		client, err = routeros.DialTLS(p.config.Address, p.config.Username, p.config.Password, tlsConfig)
+		client, err = routeros.DialTLS(addr, p.config.Username, p.config.Password, tlsConfig)
 	} else {
-		client, err = routeros.Dial(p.config.Address, p.config.Username, p.config.Password)
+		client, err = routeros.Dial(addr, p.config.Username, p.config.Password)
 	}
 
 	if err != nil {
