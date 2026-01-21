@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"strings"
 	"time"
@@ -10,17 +11,47 @@ import (
 	"go.uber.org/zap/zapcore"
 
 	"github.com/miguelangel-nubla/ipv6disc"
+	"github.com/miguelangel-nubla/ipv6disc/pkg/plugins"
+	_ "github.com/miguelangel-nubla/ipv6disc/pkg/plugins/mikrotik"
 	"github.com/miguelangel-nubla/ipv6disc/pkg/terminal"
 )
 
-var logLevel string
-var lifetime time.Duration
-var live bool
+var (
+	logLevel string
+	lifetime time.Duration
+	live     bool
+
+	pluginsFlags pluginsFlag
+)
+
+type pluginsFlag []struct {
+	Type   string
+	Params string
+}
+
+func (p *pluginsFlag) String() string {
+	return fmt.Sprint(*p)
+}
+
+func (p *pluginsFlag) Set(value string) error {
+	parts := strings.SplitN(value, ":", 2)
+	if len(parts) < 2 {
+		return fmt.Errorf("invalid plugin format, expected: type:params")
+	}
+
+	*p = append(*p, struct {
+		Type   string
+		Params string
+	}{parts[0], parts[1]})
+	return nil
+}
 
 func init() {
 	flag.StringVar(&logLevel, "log_level", "info", "Logging level (debug, info, warn, error, fatal, panic) default: info")
 	flag.DurationVar(&lifetime, "lifetime", 4*time.Hour, "Time to keep a discovered host entry after it has been last seen. Default: 4h")
 	flag.BoolVar(&live, "live", false, "Show the currrent state live on the terminal, default: false")
+
+	flag.Var(&pluginsFlags, "plugin", "Plugin configuration: type:params (can be specified multiple times)")
 }
 
 func main() {
@@ -38,6 +69,14 @@ func startUpdater() {
 
 	worker := ipv6disc.NewWorker(sugar, rediscover, lifetime)
 
+	for _, pCfg := range pluginsFlags {
+		p, err := plugins.Create(pCfg.Type, pCfg.Params, lifetime)
+		if err != nil {
+			sugar.Fatalf("can't create plugin %s: %s", pCfg.Type, err)
+		}
+		worker.RegisterPlugin(p)
+	}
+
 	err := worker.Start()
 	if err != nil {
 		sugar.Fatalf("can't start worker: %s", err)
@@ -48,6 +87,7 @@ func startUpdater() {
 			if live {
 				var result strings.Builder
 				result.WriteString(worker.State.PrettyPrint("    ", true))
+				result.WriteString(worker.PrettyPrintStats("    "))
 				liveOutput <- result.String()
 			}
 

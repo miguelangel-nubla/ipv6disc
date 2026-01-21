@@ -9,7 +9,8 @@ import (
 
 type Addr struct {
 	netip.Addr
-	Hw net.HardwareAddr
+	Hw      net.HardwareAddr
+	Sources []string
 
 	lifetime     time.Duration
 	onExpiration func(*Addr, AddrExpirationRemainingEvents)
@@ -52,8 +53,23 @@ func (a *Addr) GetExpiration() time.Time {
 	return a.expirationTime
 }
 
-func (a *Addr) Seen() {
+func (a *Addr) Seen(source ...string) {
 	a.resetTimers(true)
+	if len(source) > 0 {
+		a.mutex.Lock()
+		// Check if source already exists in the slice
+		found := false
+		for _, s := range a.Sources {
+			if s == source[0] {
+				found = true
+				break
+			}
+		}
+		if !found {
+			a.Sources = append(a.Sources, source[0])
+		}
+		a.mutex.Unlock()
+	}
 }
 
 func (a *Addr) Watch() {
@@ -90,10 +106,11 @@ func (a *Addr) Unwatch() {
 	close(a.unwatch)
 }
 
-func NewAddr(hw net.HardwareAddr, addr netip.Addr, lifetime time.Duration, onExpiration func(*Addr, AddrExpirationRemainingEvents)) *Addr {
+func NewAddr(hw net.HardwareAddr, addr netip.Addr, source string, lifetime time.Duration, onExpiration func(*Addr, AddrExpirationRemainingEvents)) *Addr {
 	return &Addr{
 		Addr:           addr,
 		Hw:             hw,
+		Sources:        []string{source},
 		lifetime:       lifetime,
 		onExpiration:   onExpiration,
 		expiration3:    time.NewTimer(lifetime / 3 * 2),

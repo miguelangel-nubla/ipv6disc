@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"sync/atomic"
 
 	"github.com/mdlayher/ndp"
 )
@@ -12,18 +13,42 @@ type Conn struct {
 	*ndp.Conn
 	iface      *net.Interface
 	listenAddr *netip.Addr
+
+	stats Stats
+}
+
+type Stats struct {
+	DiscoveryRuns   uint64
+	HostsFound      uint64
+	PacketsSent     uint64
+	PacketsReceived uint64
+}
+
+func (conn *Conn) Stats() map[string]any {
+	return map[string]any{
+		"runs":  atomic.LoadUint64(&conn.stats.DiscoveryRuns),
+		"hosts": atomic.LoadUint64(&conn.stats.HostsFound),
+		"sent":  atomic.LoadUint64(&conn.stats.PacketsSent),
+		"recv":  atomic.LoadUint64(&conn.stats.PacketsReceived),
+	}
 }
 
 func (conn *Conn) GetListenAddr() *netip.Addr {
 	return conn.listenAddr
 }
 
+func (conn *Conn) IncrementHostsFound() {
+	atomic.AddUint64(&conn.stats.HostsFound, 1)
+}
+
 func (conn *Conn) DiscoverMulticast() error {
+	atomic.AddUint64(&conn.stats.DiscoveryRuns, 1)
 	target := netip.MustParseAddr("ff02::1")
 	return conn.SendNeighborSolicitation(&target)
 }
 
 func (conn *Conn) SendNeighborSolicitation(target *netip.Addr) error {
+	atomic.AddUint64(&conn.stats.PacketsSent, 1)
 	// Always multicast to the target's solicited-node multicast address to discover MAC address.
 	solicitedNodeMulticast, err := ndp.SolicitedNodeMulticast(*target)
 	if err != nil {
@@ -53,6 +78,12 @@ func ListenForNDP(iface *net.Interface, addr netip.Addr, processNDP func(netip.A
 		return nil, fmt.Errorf("failed to listen for NDP packets: %v", err)
 	}
 
+	connStats := &Conn{
+		Conn:       conn,
+		iface:      iface,
+		listenAddr: &addr,
+	}
+
 	go func() {
 		for {
 			msg, _, from, err := conn.ReadFrom()
@@ -60,12 +91,12 @@ func ListenForNDP(iface *net.Interface, addr netip.Addr, processNDP func(netip.A
 				fmt.Printf("Error reading: %v", err)
 				continue
 			}
-
+			atomic.AddUint64(&connStats.stats.PacketsReceived, 1)
 			processNDPPacket(msg, from, processNDP)
 		}
 	}()
 
-	return &Conn{conn, iface, &addr}, nil
+	return connStats, nil
 }
 
 func processNDPPacket(message ndp.Message, from netip.Addr, processNDP func(netip.Addr, net.HardwareAddr)) {

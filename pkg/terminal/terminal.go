@@ -85,8 +85,12 @@ mainloop:
 					offset = 0
 				}
 				// +1 takes into account controls displayed at bottom of screen
-				if offset > len(lines)+1-height {
-					offset = len(lines) + 1 - height
+				maxOffset := len(lines) + 1 - height
+				if maxOffset < 0 {
+					maxOffset = 0
+				}
+				if offset > maxOffset {
+					offset = maxOffset
 				}
 			case termbox.EventResize:
 				displayContent(lines, offset)

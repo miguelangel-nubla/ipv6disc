@@ -14,7 +14,7 @@ type State struct {
 }
 
 // accepts default TTL and onExpiration function
-func (s *State) Seen(addr *Addr) (*Addr, bool) {
+func (s *State) Seen(addr *Addr, source ...string) (*Addr, bool) {
 	s.macsMutex.Lock()
 	defer s.macsMutex.Unlock()
 
@@ -24,7 +24,7 @@ func (s *State) Seen(addr *Addr) (*Addr, bool) {
 		s.macs[mac] = NewAddrCollection()
 	}
 
-	return s.macs[mac].Seen(addr)
+	return s.macs[mac].Seen(addr, source...)
 }
 
 func (s *State) FilterMACs(hws []net.HardwareAddr) *AddrCollection {

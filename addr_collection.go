@@ -21,7 +21,8 @@ func (c *AddrCollection) Add(addr *Addr) (*Addr, bool) {
 	c.addressesMutex.Lock()
 	defer c.addressesMutex.Unlock()
 
-	addString := addr.String()
+	// Normalize address by removing zone for map key
+	addString := addr.WithZone("").String()
 
 	existing := false
 	if c.Contains(addr) {
@@ -33,10 +34,10 @@ func (c *AddrCollection) Add(addr *Addr) (*Addr, bool) {
 	return c.addresses[addString], existing
 }
 
-func (c *AddrCollection) Seen(addr *Addr) (*Addr, bool) {
+func (c *AddrCollection) Seen(addr *Addr, source ...string) (*Addr, bool) {
 	addr, existing := c.Add(addr)
 	if existing {
-		addr.Seen()
+		addr.Seen(source...)
 	}
 
 	return addr, existing
@@ -47,8 +48,10 @@ func (c *AddrCollection) Remove(addr *Addr) {
 	defer c.addressesMutex.Unlock()
 
 	if c.Contains(addr) {
-		c.addresses[addr.String()].Unwatch()
-		delete(c.addresses, addr.String())
+		// Normalize address by removing zone for map key
+		key := addr.WithZone("").String()
+		c.addresses[key].Unwatch()
+		delete(c.addresses, key)
 	}
 }
 
@@ -65,7 +68,8 @@ func (c *AddrCollection) Join(addrCollection *AddrCollection) {
 }
 
 func (c *AddrCollection) Contains(addr *Addr) bool {
-	_, ok := c.addresses[addr.String()]
+	// Normalize address by removing zone for map key
+	_, ok := c.addresses[addr.WithZone("").String()]
 	return ok
 }
 
@@ -206,8 +210,9 @@ func (c *AddrCollection) PrettyPrint(prefix string) string {
 
 	// Iterate ordered
 	for _, key := range keys {
-		ipAddressInfo := c.addresses[key.String()]
-		fmt.Fprintf(&result, prefix+"%s %s\n", ipAddressInfo.Addr.String(), time.Until(ipAddressInfo.GetExpiration()).Round(time.Second))
+		// Normalize address by removing zone for map key
+		ipAddressInfo := c.addresses[key.WithZone("").String()]
+		fmt.Fprintf(&result, prefix+"%s %s %s\n", ipAddressInfo.Addr.WithZone("").String(), time.Until(ipAddressInfo.GetExpiration()).Round(time.Second), strings.Join(ipAddressInfo.Sources, ","))
 	}
 
 	return result.String()
