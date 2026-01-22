@@ -154,17 +154,14 @@ func (w *Worker) PrettyPrintStats(prefix string) string {
 
 func (w *Worker) Start() error {
 	if len(w.plugins) > 0 {
-		go func() {
-			for {
-				for _, p := range w.plugins {
-					err := p.Discover(w.State)
-					if err != nil {
-						w.logger.Errorf("plugin %s discovery failed: %s", p.Name(), err)
-					}
+		for _, p := range w.plugins {
+			go func(p Plugin) {
+				err := p.Start(context.Background(), w.State)
+				if err != nil {
+					w.logger.Errorf("plugin %s failed: %s", p.Name(), err)
 				}
-				time.Sleep(w.rediscover)
-			}
-		}()
+			}(p)
+		}
 	}
 
 	go func() {
@@ -179,8 +176,8 @@ func (w *Worker) Start() error {
 		}
 	}()
 
-	if len(w.plugins) > 0 {
-		return nil
+	if len(w.plugins) == 0 && !w.discoveryListen {
+		return fmt.Errorf("no plugins configured and discovery listening disabled: nothing to do")
 	}
 
 	return nil

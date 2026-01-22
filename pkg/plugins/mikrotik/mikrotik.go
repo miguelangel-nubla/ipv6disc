@@ -1,6 +1,7 @@
 package mikrotik
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
@@ -28,28 +29,35 @@ func init() {
 
 func ParseConfig(config string) (Config, error) {
 	parts := strings.Split(config, ",")
-	if len(parts) < 3 {
-		return Config{}, fmt.Errorf("invalid mikrotik config format, expected: address,username,password[,use_tls[,tls_fingerprint]]")
+	if len(parts) < 4 {
+		return Config{}, fmt.Errorf("invalid mikrotik config format, expected: interval,address,username,password[,use_tls[,tls_fingerprint]]")
+	}
+
+	interval, err := time.ParseDuration(parts[0])
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid interval format: %w", err)
 	}
 
 	cfg := Config{
-		Address:  parts[0],
-		Username: parts[1],
-		Password: parts[2],
-	}
-
-	if len(parts) > 3 {
-		cfg.UseTLS = strings.ToLower(parts[3]) == "true"
+		Interval: interval,
+		Address:  parts[1],
+		Username: parts[2],
+		Password: parts[3],
 	}
 
 	if len(parts) > 4 {
-		cfg.TLSFingerprint = strings.ToLower(strings.ReplaceAll(parts[4], ":", ""))
+		cfg.UseTLS = strings.ToLower(parts[4]) == "true"
+	}
+
+	if len(parts) > 5 {
+		cfg.TLSFingerprint = strings.ToLower(strings.ReplaceAll(parts[5], ":", ""))
 	}
 
 	return cfg, nil
 }
 
 type Config struct {
+	Interval       time.Duration
 	Address        string
 	Username       string
 	Password       string
@@ -89,7 +97,28 @@ func (p *MikrotikPlugin) Stats() map[string]any {
 	}
 }
 
-func (p *MikrotikPlugin) Discover(state *ipv6disc.State) error {
+func (p *MikrotikPlugin) Start(ctx context.Context, state *ipv6disc.State) error {
+	ticker := time.NewTicker(p.config.Interval)
+	defer ticker.Stop()
+
+	// Initial discovery
+	if err := p.discover(state); err != nil {
+		p.lastError = err
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			if err := p.discover(state); err != nil {
+				p.lastError = err
+			}
+		}
+	}
+}
+
+func (p *MikrotikPlugin) discover(state *ipv6disc.State) error {
 	p.lastRun = time.Now()
 	var client *routeros.Client
 	var err error
@@ -124,14 +153,12 @@ func (p *MikrotikPlugin) Discover(state *ipv6disc.State) error {
 	}
 
 	if err != nil {
-		p.lastError = err
 		return fmt.Errorf("error connecting to mikrotik: %w", err)
 	}
 	defer client.Close()
 
 	reply, err := client.Run("/ipv6/neighbor/print")
 	if err != nil {
-		p.lastError = err
 		return fmt.Errorf("error fetching ipv6 neighbors: %w", err)
 	}
 	p.lastError = nil

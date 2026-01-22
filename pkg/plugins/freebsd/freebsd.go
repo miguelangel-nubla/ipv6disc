@@ -2,6 +2,7 @@ package freebsd
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"net"
 	"net/netip"
@@ -26,24 +27,31 @@ func init() {
 
 func ParseConfig(config string) (Config, error) {
 	parts := strings.Split(config, ",")
-	if len(parts) < 3 {
-		return Config{}, fmt.Errorf("invalid freebsd config format, expected: address,username,password[,identity_file]")
+	if len(parts) < 4 {
+		return Config{}, fmt.Errorf("invalid freebsd config format, expected: interval,address,username,password[,identity_file]")
+	}
+
+	interval, err := time.ParseDuration(parts[0])
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid interval format: %w", err)
 	}
 
 	cfg := Config{
-		Address:  parts[0],
-		Username: parts[1],
-		Password: parts[2],
+		Interval: interval,
+		Address:  parts[1],
+		Username: parts[2],
+		Password: parts[3],
 	}
 
-	if len(parts) > 3 {
-		cfg.IdentityFile = parts[3]
+	if len(parts) > 4 {
+		cfg.IdentityFile = parts[4]
 	}
 
 	return cfg, nil
 }
 
 type Config struct {
+	Interval     time.Duration
 	Address      string
 	Username     string
 	Password     string
@@ -82,7 +90,28 @@ func (p *FreeBSDPlugin) Stats() map[string]any {
 	}
 }
 
-func (p *FreeBSDPlugin) Discover(state *ipv6disc.State) error {
+func (p *FreeBSDPlugin) Start(ctx context.Context, state *ipv6disc.State) error {
+	ticker := time.NewTicker(p.config.Interval)
+	defer ticker.Stop()
+
+	// Initial discovery
+	if err := p.discover(state); err != nil {
+		p.lastError = err
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			if err := p.discover(state); err != nil {
+				p.lastError = err
+			}
+		}
+	}
+}
+
+func (p *FreeBSDPlugin) discover(state *ipv6disc.State) error {
 	p.lastRun = time.Now()
 
 	authMethods := []ssh.AuthMethod{}
@@ -90,14 +119,12 @@ func (p *FreeBSDPlugin) Discover(state *ipv6disc.State) error {
 	if p.config.IdentityFile != "" {
 		key, err := os.ReadFile(p.config.IdentityFile)
 		if err != nil {
-			p.lastError = fmt.Errorf("unable to read private key: %v", err)
-			return p.lastError
+			return fmt.Errorf("unable to read private key: %w", err)
 		}
 
 		signer, err := ssh.ParsePrivateKey(key)
 		if err != nil {
-			p.lastError = fmt.Errorf("unable to parse private key: %v", err)
-			return p.lastError
+			return fmt.Errorf("unable to parse private key: %w", err)
 		}
 
 		authMethods = append(authMethods, ssh.PublicKeys(signer))
@@ -118,22 +145,19 @@ func (p *FreeBSDPlugin) Discover(state *ipv6disc.State) error {
 
 	client, err := ssh.Dial("tcp", addr, config)
 	if err != nil {
-		p.lastError = fmt.Errorf("failed to dial: %v", err)
-		return p.lastError
+		return fmt.Errorf("failed to dial: %w", err)
 	}
 	defer client.Close()
 
 	session, err := client.NewSession()
 	if err != nil {
-		p.lastError = fmt.Errorf("failed to create session: %v", err)
-		return p.lastError
+		return fmt.Errorf("failed to create session: %w", err)
 	}
 	defer session.Close()
 
 	output, err := session.CombinedOutput("ndp -an")
 	if err != nil {
-		p.lastError = fmt.Errorf("failed to run ndp -an: %v", err)
-		return p.lastError
+		return fmt.Errorf("failed to run ndp -an: %w", err)
 	}
 	p.lastError = nil
 
