@@ -19,7 +19,7 @@ Run with plugins (recommended):
 ```
 docker run -it --rm --network host gcr.io/miguelangel-nubla/ipv6disc \
   -live \
-  -plugin "mikrotik:192.168.88.1,admin,password"
+  -plugin "mikrotik:60s,192.168.88.1,admin,password"
 ```
 
 > [!IMPORTANT]
@@ -71,7 +71,8 @@ If you need to pause and select/copy data use `screen`, launch `ipv6disc -live [
 
 ### Linux / OpenWrt
 Connect to a Linux host via SSH and parse `ip -6 neigh` output.
-format: `linux:address,username,password[,identity_file]`
+format: `linux:interval,address,username,password[,identity_file]`
+- `interval`: Polling interval (e.g. `60s`, `5m`)
 - `address`: Hostname or IP address (and optional port) (e.g., `192.168.1.1`, `[2001:db8::1]:2222`)
 - `username`: SSH username
 - `password`: SSH password (optional if identity_file provided)
@@ -79,7 +80,8 @@ format: `linux:address,username,password[,identity_file]`
 
 ### pfSense / OPNsense / FreeBSD
 Connect to a FreeBSD host via SSH and parse `ndp -an` output.
-format: `freebsd:address,username,password[,identity_file]`
+format: `freebsd:interval,address,username,password[,identity_file]`
+- `interval`: Polling interval (e.g. `60s`, `5m`)
 - `address`: Hostname or IP address (and optional port)
 - `username`: SSH username
 - `password`: SSH password (optional if identity_file provided)
@@ -87,7 +89,8 @@ format: `freebsd:address,username,password[,identity_file]`
 
 ### Mikrotik
 Connect to a Mikrotik router via API and parse IPv6 neighbor list.
-format: `mikrotik:address,username,password[,use_tls[,tls_fingerprint]]`
+format: `mikrotik:interval,address,username,password[,use_tls[,tls_fingerprint]]`
+- `interval`: Polling interval (e.g. `60s`, `5m`)
 - `address`: Hostname or IP address (and optional port). Defaults to port 8728 (plain) or 8729 (TLS).
 - `username`: API username
 - `password`: API password

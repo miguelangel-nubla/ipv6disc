@@ -50,7 +50,7 @@ func TestParseNDPOutput(t *testing.T) {
 
 func TestParseConfig(t *testing.T) {
 	// 1. Basic config
-	cfg, err := ParseConfig("192.168.1.1,user,pass")
+	cfg, err := ParseConfig("60s,192.168.1.1,user,pass")
 	assert.NoError(t, err)
 	assert.Equal(t, "192.168.1.1", cfg.Address)
 	assert.Equal(t, "user", cfg.Username)
@@ -58,7 +58,7 @@ func TestParseConfig(t *testing.T) {
 	assert.Empty(t, cfg.IdentityFile)
 
 	// 2. Config with identity file
-	cfg, err = ParseConfig("192.168.1.1,user,pass,/path/to/key")
+	cfg, err = ParseConfig("60s,192.168.1.1,user,pass,/path/to/key")
 	assert.NoError(t, err)
 	assert.Equal(t, "192.168.1.1", cfg.Address)
 	assert.Equal(t, "user", cfg.Username)
