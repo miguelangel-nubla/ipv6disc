@@ -1,7 +1,7 @@
 package ipv6disc
 
 import (
-	"errors"
+	"context"
 	"fmt"
 	"net"
 	"net/netip"
@@ -33,6 +33,7 @@ type Worker struct {
 	lifetime      time.Duration
 	plugins       []Plugin
 	protocolConns map[string]*InterfaceProcesses
+	workerCancels map[string]context.CancelFunc
 	pcMutex       sync.RWMutex
 }
 
@@ -66,6 +67,7 @@ func NewWorker(logger *zap.SugaredLogger, rediscover time.Duration, lifetime tim
 		lifetime:      lifetime,
 		plugins:       make([]Plugin, 0),
 		protocolConns: make(map[string]*InterfaceProcesses),
+		workerCancels: make(map[string]context.CancelFunc),
 	}
 }
 
@@ -146,11 +148,6 @@ func (w *Worker) PrettyPrintStats(prefix string) string {
 }
 
 func (w *Worker) Start() error {
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return fmt.Errorf("error getting interfaces: %w", err)
-	}
-
 	if len(w.plugins) > 0 {
 		go func() {
 			for {
@@ -165,54 +162,89 @@ func (w *Worker) Start() error {
 		}()
 	}
 
-	noValidAddr := fmt.Errorf("no valid IPv6 address found")
-	var invalidIface = &InvalidInterfaceError{}
-	for _, iface := range ifaces {
-		err = w.StartInterface(&iface)
-		switch {
-		case err == nil:
-			// At least one address was valid
-			noValidAddr = nil
-			continue
-		case errors.As(err, &invalidIface):
-			// Ignore invalid interfaces
-			continue
-		default:
-			return err
+	go func() {
+		ticker := time.NewTicker(time.Minute * 1)
+		defer ticker.Stop()
+
+		for {
+			w.checkInterfaces()
+			<-ticker.C
 		}
-	}
+	}()
+
+	w.checkInterfaces()
 
 	if len(w.plugins) > 0 {
 		return nil
 	}
 
-	return noValidAddr
+	return nil
 }
 
-func (w *Worker) StartInterface(iface *net.Interface) error {
-	err := isValidInterface(iface)
+func (w *Worker) checkInterfaces() {
+	ifaces, err := net.Interfaces()
 	if err != nil {
-		return err
+		w.logger.Errorf("error getting interfaces: %s", err)
+		return
 	}
 
-	addrs, err := iface.Addrs()
-	if err != nil {
-		return fmt.Errorf("error getting IPv6 addresses for interface %s: %w", iface.Name, err)
-	}
+	// Track seen addresses to identify removed ones
+	seenAddrs := make(map[string]bool)
 
-	noValidAddr := fmt.Errorf("no valid IPv6 addresses found: %w", &InvalidInterfaceError{iface: iface})
-	for _, a := range addrs {
-		addr := netip.MustParseAddr(a.(*net.IPNet).IP.String())
-		if !addr.Is4() && !addr.IsLinkLocalUnicast() {
-			noValidAddr = nil
-			go w.StartInterfaceAddr(*iface, addr)
+	for _, iface := range ifaces {
+		err := isValidInterface(&iface)
+		if err != nil {
+			continue
+		}
+
+		addrs, err := iface.Addrs()
+		if err != nil {
+			w.logger.Errorf("error getting IPv6 addresses for interface %s: %s", iface.Name, err)
+			continue
+		}
+
+		for _, a := range addrs {
+			addr := netip.MustParseAddr(a.(*net.IPNet).IP.String())
+			if !addr.Is4() && !addr.IsLinkLocalUnicast() {
+				addrStr := addr.String()
+				seenAddrs[addrStr] = true
+
+				w.pcMutex.RLock()
+				_, exists := w.protocolConns[addrStr]
+				w.pcMutex.RUnlock()
+
+				if !exists {
+					w.logger.Debugf("starting discovery on %s %s", iface.Name, addrStr)
+					ctx, cancel := context.WithCancel(context.Background())
+
+					w.pcMutex.Lock()
+					w.workerCancels[addrStr] = cancel
+					w.pcMutex.Unlock()
+
+					go func(iface net.Interface, addr netip.Addr) {
+						w.StartInterfaceAddr(ctx, iface, addr)
+						w.pcMutex.Lock()
+						delete(w.workerCancels, addr.String())
+						w.pcMutex.Unlock()
+					}(iface, addr)
+				}
+			}
 		}
 	}
 
-	return noValidAddr
+	// Stop workers for addresses that are gone
+	w.pcMutex.Lock()
+	for addrStr, cancel := range w.workerCancels {
+		if !seenAddrs[addrStr] {
+			w.logger.Infof("stopping discovery on %s", addrStr)
+			cancel()
+			delete(w.workerCancels, addrStr)
+		}
+	}
+	w.pcMutex.Unlock()
 }
 
-func (w *Worker) StartInterfaceAddr(iface net.Interface, addr netip.Addr) {
+func (w *Worker) StartInterfaceAddr(ctx context.Context, iface net.Interface, addr netip.Addr) {
 	var err error
 	var ndpConn *ndp.Conn
 	var pingConn *ping.Conn
@@ -236,27 +268,34 @@ func (w *Worker) StartInterfaceAddr(iface net.Interface, addr netip.Addr) {
 			zap.Int("remainingEvents", int(remainingEvents)),
 		)
 
-		err := pingConn.SendPing(&expiredAddr.Addr)
-		if err != nil {
-			w.logger.Errorw("ping failed",
-				zap.String("ipv6", netip.AddrFrom16(expiredAddr.As16()).String()),
-				zap.String("mac", expiredAddr.Hw.String()),
-				zap.String("iface", iface.Name),
-				zap.Error(err),
-			)
+		if pingConn != nil {
+			err := pingConn.SendPing(&expiredAddr.Addr)
+			if err != nil {
+				w.logger.Errorw("ping failed",
+					zap.String("ipv6", netip.AddrFrom16(expiredAddr.As16()).String()),
+					zap.String("mac", expiredAddr.Hw.String()),
+					zap.String("iface", iface.Name),
+					zap.Error(err),
+				)
+			}
 		}
 	}
 
 	processNDP := func(receivedAddr netip.Addr, receivedNetHardwareAddr net.HardwareAddr) {
 		_, existing := w.State.Register(receivedNetHardwareAddr, receivedAddr, iface.Name, w.lifetime, addrOnExpiration)
-		if !existing {
+		if !existing && ndpConn != nil {
 			ndpConn.IncrementHostsFound()
 		}
 	}
 
 	ndpConn, err = ndp.ListenForNDP(&iface, addr, processNDP)
 	if err != nil {
-		w.logger.Fatalf("error listening for NDP on interface %s: %s", iface.Name, err)
+		w.logger.Errorw("error listening for NDP",
+			zap.String("interface", iface.Name),
+			zap.String("address", addr.String()),
+			zap.Error(err),
+		)
+		return
 	}
 	defer ndpConn.Close()
 
@@ -268,7 +307,12 @@ func (w *Worker) StartInterfaceAddr(iface net.Interface, addr netip.Addr) {
 		}
 	})
 	if err != nil {
-		w.logger.Fatalf("Error listening for ICMP on interface %s: %s", iface.Name, err)
+		w.logger.Errorw("error listening for ICMP",
+			zap.String("interface", iface.Name),
+			zap.String("address", addr.String()),
+			zap.Error(err),
+		)
+		return
 	}
 	defer pingConn.Close()
 	pingCallback = onFoundAddrFunc(ndpConn, pingConn, &iface, w.logger, "ICMP echo response")
@@ -281,7 +325,12 @@ func (w *Worker) StartInterfaceAddr(iface net.Interface, addr netip.Addr) {
 		}
 	})
 	if err != nil {
-		w.logger.Fatalf("error listening for SSDP on interface %s: %s", iface.Name, err)
+		w.logger.Errorw("error listening for SSDP",
+			zap.String("interface", iface.Name),
+			zap.String("address", addr.String()),
+			zap.Error(err),
+		)
+		return
 	}
 	defer ssdpConn.Close()
 	ssdpCallback = onFoundAddrFunc(ndpConn, ssdpConn, &iface, w.logger, "SSDP announcement")
@@ -294,7 +343,12 @@ func (w *Worker) StartInterfaceAddr(iface net.Interface, addr netip.Addr) {
 		}
 	})
 	if err != nil {
-		w.logger.Fatalf("error listening for WSD on interface %s: %s", iface.Name, err)
+		w.logger.Errorw("error listening for WSD",
+			zap.String("interface", iface.Name),
+			zap.String("address", addr.String()),
+			zap.Error(err),
+		)
+		return
 	}
 	defer wsdConn.Close()
 	wsdCallback = onFoundAddrFunc(ndpConn, wsdConn, &iface, w.logger, "WSD message")
@@ -318,6 +372,7 @@ func (w *Worker) StartInterfaceAddr(iface net.Interface, addr netip.Addr) {
 	}()
 
 	discover := func() {
+		w.logger.Infof("discovery started on %s %s", iface.Name, addr.String())
 		startNDPDiscovery(ndpConn, w.logger)
 		startPingMulticast(pingConn, w.logger)
 		startSSDPDiscovery(ssdpConn, w.logger)
@@ -330,8 +385,14 @@ func (w *Worker) StartInterfaceAddr(iface net.Interface, addr netip.Addr) {
 	// Periodic re-discovery
 	ticker := time.NewTicker(w.rediscover)
 	defer ticker.Stop()
-	for range ticker.C {
-		discover()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			discover()
+		}
 	}
 }
 

@@ -1,6 +1,7 @@
 package ping
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
@@ -98,6 +99,9 @@ func ListenForICMP(iface *net.Interface, addr netip.Addr, onFoundAddr func(netip
 		for {
 			n, remoteAddrPort, err := conn.ReadFrom(packet)
 			if err != nil {
+				if errors.Is(err, net.ErrClosed) {
+					return
+				}
 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 					fmt.Printf("Timeout listening ICMP: %s", err)
 					return

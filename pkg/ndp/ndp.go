@@ -1,6 +1,7 @@
 package ndp
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
@@ -88,6 +89,9 @@ func ListenForNDP(iface *net.Interface, addr netip.Addr, processNDP func(netip.A
 		for {
 			msg, _, from, err := conn.ReadFrom()
 			if err != nil {
+				if errors.Is(err, net.ErrClosed) {
+					return
+				}
 				fmt.Printf("Error reading: %v", err)
 				continue
 			}

@@ -1,6 +1,7 @@
 package ssdp
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -92,6 +93,9 @@ func ListenForSSDP(iface *net.Interface, addr netip.Addr, onFoundAddr func(netip
 		for {
 			_, remoteAddrPort, err := conn.ReadFrom(buf)
 			if err != nil {
+				if errors.Is(err, net.ErrClosed) {
+					return
+				}
 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 					break
 				}
