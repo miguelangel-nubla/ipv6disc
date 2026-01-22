@@ -69,7 +69,7 @@ If you need to pause and select/copy data use `screen`, launch `ipv6disc -live [
 
 ## Plugins
 
-### Linux
+### Linux / OpenWrt
 Connect to a Linux host via SSH and parse `ip -6 neigh` output.
 format: `linux:address,username,password[,identity_file]`
 - `address`: Hostname or IP address (and optional port) (e.g., `192.168.1.1`, `[2001:db8::1]:2222`)
