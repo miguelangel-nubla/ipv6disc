@@ -23,6 +23,9 @@ var (
 	lifetime time.Duration
 	live     bool
 
+	discoveryListen bool
+	discoveryActive bool
+
 	pluginsFlags pluginsFlag
 )
 
@@ -53,6 +56,9 @@ func init() {
 	flag.DurationVar(&lifetime, "lifetime", 4*time.Hour, "Time to keep a discovered host entry after it has been last seen. Default: 4h")
 	flag.BoolVar(&live, "live", false, "Show the currrent state live on the terminal, default: false")
 
+	flag.BoolVar(&discoveryListen, "discovery-listen", true, "Enable listening for IPv6 discovery packets on interfaces")
+	flag.BoolVar(&discoveryActive, "discovery-active", true, "Enable active discovery (multicast Ping, SSDP, NDP solicitation)")
+
 	flag.Var(&pluginsFlags, "plugin", "Plugin configuration: type:params (can be specified multiple times)")
 }
 
@@ -69,7 +75,7 @@ func startUpdater() {
 
 	rediscover := lifetime / 3
 
-	worker := ipv6disc.NewWorker(sugar, rediscover, lifetime)
+	worker := ipv6disc.NewWorker(sugar, rediscover, lifetime, discoveryListen, discoveryActive)
 
 	for _, pCfg := range pluginsFlags {
 		p, err := plugins.Create(pCfg.Type, pCfg.Params, lifetime)

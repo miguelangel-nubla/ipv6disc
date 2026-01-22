@@ -35,6 +35,9 @@ type Worker struct {
 	protocolConns map[string]*InterfaceProcesses
 	workerCancels map[string]context.CancelFunc
 	pcMutex       sync.RWMutex
+
+	discoveryListen bool
+	discoveryActive bool
 }
 
 type worker interface {
@@ -56,18 +59,20 @@ type InterfaceProcesses struct {
 	Protocols     []*DiscoveryProtocol
 }
 
-func NewWorker(logger *zap.SugaredLogger, rediscover time.Duration, lifetime time.Duration) *Worker {
+func NewWorker(logger *zap.SugaredLogger, rediscover time.Duration, lifetime time.Duration, discoveryListen bool, discoveryActive bool) *Worker {
 	s := NewState()
 	s.SetLogger(logger)
 
 	return &Worker{
-		State:         s,
-		logger:        logger,
-		rediscover:    rediscover,
-		lifetime:      lifetime,
-		plugins:       make([]Plugin, 0),
-		protocolConns: make(map[string]*InterfaceProcesses),
-		workerCancels: make(map[string]context.CancelFunc),
+		State:           s,
+		logger:          logger,
+		rediscover:      rediscover,
+		lifetime:        lifetime,
+		plugins:         make([]Plugin, 0),
+		protocolConns:   make(map[string]*InterfaceProcesses),
+		workerCancels:   make(map[string]context.CancelFunc),
+		discoveryListen: discoveryListen,
+		discoveryActive: discoveryActive,
 	}
 }
 
@@ -167,12 +172,12 @@ func (w *Worker) Start() error {
 		defer ticker.Stop()
 
 		for {
-			w.checkInterfaces()
+			if w.discoveryListen {
+				w.checkInterfaces()
+			}
 			<-ticker.C
 		}
 	}()
-
-	w.checkInterfaces()
 
 	if len(w.plugins) > 0 {
 		return nil
@@ -372,7 +377,11 @@ func (w *Worker) StartInterfaceAddr(ctx context.Context, iface net.Interface, ad
 	}()
 
 	discover := func() {
-		w.logger.Infof("discovery started on %s %s", iface.Name, addr.String())
+		if !w.discoveryActive {
+			return
+		}
+
+		w.logger.Infof("active discovery started on %s %s", iface.Name, addr.String())
 		startNDPDiscovery(ndpConn, w.logger)
 		startPingMulticast(pingConn, w.logger)
 		startSSDPDiscovery(ssdpConn, w.logger)
