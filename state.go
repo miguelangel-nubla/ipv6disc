@@ -77,6 +77,17 @@ func (s *State) Seen(addr *Addr, source ...string) (*Addr, bool) {
 	return s.macs[mac].Seen(addr, source...)
 }
 
+func (s *State) GetAll() map[string]*AddrCollection {
+	s.macsMutex.RLock()
+	defer s.macsMutex.RUnlock()
+
+	entries := make(map[string]*AddrCollection, len(s.macs))
+	for k, v := range s.macs {
+		entries[k] = v
+	}
+	return entries
+}
+
 func (s *State) FilterMACs(hws []net.HardwareAddr) *AddrCollection {
 	results := NewAddrCollection()
 
