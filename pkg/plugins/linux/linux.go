@@ -16,12 +16,12 @@ import (
 )
 
 func init() {
-	plugins.Register("linux", func(config string, lifetime time.Duration) (ipv6disc.Plugin, error) {
+	plugins.Register("linux", func(name string, config string, lifetime time.Duration) (ipv6disc.Plugin, error) {
 		cfg, err := ParseConfig(config)
 		if err != nil {
 			return nil, err
 		}
-		return NewLinuxPlugin(cfg, lifetime), nil
+		return NewLinuxPlugin(name, cfg, lifetime), nil
 	})
 }
 
@@ -59,6 +59,7 @@ type Config struct {
 }
 
 type LinuxPlugin struct {
+	name     string
 	config   Config
 	lifetime time.Duration
 
@@ -67,15 +68,16 @@ type LinuxPlugin struct {
 	lastError      error
 }
 
-func NewLinuxPlugin(config Config, lifetime time.Duration) *LinuxPlugin {
+func NewLinuxPlugin(name string, config Config, lifetime time.Duration) *LinuxPlugin {
 	return &LinuxPlugin{
+		name:     name,
 		config:   config,
 		lifetime: lifetime,
 	}
 }
 
 func (p *LinuxPlugin) Name() string {
-	return "linux:" + p.config.Address
+	return p.name
 }
 
 func (p *LinuxPlugin) Stats() map[string]any {

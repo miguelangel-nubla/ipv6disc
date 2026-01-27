@@ -18,12 +18,12 @@ import (
 )
 
 func init() {
-	plugins.Register("mikrotik", func(config string, lifetime time.Duration) (ipv6disc.Plugin, error) {
+	plugins.Register("mikrotik", func(name string, config string, lifetime time.Duration) (ipv6disc.Plugin, error) {
 		cfg, err := ParseConfig(config)
 		if err != nil {
 			return nil, err
 		}
-		return NewMikrotikPlugin(cfg, lifetime), nil
+		return NewMikrotikPlugin(name, cfg, lifetime), nil
 	})
 }
 
@@ -66,6 +66,7 @@ type Config struct {
 }
 
 type MikrotikPlugin struct {
+	name     string
 	config   Config
 	lifetime time.Duration
 
@@ -74,15 +75,16 @@ type MikrotikPlugin struct {
 	lastError      error
 }
 
-func NewMikrotikPlugin(config Config, lifetime time.Duration) *MikrotikPlugin {
+func NewMikrotikPlugin(name string, config Config, lifetime time.Duration) *MikrotikPlugin {
 	return &MikrotikPlugin{
+		name:     name,
 		config:   config,
 		lifetime: lifetime,
 	}
 }
 
 func (p *MikrotikPlugin) Name() string {
-	return "mikrotik:" + p.config.Address
+	return p.name
 }
 
 func (p *MikrotikPlugin) Stats() map[string]any {

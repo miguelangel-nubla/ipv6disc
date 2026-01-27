@@ -69,3 +69,8 @@ func TestParseConfig(t *testing.T) {
 	_, err = ParseConfig("192.168.1.1,user")
 	assert.Error(t, err)
 }
+
+func TestPluginName(t *testing.T) {
+	plugin := NewLinuxPlugin("my-router", Config{Address: "192.168.1.1"}, time.Hour)
+	assert.Equal(t, "my-router", plugin.Name())
+}

@@ -16,12 +16,12 @@ import (
 )
 
 func init() {
-	plugins.Register("freebsd", func(config string, lifetime time.Duration) (ipv6disc.Plugin, error) {
+	plugins.Register("freebsd", func(name string, config string, lifetime time.Duration) (ipv6disc.Plugin, error) {
 		cfg, err := ParseConfig(config)
 		if err != nil {
 			return nil, err
 		}
-		return NewFreeBSDPlugin(cfg, lifetime), nil
+		return NewFreeBSDPlugin(name, cfg, lifetime), nil
 	})
 }
 
@@ -59,6 +59,7 @@ type Config struct {
 }
 
 type FreeBSDPlugin struct {
+	name     string
 	config   Config
 	lifetime time.Duration
 
@@ -67,15 +68,16 @@ type FreeBSDPlugin struct {
 	lastError      error
 }
 
-func NewFreeBSDPlugin(config Config, lifetime time.Duration) *FreeBSDPlugin {
+func NewFreeBSDPlugin(name string, config Config, lifetime time.Duration) *FreeBSDPlugin {
 	return &FreeBSDPlugin{
+		name:     name,
 		config:   config,
 		lifetime: lifetime,
 	}
 }
 
 func (p *FreeBSDPlugin) Name() string {
-	return "freebsd:" + p.config.Address
+	return p.name
 }
 
 func (p *FreeBSDPlugin) Stats() map[string]any {

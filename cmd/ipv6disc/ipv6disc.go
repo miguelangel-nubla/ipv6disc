@@ -30,6 +30,7 @@ var (
 )
 
 type pluginsFlag []struct {
+	Name   string
 	Type   string
 	Params string
 }
@@ -39,15 +40,29 @@ func (p *pluginsFlag) String() string {
 }
 
 func (p *pluginsFlag) Set(value string) error {
+	var name string
+	idx := strings.Index(value, "=")
+	if idx == -1 {
+		return fmt.Errorf("invalid plugin format, expected: name=type:params")
+	}
+
+	name = value[:idx]
+	value = value[idx+1:]
+
+	if name == "" {
+		return fmt.Errorf("plugin name cannot be empty")
+	}
+
 	parts := strings.SplitN(value, ":", 2)
 	if len(parts) < 2 {
-		return fmt.Errorf("invalid plugin format, expected: type:params")
+		return fmt.Errorf("invalid plugin format, expected: name=type:params")
 	}
 
 	*p = append(*p, struct {
+		Name   string
 		Type   string
 		Params string
-	}{parts[0], parts[1]})
+	}{name, parts[0], parts[1]})
 	return nil
 }
 
@@ -59,7 +74,7 @@ func init() {
 	flag.BoolVar(&discoveryListen, "discovery-listen", true, "Enable listening for IPv6 discovery packets on interfaces")
 	flag.BoolVar(&discoveryActive, "discovery-active", true, "Enable active discovery (multicast Ping, SSDP, NDP solicitation)")
 
-	flag.Var(&pluginsFlags, "plugin", "Plugin configuration: type:params (can be specified multiple times)")
+	flag.Var(&pluginsFlags, "plugin", "Plugin configuration: name=type:params (can be specified multiple times)")
 }
 
 func main() {
@@ -78,7 +93,7 @@ func startUpdater() {
 	worker := ipv6disc.NewWorker(sugar, rediscover, lifetime, discoveryListen, discoveryActive)
 
 	for _, pCfg := range pluginsFlags {
-		p, err := plugins.Create(pCfg.Type, pCfg.Params, lifetime)
+		p, err := plugins.Create(pCfg.Type, pCfg.Name, pCfg.Params, lifetime)
 		if err != nil {
 			sugar.Fatalf("can't create plugin %s: %s", pCfg.Type, err)
 		}
