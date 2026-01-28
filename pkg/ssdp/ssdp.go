@@ -3,7 +3,6 @@ package ssdp
 import (
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"net/netip"
 	"sync/atomic"
@@ -70,11 +69,11 @@ func (conn *Conn) SendSSDPRequest(target *netip.Addr) error {
 	return nil
 }
 
-func ListenForSSDP(iface *net.Interface, addr netip.Addr, onFoundAddr func(netip.Addr)) (*Conn, error) {
+func ListenForSSDP(iface *net.Interface, addr netip.Addr, onFoundAddr func(netip.Addr), onError func(error)) (*Conn, error) {
 	listenAddrPort := netip.AddrPortFrom(addr, 0)
 	conn, err := net.ListenPacket("udp6", listenAddrPort.String())
 	if err != nil {
-		log.Fatalf("failed to listen for SSDP packets: %v", err)
+		return nil, fmt.Errorf("failed to listen for SSDP packets: %w", err)
 	}
 
 	listenAddrPort = netip.MustParseAddrPort(conn.LocalAddr().(*net.UDPAddr).String())
@@ -99,7 +98,9 @@ func ListenForSSDP(iface *net.Interface, addr netip.Addr, onFoundAddr func(netip
 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 					break
 				}
-				log.Printf("read error: %v", err)
+				if onError != nil {
+					onError(fmt.Errorf("read error: %w", err))
+				}
 				continue
 			}
 			atomic.AddUint64(&connStats.stats.PacketsReceived, 1)

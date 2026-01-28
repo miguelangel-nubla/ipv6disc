@@ -3,7 +3,6 @@ package wsd
 import (
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"net/netip"
 	"sync/atomic"
@@ -78,7 +77,7 @@ func (conn *Conn) SendProbe(target *netip.Addr) error {
 	return nil
 }
 
-func ListenForWSD(iface *net.Interface, addr netip.Addr, onFoundAddr func(netip.Addr)) (*Conn, error) {
+func ListenForWSD(iface *net.Interface, addr netip.Addr, onFoundAddr func(netip.Addr), onError func(error)) (*Conn, error) {
 	listenAddrPort := netip.AddrPortFrom(addr, 0)
 	conn, err := net.ListenPacket("udp6", listenAddrPort.String())
 	if err != nil {
@@ -107,7 +106,9 @@ func ListenForWSD(iface *net.Interface, addr netip.Addr, onFoundAddr func(netip.
 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 					break
 				}
-				log.Printf("read error: %v", err)
+				if onError != nil {
+					onError(fmt.Errorf("read error: %w", err))
+				}
 				continue
 			}
 			atomic.AddUint64(&connStats.stats.PacketsReceived, 1)

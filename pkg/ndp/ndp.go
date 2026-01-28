@@ -67,7 +67,7 @@ func (conn *Conn) SendNeighborSolicitation(target *netip.Addr) error {
 	return nil
 }
 
-func ListenForNDP(iface *net.Interface, addr netip.Addr, processNDP func(netip.Addr, net.HardwareAddr)) (*Conn, error) {
+func ListenForNDP(iface *net.Interface, addr netip.Addr, processNDP func(netip.Addr, net.HardwareAddr), onError func(error)) (*Conn, error) {
 	conn, _, err := ndp.Listen(iface, ndp.Addr(addr.String()))
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen for NDP packets: %v", err)
@@ -86,7 +86,9 @@ func ListenForNDP(iface *net.Interface, addr netip.Addr, processNDP func(netip.A
 				if errors.Is(err, net.ErrClosed) {
 					return
 				}
-				fmt.Printf("Error reading: %v", err)
+				if onError != nil {
+					onError(fmt.Errorf("error reading: %w", err))
+				}
 				continue
 			}
 			atomic.AddUint64(&connStats.stats.PacketsReceived, 1)

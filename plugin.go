@@ -9,7 +9,7 @@ type Plugin interface {
 	// Name returns the name of the plugin.
 	Name() string
 	// Start starts the plugin. It should block until the context is cancelled.
-	Start(ctx context.Context, state *State) error
+	Start(ctx context.Context, state *State, onError func(error)) error
 	// Stats returns the current statistics for the plugin.
 	Stats() map[string]any
 }

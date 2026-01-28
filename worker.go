@@ -156,9 +156,11 @@ func (w *Worker) Start() error {
 	if len(w.plugins) > 0 {
 		for _, p := range w.plugins {
 			go func(p Plugin) {
-				err := p.Start(context.Background(), w.State)
+				err := p.Start(context.Background(), w.State, func(err error) {
+					w.logger.Errorf("plugin %s error: %s", p.Name(), err)
+				})
 				if err != nil {
-					w.logger.Errorf("plugin %s failed: %s", p.Name(), err)
+					w.logger.Errorf("plugin %s failed to start: %s", p.Name(), err)
 				}
 			}(p)
 		}
@@ -290,7 +292,13 @@ func (w *Worker) StartInterfaceAddr(ctx context.Context, iface net.Interface, ad
 		}
 	}
 
-	ndpConn, err = ndp.ListenForNDP(&iface, addr, processNDP)
+	ndpConn, err = ndp.ListenForNDP(&iface, addr, processNDP, func(err error) {
+		w.logger.Errorw("NDP error",
+			zap.String("interface", iface.Name),
+			zap.String("address", addr.String()),
+			zap.Error(err),
+		)
+	})
 	if err != nil {
 		w.logger.Errorw("error listening for NDP",
 			zap.String("interface", iface.Name),
@@ -307,6 +315,12 @@ func (w *Worker) StartInterfaceAddr(ctx context.Context, iface net.Interface, ad
 		if pingCallback != nil {
 			pingCallback(remoteIP)
 		}
+	}, func(err error) {
+		w.logger.Errorw("ICMP error",
+			zap.String("interface", iface.Name),
+			zap.String("address", addr.String()),
+			zap.Error(err),
+		)
 	})
 	if err != nil {
 		w.logger.Errorw("error listening for ICMP",
@@ -325,6 +339,12 @@ func (w *Worker) StartInterfaceAddr(ctx context.Context, iface net.Interface, ad
 		if ssdpCallback != nil {
 			ssdpCallback(remoteIP)
 		}
+	}, func(err error) {
+		w.logger.Errorw("SSDP error",
+			zap.String("interface", iface.Name),
+			zap.String("address", addr.String()),
+			zap.Error(err),
+		)
 	})
 	if err != nil {
 		w.logger.Errorw("error listening for SSDP",
@@ -343,6 +363,12 @@ func (w *Worker) StartInterfaceAddr(ctx context.Context, iface net.Interface, ad
 		if wsdCallback != nil {
 			wsdCallback(remoteIP)
 		}
+	}, func(err error) {
+		w.logger.Errorw("WSD error",
+			zap.String("interface", iface.Name),
+			zap.String("address", addr.String()),
+			zap.Error(err),
+		)
 	})
 	if err != nil {
 		w.logger.Errorw("error listening for WSD",

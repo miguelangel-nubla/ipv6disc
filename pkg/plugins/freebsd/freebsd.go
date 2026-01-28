@@ -92,13 +92,16 @@ func (p *FreeBSDPlugin) Stats() map[string]any {
 	}
 }
 
-func (p *FreeBSDPlugin) Start(ctx context.Context, state *ipv6disc.State) error {
+func (p *FreeBSDPlugin) Start(ctx context.Context, state *ipv6disc.State, onError func(error)) error {
 	ticker := time.NewTicker(p.config.Interval)
 	defer ticker.Stop()
 
 	// Initial discovery
 	if err := p.discover(state); err != nil {
 		p.lastError = err
+		if onError != nil {
+			onError(err)
+		}
 	}
 
 	for {
@@ -108,6 +111,9 @@ func (p *FreeBSDPlugin) Start(ctx context.Context, state *ipv6disc.State) error 
 		case <-ticker.C:
 			if err := p.discover(state); err != nil {
 				p.lastError = err
+				if onError != nil {
+					onError(err)
+				}
 			}
 		}
 	}

@@ -80,7 +80,7 @@ func (conn *Conn) SendPing(target *netip.Addr) error {
 	return nil
 }
 
-func ListenForICMP(iface *net.Interface, addr netip.Addr, onFoundAddr func(netip.Addr)) (*Conn, error) {
+func ListenForICMP(iface *net.Interface, addr netip.Addr, onFoundAddr func(netip.Addr), onError func(error)) (*Conn, error) {
 	conn, err := icmp.ListenPacket("ip6:ipv6-icmp", addr.String())
 	if err != nil {
 		return nil, fmt.Errorf("error listening for ICMPv6 packets on %v: %v", addr, err)
@@ -103,16 +103,22 @@ func ListenForICMP(iface *net.Interface, addr netip.Addr, onFoundAddr func(netip
 					return
 				}
 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-					fmt.Printf("Timeout listening ICMP: %s", err)
+					if onError != nil {
+						onError(fmt.Errorf("timeout listening ICMP: %w", err))
+					}
 					return
 				}
-				fmt.Printf("Error reading packet: %s", err)
+				if onError != nil {
+					onError(fmt.Errorf("error reading packet: %w", err))
+				}
 				continue
 			}
 
 			msg, err := icmp.ParseMessage(ipv6.ICMPTypeEchoReply.Protocol(), packet[:n])
 			if err != nil {
-				fmt.Printf("Error parsing ICMPv6 message: %s", err)
+				if onError != nil {
+					onError(fmt.Errorf("error parsing ICMPv6 message: %w", err))
+				}
 				continue
 			}
 

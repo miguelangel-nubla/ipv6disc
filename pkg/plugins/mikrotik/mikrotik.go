@@ -99,13 +99,16 @@ func (p *MikrotikPlugin) Stats() map[string]any {
 	}
 }
 
-func (p *MikrotikPlugin) Start(ctx context.Context, state *ipv6disc.State) error {
+func (p *MikrotikPlugin) Start(ctx context.Context, state *ipv6disc.State, onError func(error)) error {
 	ticker := time.NewTicker(p.config.Interval)
 	defer ticker.Stop()
 
 	// Initial discovery
 	if err := p.discover(state); err != nil {
 		p.lastError = err
+		if onError != nil {
+			onError(err)
+		}
 	}
 
 	for {
@@ -115,6 +118,9 @@ func (p *MikrotikPlugin) Start(ctx context.Context, state *ipv6disc.State) error
 		case <-ticker.C:
 			if err := p.discover(state); err != nil {
 				p.lastError = err
+				if onError != nil {
+					onError(err)
+				}
 			}
 		}
 	}
@@ -182,10 +188,6 @@ func (p *MikrotikPlugin) discover(state *ipv6disc.State) error {
 		if err != nil {
 			continue
 		}
-
-		// Mikrotik doesn't provide the interface name in this table in a way that is easily mapable to the local machine's interface names
-		// However, the worker expects a netip.Addr which may include a zone.
-		// We use the plugin name as the source to indicate which router this address was discovered on.
 
 		if _, existing := state.Register(hw, ip, p.Name(), p.lifetime, nil); !existing {
 			p.discoveryCount++
