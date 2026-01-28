@@ -374,12 +374,13 @@ func (w *Worker) StartInterfaceAddr(ctx context.Context, iface net.Interface, ad
 	}()
 
 	discover := func() {
+		w.State.Register(iface.HardwareAddr, addr, iface.Name, w.lifetime, addrOnExpiration)
+
 		if !w.discoveryActive {
 			return
 		}
 
 		w.logger.Infof("active discovery started on %s %s", iface.Name, addr.String())
-		startNDPDiscovery(ndpConn, w.logger)
 		startPingMulticast(pingConn, w.logger)
 		startSSDPDiscovery(ssdpConn, w.logger)
 		startWSDiscovery(wsdConn, w.logger)
@@ -414,6 +415,18 @@ func isValidInterface(iface *net.Interface) error {
 
 func onFoundAddrFunc(ndpConn *ndp.Conn, protocolConn HostCounter, iface *net.Interface, logger *zap.SugaredLogger, logString string) func(remoteIP netip.Addr) {
 	return func(remoteIP netip.Addr) {
+		if addrs, err := iface.Addrs(); err == nil {
+			for _, a := range addrs {
+				if ipNet, ok := a.(*net.IPNet); ok {
+					if addr, ok := netip.AddrFromSlice(ipNet.IP); ok {
+						if addr.Compare(remoteIP) == 0 {
+							return
+						}
+					}
+				}
+			}
+		}
+
 		logger.Debugw(logString+" received",
 			zap.String("remote", remoteIP.String()),
 			zap.String("interface", iface.Name),
@@ -424,20 +437,6 @@ func onFoundAddrFunc(ndpConn *ndp.Conn, protocolConn HostCounter, iface *net.Int
 		if ndpConn != nil {
 			ndpConn.SendNeighborSolicitation(&remoteIP)
 		}
-	}
-}
-
-func startNDPDiscovery(ndpConn *ndp.Conn, logger *zap.SugaredLogger) {
-	logger.Debugw("send ICMPv6 Neighbor Solicitation to all-nodes link-local multicast address",
-		zap.String("source", ndpConn.GetListenAddr().String()),
-	)
-
-	err := ndpConn.DiscoverMulticast()
-	if err != nil {
-		logger.Fatalw("send ICMPv6 Neighbor Solicitation failed",
-			err,
-			zap.String("source", ndpConn.GetListenAddr().String()),
-		)
 	}
 }
 

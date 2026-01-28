@@ -42,12 +42,6 @@ func (conn *Conn) IncrementHostsFound() {
 	atomic.AddUint64(&conn.stats.HostsFound, 1)
 }
 
-func (conn *Conn) DiscoverMulticast() error {
-	atomic.AddUint64(&conn.stats.DiscoveryRuns, 1)
-	target := netip.MustParseAddr("ff02::1")
-	return conn.SendNeighborSolicitation(&target)
-}
-
 func (conn *Conn) SendNeighborSolicitation(target *netip.Addr) error {
 	atomic.AddUint64(&conn.stats.PacketsSent, 1)
 	// Always multicast to the target's solicited-node multicast address to discover MAC address.
