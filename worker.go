@@ -2,6 +2,7 @@ package ipv6disc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
@@ -183,6 +184,53 @@ func (w *Worker) Start() error {
 	}
 
 	return nil
+}
+
+// Prefixes returns the /64 networks of the addresses being listened on.
+func (w *Worker) Prefixes() []netip.Prefix {
+	w.pcMutex.RLock()
+	defer w.pcMutex.RUnlock()
+
+	seen := make(map[netip.Prefix]bool)
+	var result []netip.Prefix
+	for _, processes := range w.protocolConns {
+		prefix := netip.PrefixFrom(processes.Address, 64).Masked()
+		if !seen[prefix] {
+			seen[prefix] = true
+			result = append(result, prefix)
+		}
+	}
+	return result
+}
+
+// Solicit sends a neighbor solicitation for target on the links that have its /64. If the address
+// is there, its answer registers it as any other discovered address. It returns how many links it
+// was sent on: an address that stays quiet is otherwise never found.
+func (w *Worker) Solicit(target netip.Addr) (int, error) {
+	w.pcMutex.RLock()
+	defer w.pcMutex.RUnlock()
+
+	sent := 0
+	interfaces := make(map[string]bool)
+	var errs []error
+	for _, processes := range w.protocolConns {
+		if interfaces[processes.InterfaceName] || !netip.PrefixFrom(processes.Address, 64).Masked().Contains(target) {
+			continue
+		}
+		for _, protocol := range processes.Protocols {
+			conn, ok := protocol.Worker.(*ndp.Conn)
+			if !ok {
+				continue
+			}
+			if err := conn.SendNeighborSolicitation(&target); err != nil {
+				errs = append(errs, err)
+				continue
+			}
+			interfaces[processes.InterfaceName] = true
+			sent++
+		}
+	}
+	return sent, errors.Join(errs...)
 }
 
 func (w *Worker) checkInterfaces() {

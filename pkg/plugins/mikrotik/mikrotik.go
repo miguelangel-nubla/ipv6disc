@@ -175,7 +175,7 @@ func (p *MikrotikPlugin) discover(state *ipv6disc.State) error {
 		macStr := re.Map["mac-address"]
 		ipStr := re.Map["address"]
 
-		if macStr == "" || ipStr == "" {
+		if macStr == "" || ipStr == "" || !neighborInUse(re.Map["status"]) {
 			continue
 		}
 
@@ -195,4 +195,11 @@ func (p *MikrotikPlugin) discover(state *ipv6disc.State) error {
 	}
 
 	return nil
+}
+
+// neighborInUse tells whether a neighbor entry shows its host is there now. RouterOS keeps an entry
+// long after the host is gone, as stale or failed, and registering it would refresh the address at
+// every poll, so it would never expire.
+func neighborInUse(status string) bool {
+	return status != "stale" && status != "failed"
 }
