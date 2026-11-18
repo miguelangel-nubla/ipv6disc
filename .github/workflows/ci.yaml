@@ -55,3 +55,23 @@ jobs:
       -
         name: Test
         run: GOARCH=386 go test ./...
+
+  # Discovery over a real link, between two network namespaces: it needs root.
+  live-discovery:
+    runs-on: ubuntu-latest
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v3
+      -
+        name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: 'stable'
+          check-latest: true
+      -
+        name: Build
+        run: go test -c -tags integration -o integration.test .
+      -
+        name: Test
+        run: sudo ./integration.test -test.run '^TestLiveDiscovery$' -test.v -test.timeout 4m
