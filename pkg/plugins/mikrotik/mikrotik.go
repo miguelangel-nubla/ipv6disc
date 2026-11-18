@@ -128,32 +128,40 @@ func (p *MikrotikPlugin) discover(ctx context.Context, state *ipv6disc.State) (i
 	}
 	defer client.Close()
 
-	reply, err := client.RunContext(ctx, "/ipv6/neighbor/print")
-	if err != nil {
-		return 0, fmt.Errorf("error fetching ipv6 neighbors: %w", err)
+	tables := []string{"/ipv6/neighbor/print"}
+	if state.IPv4() {
+		// The IPv4 neighbors, ARP, alike.
+		tables = append(tables, "/ip/arp/print")
 	}
 
 	found := 0
-	for _, re := range reply.Re {
-		macStr := re.Map["mac-address"]
-		ipStr := re.Map["address"]
-
-		if macStr == "" || ipStr == "" || !neighborInUse(re.Map["status"]) {
-			continue
-		}
-
-		hw, err := net.ParseMAC(macStr)
+	for _, table := range tables {
+		reply, err := client.RunContext(ctx, table)
 		if err != nil {
-			continue
+			return found, fmt.Errorf("error fetching %s: %w", table, err)
 		}
 
-		ip, err := netip.ParseAddr(ipStr)
-		if err != nil {
-			continue
-		}
+		for _, re := range reply.Re {
+			macStr := re.Map["mac-address"]
+			ipStr := re.Map["address"]
 
-		if _, existing := state.Register(hw, ip, p.Name(), p.lifetime, nil); !existing {
-			found++
+			if macStr == "" || ipStr == "" || !neighborInUse(re.Map["status"]) {
+				continue
+			}
+
+			hw, err := net.ParseMAC(macStr)
+			if err != nil {
+				continue
+			}
+
+			ip, err := netip.ParseAddr(ipStr)
+			if err != nil {
+				continue
+			}
+
+			if _, existing := state.Register(hw, ip, p.Name(), p.lifetime, nil); !existing {
+				found++
+			}
 		}
 	}
 

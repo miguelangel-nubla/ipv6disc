@@ -110,3 +110,36 @@ func TestDiscoverOverSSH(t *testing.T) {
 		t.Errorf("pinned: %v, warnings %v", err, warnings)
 	}
 }
+
+func TestDiscoverIPv4(t *testing.T) {
+	const table = "192.168.1.10 dev eth0 lladdr 00:1a:2b:3c:4d:10 REACHABLE\n192.168.1.11 dev eth0 lladdr 00:1a:2b:3c:4d:11 STALE\n192.168.1.12 dev eth0  FAILED\n2001:db8::1 dev eth0 lladdr 00:1a:2b:3c:4d:09 REACHABLE\n"
+	server := sshtest.Start(t, "root", "secret", func(command string) ([]byte, error) {
+		switch command {
+		case "ip neigh":
+			return []byte(table), nil
+		case "ip -6 neigh":
+			return []byte("2001:db8::1 dev eth0 lladdr 00:1a:2b:3c:4d:09 REACHABLE\n"), nil
+		}
+		return nil, errors.New("unexpected command")
+	})
+	cfg := Config{Interval: time.Minute, Address: server.Address, Username: "root", Password: "secret", HostKey: server.HostKey}
+
+	// Without IPv4, the IPv6 table only.
+	state := ipv6disc.NewState()
+	if found, err := NewLinuxPlugin("router", cfg, time.Hour).discover(context.Background(), state, nil); err != nil || found != 1 {
+		t.Errorf("IPv6 only: found %d, %v", found, err)
+	}
+
+	state = ipv6disc.NewState()
+	state.EnableIPv4()
+	found, err := NewLinuxPlugin("router", cfg, time.Hour).discover(context.Background(), state, nil)
+	if err != nil || found != 2 {
+		t.Errorf("with IPv4: found %d, %v, want the reachable IPv4 and the IPv6", found, err)
+	}
+	if got := state.GetAll()["00:1a:2b:3c:4d:10"]; got == nil || got.Strings()[0] != "192.168.1.10" {
+		t.Errorf("the IPv4 neighbor: %v", got)
+	}
+	if got := server.Commands(); got[0] != "ip -6 neigh" || got[1] != "ip neigh" {
+		t.Errorf("commands: %v", got)
+	}
+}

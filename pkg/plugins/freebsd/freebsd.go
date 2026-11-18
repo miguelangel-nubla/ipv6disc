@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/miguelangel-nubla/ipv6disc"
+	"github.com/miguelangel-nubla/ipv6disc/pkg/arp"
 	"github.com/miguelangel-nubla/ipv6disc/pkg/plugins"
 )
 
@@ -28,7 +29,8 @@ func ParseConfig(config string) (Config, error) {
 	return plugins.ParseSSHConfig("freebsd", config)
 }
 
-// FreeBSDPlugin reads the neighbor table of a FreeBSD host, `ndp -an`, over SSH.
+// FreeBSDPlugin reads the neighbor table of a FreeBSD host over SSH: `ndp -an`, and `arp -an`
+// when the state takes IPv4.
 type FreeBSDPlugin struct {
 	plugins.Poller
 
@@ -59,7 +61,12 @@ func (p *FreeBSDPlugin) discover(ctx context.Context, state *ipv6disc.State, onE
 	ctx, cancel := context.WithTimeout(ctx, plugins.PollTimeout)
 	defer cancel()
 
-	output, hostKey, err := plugins.RunSSH(ctx, p.config, "ndp -an")
+	// The IPv4 table too, when the state takes it, in the same session.
+	command := "ndp -an"
+	if state.IPv4() {
+		command = "ndp -an; echo " + arpMarker + "; arp -an"
+	}
+	output, hostKey, err := plugins.RunSSH(ctx, p.config, command)
 	if err != nil {
 		return 0, err
 	}
@@ -67,8 +74,19 @@ func (p *FreeBSDPlugin) discover(ctx context.Context, state *ipv6disc.State, onE
 		p.warned = true
 		onError(plugins.HostKeyWarning(p.config.Address, hostKey))
 	}
-	return p.parseNDPOutput(string(output), state), nil
+
+	ndpOutput, arpOutput, _ := strings.Cut(string(output), arpMarker+"\n")
+	found := p.parseNDPOutput(ndpOutput, state)
+	for _, n := range arp.ParseBSD(arpOutput) {
+		if _, existing := state.Register(n.MAC, n.IP, p.Name(), p.lifetime, nil); !existing {
+			found++
+		}
+	}
+	return found, nil
 }
+
+// arpMarker separates the outputs of ndp and arp.
+const arpMarker = "--- ipv6disc arp ---"
 
 // parseNDPOutput registers the neighbors in `ndp -an` output, and returns how many are new.
 //

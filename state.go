@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
@@ -17,16 +18,35 @@ type State struct {
 	macs      map[string]*AddrCollection
 	macsMutex sync.RWMutex
 	logger    *zap.SugaredLogger
+	// Whether it takes IPv4 addresses: IPv6 only by default.
+	ipv4 atomic.Bool
+}
+
+// EnableIPv4 makes the state take IPv4 addresses too, and the plugins and the local discovery
+// read the IPv4 neighbors: ARP. Without it, Register leaves IPv4 addresses out.
+func (s *State) EnableIPv4() {
+	s.ipv4.Store(true)
+}
+
+// IPv4 tells whether the state takes IPv4 addresses, for the plugins to read them.
+func (s *State) IPv4() bool {
+	return s.ipv4.Load()
 }
 
 func (s *State) SetLogger(l *zap.SugaredLogger) {
 	s.logger = l
 }
 
-// Register adds a discovered address to the state, or refreshes the one already there.
+// Register adds a discovered address to the state, or refreshes the one already there. An IPv4
+// address, unless EnableIPv4 was called, is left out: it returns nil and true, as if known.
 // onExpiration, which can be nil, is called on each expiration event of a new address. When the
 // address expires it is logged and taken out of the state, unless it was seen again meanwhile.
 func (s *State) Register(hw net.HardwareAddr, ip netip.Addr, source string, lifetime time.Duration, onExpiration func(*Addr, AddrExpirationRemainingEvents)) (*Addr, bool) {
+	ip = ip.Unmap()
+	if ip.Is4() && !s.IPv4() {
+		return nil, true
+	}
+
 	expire := func(expiredAddr *Addr, remainingEvents AddrExpirationRemainingEvents) {
 		if onExpiration != nil {
 			onExpiration(expiredAddr, remainingEvents)
@@ -36,7 +56,7 @@ func (s *State) Register(hw net.HardwareAddr, ip netip.Addr, source string, life
 		}
 		if s.logger != nil {
 			s.logger.Infow("host expired",
-				zap.String("ipv6", expiredAddr.WithZone("").String()),
+				zap.String("ip", expiredAddr.WithZone("").String()),
 				zap.String("mac", expiredAddr.Hw.String()),
 				zap.String("source", source),
 			)
@@ -49,14 +69,14 @@ func (s *State) Register(hw net.HardwareAddr, ip netip.Addr, source string, life
 		addr.Watch()
 		if s.logger != nil {
 			s.logger.Infow("host identified",
-				zap.String("ipv6", ip.WithZone("").String()),
+				zap.String("ip", ip.WithZone("").String()),
 				zap.String("mac", hw.String()),
 				zap.String("source", source),
 			)
 		}
 	} else if s.logger != nil {
 		s.logger.Debugw("ttl refreshed",
-			zap.String("ipv6", ip.String()),
+			zap.String("ip", ip.String()),
 			zap.String("mac", hw.String()),
 			zap.String("source", source),
 		)
