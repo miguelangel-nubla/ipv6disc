@@ -12,3 +12,18 @@ func TestNeighborInUse(t *testing.T) {
 		}
 	}
 }
+
+func TestParseConfig(t *testing.T) {
+	cfg, err := ParseConfig("60s,192.0.2.1,admin,secret,TRUE,AB:cd:01")
+	if err != nil || !cfg.UseTLS || cfg.TLSFingerprint != "abcd01" || cfg.Address != "192.0.2.1" || cfg.Password != "secret" {
+		t.Errorf("got %+v, %v", cfg, err)
+	}
+	if cfg, err := ParseConfig("60s,192.0.2.1,admin,secret"); err != nil || cfg.UseTLS {
+		t.Errorf("without TLS: got %+v, %v", cfg, err)
+	}
+	for _, bad := range []string{"60s,192.0.2.1,admin", "never,192.0.2.1,admin,secret", "0s,192.0.2.1,admin,secret"} {
+		if _, err := ParseConfig(bad); err == nil {
+			t.Errorf("%q: want an error", bad)
+		}
+	}
+}

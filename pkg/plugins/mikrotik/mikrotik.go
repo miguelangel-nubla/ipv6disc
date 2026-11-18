@@ -37,6 +37,9 @@ func ParseConfig(config string) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("invalid interval format: %w", err)
 	}
+	if interval <= 0 {
+		return Config{}, fmt.Errorf("invalid interval %s: it must be positive", interval)
+	}
 
 	cfg := Config{
 		Interval: interval,
@@ -65,14 +68,13 @@ type Config struct {
 	TLSFingerprint string
 }
 
+// MikrotikPlugin reads the IPv6 neighbor table of a RouterOS router over its API.
 type MikrotikPlugin struct {
+	plugins.Poller
+
 	name     string
 	config   Config
 	lifetime time.Duration
-
-	discoveryCount int
-	lastRun        time.Time
-	lastError      error
 }
 
 func NewMikrotikPlugin(name string, config Config, lifetime time.Duration) *MikrotikPlugin {
@@ -87,55 +89,19 @@ func (p *MikrotikPlugin) Name() string {
 	return p.name
 }
 
-func (p *MikrotikPlugin) Stats() map[string]any {
-	lastErr := ""
-	if p.lastError != nil {
-		lastErr = p.lastError.Error()
-	}
-	return map[string]any{
-		"discovery_count": p.discoveryCount,
-		"last_run":        p.lastRun,
-		"last_error":      lastErr,
-	}
-}
-
 func (p *MikrotikPlugin) Start(ctx context.Context, state *ipv6disc.State, onError func(error)) error {
-	ticker := time.NewTicker(p.config.Interval)
-	defer ticker.Stop()
-
-	// Initial discovery
-	if err := p.discover(state); err != nil {
-		p.lastError = err
-		if onError != nil {
-			onError(err)
-		}
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			if err := p.discover(state); err != nil {
-				p.lastError = err
-				if onError != nil {
-					onError(err)
-				}
-			}
-		}
-	}
+	return p.Run(ctx, p.config.Interval, func() (int, error) { return p.discover(ctx, state) }, onError)
 }
 
-func (p *MikrotikPlugin) discover(state *ipv6disc.State) error {
-	p.lastRun = time.Now()
+// requestTimeout bounds a whole poll: connecting, logging in and reading the neighbors.
+const requestTimeout = 30 * time.Second
+
+func (p *MikrotikPlugin) discover(ctx context.Context, state *ipv6disc.State) (int, error) {
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+
 	var client *routeros.Client
 	var err error
-
-	defaultPort := "8728"
-	if p.config.UseTLS {
-		defaultPort = "8729"
-	}
-	addr := plugins.FormatAddress(p.config.Address, defaultPort)
 
 	if p.config.UseTLS {
 		var tlsConfig *tls.Config
@@ -155,22 +121,22 @@ func (p *MikrotikPlugin) discover(state *ipv6disc.State) error {
 				},
 			}
 		}
-		client, err = routeros.DialTLS(addr, p.config.Username, p.config.Password, tlsConfig)
+		client, err = routeros.DialTLSContext(ctx, plugins.FormatAddress(p.config.Address, "8729"), p.config.Username, p.config.Password, tlsConfig)
 	} else {
-		client, err = routeros.Dial(addr, p.config.Username, p.config.Password)
+		client, err = routeros.DialContext(ctx, plugins.FormatAddress(p.config.Address, "8728"), p.config.Username, p.config.Password)
 	}
 
 	if err != nil {
-		return fmt.Errorf("error connecting to mikrotik: %w", err)
+		return 0, fmt.Errorf("error connecting to mikrotik: %w", err)
 	}
 	defer client.Close()
 
-	reply, err := client.Run("/ipv6/neighbor/print")
+	reply, err := client.RunContext(ctx, "/ipv6/neighbor/print")
 	if err != nil {
-		return fmt.Errorf("error fetching ipv6 neighbors: %w", err)
+		return 0, fmt.Errorf("error fetching ipv6 neighbors: %w", err)
 	}
-	p.lastError = nil
 
+	found := 0
 	for _, re := range reply.Re {
 		macStr := re.Map["mac-address"]
 		ipStr := re.Map["address"]
@@ -190,11 +156,11 @@ func (p *MikrotikPlugin) discover(state *ipv6disc.State) error {
 		}
 
 		if _, existing := state.Register(hw, ip, p.Name(), p.lifetime, nil); !existing {
-			p.discoveryCount++
+			found++
 		}
 	}
 
-	return nil
+	return found, nil
 }
 
 // neighborInUse tells whether a neighbor entry shows its host is there now. RouterOS keeps an entry
