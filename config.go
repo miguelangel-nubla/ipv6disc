@@ -12,7 +12,8 @@ import (
 type Config struct {
 	// How long an address stays after it was last seen, unless its family says.
 	Lifetime time.Duration
-	// How often the active discovery runs.
+	// How often the active discovery runs. Zero: a third of the shortest lifetime of the families
+	// on, so that a quiet host is probed before it expires.
 	Rediscover time.Duration
 
 	IPv6 Family
@@ -37,10 +38,10 @@ type Family struct {
 	Listen bool
 	// Probing every host of the local links, at every Rediscover. IPv6: multicast ping, SSDP
 	// and WS-Discovery. IPv4: a sweep of the subnets, which broadcasts an ARP request for each
-	// address. It needs Listen, which reads the answers.
+	// address. Only with Listen, which reads the answers: without it, nothing is probed.
 	Active bool
-	// How long the family's addresses stay after they were last seen, the plugins' too:
-	// Config.Lifetime when zero.
+	// How long the family's addresses stay after they were last seen, whatever found them, the
+	// plugins too: Config.Lifetime when zero.
 	Lifetime time.Duration
 }
 
@@ -55,11 +56,6 @@ func DefaultConfig() Config {
 
 func (c Config) validate() error {
 	var errs []error
-	for name, f := range map[string]Family{"IPv6": c.IPv6, "IPv4": c.IPv4} {
-		if f.Enabled && f.Active && !f.Listen {
-			errs = append(errs, fmt.Errorf("%s active discovery needs listening, which reads the answers", name))
-		}
-	}
 	if c.Lifetime <= 0 || c.Rediscover <= 0 {
 		errs = append(errs, fmt.Errorf("invalid lifetime %s or rediscovery interval %s: they must be positive", c.Lifetime, c.Rediscover))
 	}
@@ -72,6 +68,26 @@ func (c Config) validate() error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// withDefaults fills in what is left zero: the families' lifetimes, and the rediscovery interval.
+func (c Config) withDefaults() Config {
+	shortest := time.Duration(0)
+	for _, f := range []*Family{&c.IPv6, &c.IPv4} {
+		if f.Lifetime == 0 {
+			f.Lifetime = c.Lifetime
+		}
+		if f.Enabled && (shortest == 0 || f.Lifetime < shortest) {
+			shortest = f.Lifetime
+		}
+	}
+	if shortest == 0 {
+		shortest = c.Lifetime
+	}
+	if c.Rediscover == 0 {
+		c.Rediscover = shortest / 3
+	}
+	return c
 }
 
 // usesInterface tells whether the local discovery runs on the interface of this name.

@@ -123,3 +123,35 @@ func TestStateSubscribe(t *testing.T) {
 	defer a.Unwatch()
 	expectChange("after cancel", false)
 }
+
+func TestConfigDefaults(t *testing.T) {
+	c := Config{Lifetime: time.Hour, IPv6: Family{Enabled: true}, IPv4: Family{Enabled: true, Lifetime: 3 * time.Minute}}.withDefaults()
+	if c.IPv6.Lifetime != time.Hour || c.IPv4.Lifetime != 3*time.Minute {
+		t.Errorf("family lifetimes: %s, %s", c.IPv6.Lifetime, c.IPv4.Lifetime)
+	}
+	// A third of the shortest lifetime of the families on: a quiet host is probed before it expires.
+	if c.Rediscover != time.Minute {
+		t.Errorf("rediscover: %s", c.Rediscover)
+	}
+	// Of the families off, none counts.
+	c = Config{Lifetime: time.Hour, IPv6: Family{Enabled: true}, IPv4: Family{Lifetime: time.Minute}}.withDefaults()
+	if c.Rediscover != 20*time.Minute {
+		t.Errorf("rediscover, IPv4 off: %s", c.Rediscover)
+	}
+	// Given, it stays.
+	if c := (Config{Lifetime: time.Hour, Rediscover: time.Second}).withDefaults(); c.Rediscover != time.Second {
+		t.Errorf("rediscover given: %s", c.Rediscover)
+	}
+}
+
+// The latest registration says how long an address stays.
+func TestAddressTakesTheLatestLifetime(t *testing.T) {
+	mac, _ := net.ParseMAC("00:1a:2b:3c:4d:0b")
+	state := NewState()
+	a, _ := state.Register(mac, netip.MustParseAddr("2001:db8::1"), "router", time.Hour, nil)
+	defer a.Unwatch()
+	state.Register(mac, netip.MustParseAddr("2001:db8::1"), "eth0", time.Minute, nil)
+	if until := time.Until(a.GetExpiration()); until > 2*time.Minute {
+		t.Errorf("expires in %s, want a minute", until)
+	}
+}

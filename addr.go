@@ -69,11 +69,17 @@ func (a *Addr) Sources() []string {
 
 // Seen extends the address lifetime, and records the source if one is given.
 func (a *Addr) Seen(source ...string) {
-	a.seen(source...)
+	a.seen(0, source...)
 }
 
-// seen is Seen, telling whether the source is new.
-func (a *Addr) seen(source ...string) bool {
+// seen is Seen, telling whether the source is new. A lifetime, when not zero, replaces the
+// address's from now on: the latest registration says how long it stays.
+func (a *Addr) seen(lifetime time.Duration, source ...string) bool {
+	if lifetime > 0 {
+		a.mutex.Lock()
+		a.lifetime = lifetime
+		a.mutex.Unlock()
+	}
 	a.resetTimers(true)
 	if len(source) == 0 {
 		return false

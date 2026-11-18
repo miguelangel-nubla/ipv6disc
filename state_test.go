@@ -141,12 +141,13 @@ func TestConfigValidate(t *testing.T) {
 	if err := DefaultConfig().validate(); err != nil {
 		t.Errorf("the default: %v", err)
 	}
-	bad := DefaultConfig()
-	bad.IPv4 = Family{Enabled: true, Active: true}
-	if err := bad.validate(); err == nil {
-		t.Error("IPv4 active without listening: want an error")
+	// Active without listening probes nothing: not an error, as with listening turned off alone.
+	quiet := DefaultConfig()
+	quiet.IPv4 = Family{Enabled: true, Active: true}
+	if err := quiet.validate(); err != nil || quiet.probesIPv4() {
+		t.Errorf("IPv4 active without listening: %v, probing %v", err, quiet.probesIPv4())
 	}
-	bad = DefaultConfig()
+	bad := DefaultConfig()
 	bad.Lifetime = 0
 	if err := bad.validate(); err == nil {
 		t.Error("no lifetime: want an error")

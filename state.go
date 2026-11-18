@@ -148,7 +148,10 @@ func (s *State) Register(hw net.HardwareAddr, ip netip.Addr, source string, life
 
 // Seen adds the address to the collection of its MAC, or marks the one there as seen.
 func (s *State) Seen(addr *Addr, source ...string) (*Addr, bool) {
-	addr, existing, _ := s.seen(addr, source...)
+	addr, existing, newSource := s.seen(addr, source...)
+	if !existing || newSource {
+		s.changed()
+	}
 	return addr, existing
 }
 
