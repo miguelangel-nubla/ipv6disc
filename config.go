@@ -41,7 +41,8 @@ type Family struct {
 	// address. Only with Listen, which reads the answers: without it, nothing is probed.
 	Active bool
 	// How long the family's addresses stay after they were last seen, whatever found them, the
-	// plugins too: Config.Lifetime when zero.
+	// plugins too. Zero: the lifetime of each registration, Config.Lifetime for the local
+	// discovery, and for a plugin the one it was made with.
 	Lifetime time.Duration
 }
 

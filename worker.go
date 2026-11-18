@@ -57,11 +57,12 @@ type InterfaceProcesses struct {
 
 // NewWorker makes a worker that discovers addresses as config says; Start runs it.
 func NewWorker(logger *zap.SugaredLogger, config Config) *Worker {
-	config = config.withDefaults()
 	s := NewState()
 	s.SetLogger(logger)
 	s.SetFamilies(config.IPv6.Enabled, config.IPv4.Enabled)
+	// The families' own lifetimes, as given: without, each registration's.
 	s.SetLifetimes(config.IPv6.Lifetime, config.IPv4.Lifetime)
+	config = config.withDefaults()
 
 	return &Worker{
 		State:         s,
