@@ -21,6 +21,48 @@ type State struct {
 	// The families it takes: IPv6 only by default.
 	noIPv6 atomic.Bool
 	ipv4   atomic.Bool
+	// The families' lifetimes, in nanoseconds, when they have their own.
+	lifetimeIPv6, lifetimeIPv4 atomic.Int64
+
+	// The channels Subscribe gave, which hear of every change.
+	subscribers      map[chan struct{}]struct{}
+	subscribersMutex sync.Mutex
+}
+
+// SetLifetimes gives each family the lifetime of its addresses: Register uses it in place of the
+// one it is given. Zero keeps the one given.
+func (s *State) SetLifetimes(ipv6, ipv4 time.Duration) {
+	s.lifetimeIPv6.Store(int64(ipv6))
+	s.lifetimeIPv4.Store(int64(ipv4))
+}
+
+// Subscribe returns a channel that receives a value after the addresses change: one is added, one
+// expires, or one is seen by a new source. Changes coming faster than they are received are told
+// once. cancel stops it.
+func (s *State) Subscribe() (changes <-chan struct{}, cancel func()) {
+	ch := make(chan struct{}, 1)
+	s.subscribersMutex.Lock()
+	if s.subscribers == nil {
+		s.subscribers = make(map[chan struct{}]struct{})
+	}
+	s.subscribers[ch] = struct{}{}
+	s.subscribersMutex.Unlock()
+	return ch, func() {
+		s.subscribersMutex.Lock()
+		delete(s.subscribers, ch)
+		s.subscribersMutex.Unlock()
+	}
+}
+
+func (s *State) changed() {
+	s.subscribersMutex.Lock()
+	defer s.subscribersMutex.Unlock()
+	for ch := range s.subscribers {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
 }
 
 // SetFamilies sets the families whose addresses the state takes, and the plugins read: Register
@@ -45,13 +87,21 @@ func (s *State) SetLogger(l *zap.SugaredLogger) {
 }
 
 // Register adds a discovered address to the state, or refreshes the one already there. An address
-// of a family the state doesn't take is left out: it returns nil and true, as if known.
+// of a family the state doesn't take is left out: it returns nil and true, as if known. The
+// family's lifetime, if SetLifetimes gave it one, replaces lifetime.
 // onExpiration, which can be nil, is called on each expiration event of a new address. When the
 // address expires it is logged and taken out of the state, unless it was seen again meanwhile.
 func (s *State) Register(hw net.HardwareAddr, ip netip.Addr, source string, lifetime time.Duration, onExpiration func(*Addr, AddrExpirationRemainingEvents)) (*Addr, bool) {
 	ip = ip.Unmap()
 	if ip.Is4() && !s.IPv4() || ip.Is6() && !s.IPv6() {
 		return nil, true
+	}
+	familyLifetime := &s.lifetimeIPv6
+	if ip.Is4() {
+		familyLifetime = &s.lifetimeIPv4
+	}
+	if l := time.Duration(familyLifetime.Load()); l > 0 {
+		lifetime = l
 	}
 
 	expire := func(expiredAddr *Addr, remainingEvents AddrExpirationRemainingEvents) {
@@ -61,6 +111,7 @@ func (s *State) Register(hw net.HardwareAddr, ip netip.Addr, source string, life
 		if remainingEvents != 0 || !s.remove(expiredAddr) {
 			return
 		}
+		s.changed()
 		if s.logger != nil {
 			s.logger.Infow("host expired",
 				zap.String("ip", expiredAddr.WithZone("").String()),
@@ -70,7 +121,10 @@ func (s *State) Register(hw net.HardwareAddr, ip netip.Addr, source string, life
 		}
 	}
 
-	addr, existing := s.Seen(NewAddr(hw, ip, source, lifetime, expire), source)
+	addr, existing, newSource := s.seen(NewAddr(hw, ip, source, lifetime, expire), source)
+	if !existing || newSource {
+		defer s.changed()
+	}
 
 	if !existing {
 		addr.Watch()
@@ -94,6 +148,12 @@ func (s *State) Register(hw net.HardwareAddr, ip netip.Addr, source string, life
 
 // Seen adds the address to the collection of its MAC, or marks the one there as seen.
 func (s *State) Seen(addr *Addr, source ...string) (*Addr, bool) {
+	addr, existing, _ := s.seen(addr, source...)
+	return addr, existing
+}
+
+// seen is Seen, telling also whether source is new to an address already there.
+func (s *State) seen(addr *Addr, source ...string) (*Addr, bool, bool) {
 	s.macsMutex.Lock()
 	defer s.macsMutex.Unlock()
 
@@ -104,7 +164,7 @@ func (s *State) Seen(addr *Addr, source ...string) (*Addr, bool) {
 		s.macs[mac] = collection
 	}
 
-	return collection.Seen(addr, source...)
+	return collection.seen(addr, source...)
 }
 
 // remove takes an expired address out of the state, unless it was seen again since. It returns

@@ -49,21 +49,34 @@ func (w *Worker) discoverIPv4(ctx context.Context) {
 	}
 }
 
-// SolicitIPv4 asks each MAC, by ARP requests sent to it alone, for every address of the local
-// subnets, and registers those it answers for: the IPv4 addresses of a host that stays quiet, with
-// nothing broadcast. It needs Linux and CAP_NET_RAW, and the state taking IPv4. It returns how many
-// addresses were found.
-func (w *Worker) SolicitIPv4(ctx context.Context, macs []net.HardwareAddr) (int, error) {
+// IPv4Target is a host SolicitIPv4 asks for its IPv4 addresses: its MAC, and the prefixes its
+// addresses are wanted in. Without prefixes, every address of the local subnets is asked.
+type IPv4Target struct {
+	MAC      net.HardwareAddr
+	Prefixes []netip.Prefix
+}
+
+// SolicitIPv4 asks each target, by ARP requests sent to its MAC alone, for each address of the
+// local subnets in its prefixes, and registers those it answers for: the IPv4 addresses of a host
+// that stays quiet, with nothing broadcast. A subnet none of its addresses can be in isn't asked.
+// It needs Linux and CAP_NET_RAW, and the state taking IPv4. It returns how many addresses were
+// found.
+func (w *Worker) SolicitIPv4(ctx context.Context, targets []IPv4Target) (int, error) {
 	if !w.State.IPv4() {
 		return 0, errors.New("soliciting IPv4 addresses: the state doesn't take IPv4")
 	}
 	found := 0
 	var errs []error
-	for name, i := range ipv4Interfaces() {
+	for name, i := range w.ipv4Interfaces() {
 		for _, prefix := range i.prefixes {
-			targets := arp.SweepTargets(prefix)
-			for _, mac := range macs {
-				addrs, err := arp.Probe(ctx, &i.iface, prefix.Addr(), mac, targets)
+			subnet := arp.SweepTargets(prefix)
+			for _, target := range targets {
+				asked := inPrefixes(subnet, target.Prefixes)
+				if len(asked) == 0 {
+					continue
+				}
+				mac := target.MAC
+				addrs, err := arp.Probe(ctx, &i.iface, prefix.Addr(), mac, asked)
 				if err != nil {
 					errs = append(errs, fmt.Errorf("%s on %s: %w", mac, name, err))
 					if errors.Is(err, errors.ErrUnsupported) || ctx.Err() != nil {
@@ -82,22 +95,39 @@ func (w *Worker) SolicitIPv4(ctx context.Context, macs []net.HardwareAddr) (int,
 	return found, errors.Join(errs...)
 }
 
+// inPrefixes returns the addresses in one of the prefixes; all of them without prefixes.
+func inPrefixes(addrs []netip.Addr, prefixes []netip.Prefix) []netip.Addr {
+	if len(prefixes) == 0 {
+		return addrs
+	}
+	var in []netip.Addr
+	for _, a := range addrs {
+		for _, p := range prefixes {
+			if p.Contains(a) {
+				in = append(in, a)
+				break
+			}
+		}
+	}
+	return in
+}
+
 // ipv4Interface is an interface IPv4 discovery runs on, with its IPv4 addresses.
 type ipv4Interface struct {
 	iface    net.Interface
 	prefixes []netip.Prefix
 }
 
-// ipv4Interfaces returns the interfaces that can have IPv4 neighbors: up, broadcast, not
-// loopback, with an IPv4 address.
-func ipv4Interfaces() map[string]ipv4Interface {
+// ipv4Interfaces returns the interfaces IPv4 discovery runs on: those the configuration takes
+// which can have IPv4 neighbors, up, broadcast, not loopback, with an IPv4 address.
+func (w *Worker) ipv4Interfaces() map[string]ipv4Interface {
 	result := make(map[string]ipv4Interface)
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		return result
 	}
 	for _, iface := range ifaces {
-		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagBroadcast == 0 || iface.Flags&net.FlagLoopback != 0 || len(iface.HardwareAddr) == 0 {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagBroadcast == 0 || iface.Flags&net.FlagLoopback != 0 || len(iface.HardwareAddr) == 0 || !w.config.usesInterface(iface.Name) {
 			continue
 		}
 		addrs, err := iface.Addrs()
@@ -124,7 +154,7 @@ func ipv4Interfaces() map[string]ipv4Interface {
 }
 
 func (w *Worker) sweepIPv4(ctx context.Context) {
-	for _, i := range ipv4Interfaces() {
+	for _, i := range w.ipv4Interfaces() {
 		for _, prefix := range i.prefixes {
 			targets := arp.SweepTargets(prefix)
 			w.logger.Debugw("IPv4 sweep",
@@ -142,7 +172,7 @@ func (w *Worker) sweepIPv4(ctx context.Context) {
 // readIPv4Table registers the neighbors of the kernel's table on the interfaces discovery runs
 // on, and the interfaces' own addresses.
 func (w *Worker) readIPv4Table() error {
-	interfaces := ipv4Interfaces()
+	interfaces := w.ipv4Interfaces()
 	for name, i := range interfaces {
 		for _, prefix := range i.prefixes {
 			w.State.Register(i.iface.HardwareAddr, prefix.Addr(), name, w.lifetime, nil)

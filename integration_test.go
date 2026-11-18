@@ -149,12 +149,23 @@ func TestLiveIPv4Solicit(t *testing.T) {
 		t.Fatalf("%s found without a sweep or a solicitation", peerIPv4)
 	}
 
-	found, err := w.SolicitIPv4(ctx, []net.HardwareAddr{mustMAC(peerMAC)})
+	// Only the subnets a prefix of the target's covers are asked.
+	if found, err := w.SolicitIPv4(ctx, []IPv4Target{{MAC: mustMAC(peerMAC), Prefixes: []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}}}); err != nil || found != 0 || has(w, peerMAC, peerIPv4) {
+		t.Fatalf("a prefix off the link: found %d, %v", found, err)
+	}
+	// Nor the interfaces the configuration leaves out.
+	excluding := NewWorker(zaptest.NewLogger(t).Sugar(), Config{Lifetime: time.Minute, Rediscover: time.Minute,
+		IPv4: Family{Enabled: true}, ExcludeInterfaces: []string{"veth-*"}})
+	if found, err := excluding.SolicitIPv4(ctx, []IPv4Target{{MAC: mustMAC(peerMAC)}}); err != nil || found != 0 {
+		t.Fatalf("an interface left out: found %d, %v", found, err)
+	}
+
+	found, err := w.SolicitIPv4(ctx, []IPv4Target{{MAC: mustMAC(peerMAC), Prefixes: []netip.Prefix{netip.MustParsePrefix("10.66.1.0/24")}}})
 	if err != nil || found == 0 || !has(w, peerMAC, peerIPv4) {
 		t.Fatalf("solicited: found %d, %v; the peer's IPv4 known: %v", found, err, has(w, peerMAC, peerIPv4))
 	}
 
-	if found, err := w.SolicitIPv4(ctx, []net.HardwareAddr{mustMAC("02:00:00:00:00:99")}); err != nil || found != 0 {
+	if found, err := w.SolicitIPv4(ctx, []IPv4Target{{MAC: mustMAC("02:00:00:00:00:99")}}); err != nil || found != 0 {
 		t.Errorf("a MAC not on the link: found %d, %v", found, err)
 	}
 	cancel()

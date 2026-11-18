@@ -36,12 +36,18 @@ func (c *AddrCollection) Add(addr *Addr) (*Addr, bool) {
 
 // Seen adds the address, or marks the one already there as seen by source.
 func (c *AddrCollection) Seen(addr *Addr, source ...string) (*Addr, bool) {
-	addr, existing := c.Add(addr)
-	if existing {
-		addr.Seen(source...)
-	}
-
+	addr, existing, _ := c.seen(addr, source...)
 	return addr, existing
+}
+
+// seen is Seen, telling also whether source is new to an address already there.
+func (c *AddrCollection) seen(addr *Addr, source ...string) (*Addr, bool, bool) {
+	addr, existing := c.Add(addr)
+	newSource := false
+	if existing {
+		newSource = addr.seen(source...)
+	}
+	return addr, existing, newSource
 }
 
 // Remove takes the address out of the collection, and stops its expiration events.

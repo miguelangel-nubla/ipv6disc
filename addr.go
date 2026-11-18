@@ -69,14 +69,22 @@ func (a *Addr) Sources() []string {
 
 // Seen extends the address lifetime, and records the source if one is given.
 func (a *Addr) Seen(source ...string) {
+	a.seen(source...)
+}
+
+// seen is Seen, telling whether the source is new.
+func (a *Addr) seen(source ...string) bool {
 	a.resetTimers(true)
-	if len(source) > 0 {
-		a.mutex.Lock()
-		if !slices.Contains(a.sources, source[0]) {
-			a.sources = append(a.sources, source[0])
-		}
-		a.mutex.Unlock()
+	if len(source) == 0 {
+		return false
 	}
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+	if slices.Contains(a.sources, source[0]) {
+		return false
+	}
+	a.sources = append(a.sources, source[0])
+	return true
 }
 
 // Watch calls onExpiration on each of the expiration events, until Unwatch is called. An address
