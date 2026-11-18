@@ -25,8 +25,6 @@ type SSHConfig struct {
 
 const sshConfigFormat = "interval,address,username,password[,identity_file[,host_key]]"
 
-// ParseSSHConfig reads interval,address,username,password[,identity_file[,host_key]]. kind names
-// the plugin in errors.
 // SSHFields are the params of the plugins over SSH, by name. A password or an identity file is
 // needed, which ParseSSHConfig checks.
 var SSHFields = []Field{
@@ -34,6 +32,8 @@ var SSHFields = []Field{
 	{Name: "password"}, {Name: "identity_file"}, {Name: "host_key"},
 }
 
+// ParseSSHConfig reads interval,address,username,password[,identity_file[,host_key]]. kind names
+// the plugin in errors.
 func ParseSSHConfig(kind string, config string) (SSHConfig, error) {
 	parts := SplitParams(config)
 	if len(parts) < 4 || len(parts) > 6 {

@@ -89,7 +89,7 @@ func (p *pluginsFlag) Set(value string) error {
 func init() {
 	flag.StringVar(&logLevel, "log_level", "info", "Logging level (debug, info, warn, error, fatal, panic) default: info")
 	flag.DurationVar(&lifetime, "lifetime", 4*time.Hour, "Time to keep a discovered host entry after it has been last seen. Default: 4h")
-	flag.DurationVar(&rediscover, "rediscover", 0, "How often the active discovery probes every host. Default: a third of the shortest lifetime of the families on")
+	flag.DurationVar(&rediscover, "rediscover", 0, "How often the active discovery probes every host. Default: a third of the shortest lifetime of the families that probe")
 	flag.BoolVar(&live, "live", false, "Show the current state live on the terminal, default: false")
 
 	flag.BoolVar(&ipv6, "ipv6", true, "Discover IPv6 addresses")
@@ -185,7 +185,6 @@ func startUpdater() {
 	for _, warning := range deprecatedFlagsGiven() {
 		sugar.Warn(warning)
 	}
-
 
 	worker := ipv6disc.NewWorker(sugar, ipv6disc.Config{
 		Lifetime:   lifetime,

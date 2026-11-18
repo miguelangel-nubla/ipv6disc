@@ -62,7 +62,7 @@ Each family, IPv6 and IPv4, is discovered the same ways, each of which can be tu
 | **Solicit**, asking given hosts, for programs using the library | `Worker.Solicit`, a neighbor solicitation for an address | `Worker.SolicitIPv4`, ARP requests sent to a MAC alone, for the addresses of the local subnets in the prefixes it is given, on the interfaces it was seen on: nothing is broadcast, and a subnet out of them isn't asked. A switch that no longer knows where the MAC is floods them, as any frame to it. It needs Linux and `CAP_NET_RAW` |
 | **Lifetime** (`-ipv6_lifetime`, `-ipv4_lifetime`) | how long an address stays after it was last seen, the plugins' too | the same; both are `-lifetime` unless given |
 
-Active discovery works with listening, which reads its answers: without it, nothing is probed. `-rediscover` defaults to a third of the shortest lifetime of the families on, so that a quiet host is probed before it expires. Only the entries confirmed recently count, so that hosts that left expire.
+Active discovery works with listening, which reads its answers: without it, nothing is probed. `-rediscover` defaults to a third of the shortest lifetime of the families that probe, so that a quiet host is probed before it expires. Only the entries confirmed recently count, so that hosts that left expire.
 
 The local discovery, of both families, runs on every interface unless `-interfaces` names those it runs on, and `-exclude_interfaces` those it doesn't: names, or patterns as `docker*,veth*`. On a host running containers, leaving their bridges out keeps the containers out of the state and the ARP requests off their networks. The plugins aren't concerned.
 
@@ -87,7 +87,7 @@ If you need to pause and select/copy data use `screen`, launch `ipv6disc -live [
 
 - `-log_level`: Set the logging level (default: "info"). Available options: "debug", "info", "warn", "error", "fatal", "panic".
 - `-lifetime`: Set the lifetime for a discovered host entry after it has been last seen (default: 4 hours).
-- `-rediscover`: How often the active discovery probes every host (default: a third of the shortest lifetime of the families on).
+- `-rediscover`: How often the active discovery probes every host (default: a third of the shortest lifetime of the families that probe).
 - `-live`: Show the current state live on the terminal (default: false).
 - `-ipv6`, `-ipv6_listen`, `-ipv6_active`: Discover IPv6 addresses, by listening, and by probing the links (default: all true). The names from before, `-discovery-listen`, `-discovery-active` and those with hyphens, as `-ipv4-active`, still work, with a warning.
 - `-ipv4`, `-ipv4_listen`, `-ipv4_active`: Discover IPv4 addresses (default: false), by reading the kernel's table, and by sweeping the subnets (default: true once `-ipv4`). See above.

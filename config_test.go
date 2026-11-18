@@ -125,7 +125,10 @@ func TestStateSubscribe(t *testing.T) {
 }
 
 func TestConfigDefaults(t *testing.T) {
-	c := Config{Lifetime: time.Hour, IPv6: Family{Enabled: true}, IPv4: Family{Enabled: true, Lifetime: 3 * time.Minute}}.withDefaults()
+	probing := Family{Enabled: true, Listen: true, Active: true}
+	ipv4 := probing
+	ipv4.Lifetime = 3 * time.Minute
+	c := Config{Lifetime: time.Hour, IPv6: probing, IPv4: ipv4}.withDefaults()
 	if c.IPv6.Lifetime != time.Hour || c.IPv4.Lifetime != 3*time.Minute {
 		t.Errorf("family lifetimes: %s, %s", c.IPv6.Lifetime, c.IPv4.Lifetime)
 	}
@@ -133,10 +136,12 @@ func TestConfigDefaults(t *testing.T) {
 	if c.Rediscover != time.Minute {
 		t.Errorf("rediscover: %s", c.Rediscover)
 	}
-	// Of the families off, none counts.
-	c = Config{Lifetime: time.Hour, IPv6: Family{Enabled: true}, IPv4: Family{Lifetime: time.Minute}}.withDefaults()
-	if c.Rediscover != 20*time.Minute {
-		t.Errorf("rediscover, IPv4 off: %s", c.Rediscover)
+	// Of the families that don't probe, off or listening only, none counts.
+	for _, ipv4 := range []Family{{Lifetime: time.Minute}, {Enabled: true, Listen: true, Lifetime: time.Minute}} {
+		c = Config{Lifetime: time.Hour, IPv6: probing, IPv4: ipv4}.withDefaults()
+		if c.Rediscover != 20*time.Minute {
+			t.Errorf("rediscover, IPv4 %+v: %s", ipv4, c.Rediscover)
+		}
 	}
 	// Given, it stays.
 	if c := (Config{Lifetime: time.Hour, Rediscover: time.Second}).withDefaults(); c.Rediscover != time.Second {

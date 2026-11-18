@@ -26,7 +26,7 @@ func init() {
 		return NewMikrotikPlugin(name, cfg, lifetime), nil
 	},
 		plugins.Field{Name: "interval", Required: true}, plugins.Field{Name: "address", Required: true},
-		plugins.Field{Name: "username", Required: true}, plugins.Field{Name: "password", Required: true},
+		plugins.Field{Name: "username", Required: true}, plugins.Field{Name: "password"},
 		plugins.Field{Name: "use_tls"}, plugins.Field{Name: "tls_fingerprint"},
 	)
 }

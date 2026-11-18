@@ -147,6 +147,9 @@ func (s *State) Register(hw net.HardwareAddr, ip netip.Addr, source string, life
 }
 
 // Seen adds the address to the collection of its MAC, or marks the one there as seen.
+//
+// Unlike Register, it doesn't watch the address: one it adds is taken out on no expiration, only
+// counted invalid by AddrCollection.FilterValid. Register is the way to add a discovered address.
 func (s *State) Seen(addr *Addr, source ...string) (*Addr, bool) {
 	addr, existing, newSource := s.seen(addr, source...)
 	if !existing || newSource {
