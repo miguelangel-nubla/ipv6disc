@@ -1,12 +1,16 @@
 package linux
 
 import (
+	"context"
+	"errors"
 	"net"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/miguelangel-nubla/ipv6disc"
+	"github.com/miguelangel-nubla/ipv6disc/internal/sshtest"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -73,4 +77,36 @@ func TestParseConfig(t *testing.T) {
 func TestPluginName(t *testing.T) {
 	plugin := NewLinuxPlugin("my-router", Config{Address: "192.168.1.1"}, time.Hour)
 	assert.Equal(t, "my-router", plugin.Name())
+}
+
+func TestDiscoverOverSSH(t *testing.T) {
+	server := sshtest.Start(t, "root", "secret", func(command string) ([]byte, error) {
+		if command != "ip -6 neigh" {
+			return nil, errors.New("unexpected command")
+		}
+		return []byte("2001:db8::1 dev eth0 lladdr 00:1a:2b:3c:4d:09 REACHABLE\n2001:db8::2 dev eth0  FAILED\n"), nil
+	})
+	var warnings []error
+	onError := func(err error) { warnings = append(warnings, err) }
+
+	plugin := NewLinuxPlugin("router", Config{Interval: time.Minute, Address: server.Address, Username: "root", Password: "secret"}, time.Hour)
+	state := ipv6disc.NewState()
+	for range 2 {
+		if _, err := plugin.discover(context.Background(), state, onError); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(state.GetAll()) != 1 {
+		t.Errorf("got %v, want the one reachable neighbor", state.GetAll())
+	}
+	// An unpinned key: one warning, telling its fingerprint.
+	if len(warnings) != 1 || !strings.Contains(warnings[0].Error(), server.HostKey) {
+		t.Errorf("got warnings %v, want one with %s", warnings, server.HostKey)
+	}
+
+	warnings = nil
+	pinned := NewLinuxPlugin("router", Config{Interval: time.Minute, Address: server.Address, Username: "root", Password: "secret", HostKey: server.HostKey}, time.Hour)
+	if _, err := pinned.discover(context.Background(), ipv6disc.NewState(), onError); err != nil || len(warnings) != 0 {
+		t.Errorf("pinned: %v, warnings %v", err, warnings)
+	}
 }

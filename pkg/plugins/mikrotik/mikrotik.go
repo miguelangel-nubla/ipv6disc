@@ -93,11 +93,8 @@ func (p *MikrotikPlugin) Start(ctx context.Context, state *ipv6disc.State, onErr
 	return p.Run(ctx, p.config.Interval, func() (int, error) { return p.discover(ctx, state) }, onError)
 }
 
-// requestTimeout bounds a whole poll: connecting, logging in and reading the neighbors.
-const requestTimeout = 30 * time.Second
-
 func (p *MikrotikPlugin) discover(ctx context.Context, state *ipv6disc.State) (int, error) {
-	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	ctx, cancel := context.WithTimeout(ctx, plugins.PollTimeout)
 	defer cancel()
 
 	var client *routeros.Client

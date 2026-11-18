@@ -6,6 +6,9 @@ import (
 	"time"
 )
 
+// PollTimeout bounds a poll: connecting, logging in and reading the neighbors.
+const PollTimeout = 30 * time.Second
+
 // Poller runs a plugin's discovery now and at every interval, and keeps the stats of the runs.
 // Plugins embed it for their Stats method.
 type Poller struct {
