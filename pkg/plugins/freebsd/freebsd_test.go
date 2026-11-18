@@ -18,6 +18,7 @@ func TestParseNDPOutput(t *testing.T) {
 2001:db8::1                          00:11:22:33:44:55   em0 permanent R 
 fe80::211:22ff:fe33:4455%em0         00:11:22:33:44:55   em0 permanent R 
 2001:db8::2                          (incomplete)        em0 expired   N 
+2001:db8::4                          00:11:22:33:44:66   em0 expired   S 
 invalid-ip                           00:11:22:33:44:55   em0 permanent R 
 2001:db8::3                          invalid-mac         em0 permanent R 
 `
