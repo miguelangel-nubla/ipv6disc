@@ -23,6 +23,9 @@ type Addr struct {
 	sources        []string
 	// The local interfaces that saw it: sources too, but a plugin can have an interface's name.
 	interfaces []string
+	// An address of this machine, rather than of a neighbor; and, of those, one the kernel says is
+	// temporary, a privacy address of IPv6.
+	self, temporary bool
 
 	// Closed by Unwatch; a Watch after it makes a new one.
 	unwatch   chan struct{}
@@ -79,20 +82,41 @@ func (a *Addr) Interfaces() []string {
 	return slices.Clone(a.interfaces)
 }
 
-// Seen extends the address lifetime, and records the source if one is given.
-func (a *Addr) Seen(source ...string) {
-	a.seenBy(0, false, source...)
+// Self tells whether the address is one of this machine's own, rather than a neighbor's.
+func (a *Addr) Self() bool {
+	a.mutex.RLock()
+	defer a.mutex.RUnlock()
+	return a.self
 }
 
-// seenBy is Seen, telling whether the source is new. A lifetime, when not zero, replaces the
-// address's from now on: the latest registration says how long it stays. local says the source is
-// a local interface.
-func (a *Addr) seenBy(lifetime time.Duration, local bool, source ...string) bool {
-	if lifetime > 0 {
-		a.mutex.Lock()
-		a.lifetime = lifetime
-		a.mutex.Unlock()
+// Temporary tells whether the address is one of this machine's that the kernel says is temporary:
+// an IPv6 privacy address, which changes every day or so. It is known on Linux, and of this
+// machine's own addresses only: a neighbor's is never said temporary.
+func (a *Addr) Temporary() bool {
+	a.mutex.RLock()
+	defer a.mutex.RUnlock()
+	return a.temporary
+}
+
+// Seen extends the address lifetime, and records the source if one is given.
+func (a *Addr) Seen(source ...string) {
+	a.seenBy(&Addr{}, source...)
+}
+
+// seenBy is Seen, by a registration of the same address, telling whether the source is new: its
+// lifetime, when not zero, replaces the address's from now on, as the latest registration says how
+// long it stays; it says whether the source is a local interface, and whether the address is this
+// machine's, and temporary.
+func (a *Addr) seenBy(by *Addr, source ...string) bool {
+	local := len(by.interfaces) > 0
+	a.mutex.Lock()
+	if by.lifetime > 0 {
+		a.lifetime = by.lifetime
 	}
+	if by.self {
+		a.self, a.temporary = true, by.temporary
+	}
+	a.mutex.Unlock()
 	a.resetTimers(true)
 	if len(source) == 0 {
 		return false

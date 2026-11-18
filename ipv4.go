@@ -200,7 +200,7 @@ func (w *Worker) readIPv4Table() error {
 	interfaces := w.ipv4Interfaces()
 	for name, i := range interfaces {
 		for _, prefix := range i.prefixes {
-			w.State.registerLocal(i.iface.HardwareAddr, prefix.Addr(), name, w.config.Lifetime, nil)
+			w.State.registerSelf(i.iface.HardwareAddr, prefix.Addr(), name, false, w.config.Lifetime, nil)
 		}
 	}
 

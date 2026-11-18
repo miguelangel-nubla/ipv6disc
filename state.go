@@ -92,15 +92,24 @@ func (s *State) SetLogger(l *zap.SugaredLogger) {
 // onExpiration, which can be nil, is called on each expiration event of a new address. When the
 // address expires it is logged and taken out of the state, unless it was seen again meanwhile.
 func (s *State) Register(hw net.HardwareAddr, ip netip.Addr, source string, lifetime time.Duration, onExpiration func(*Addr, AddrExpirationRemainingEvents)) (*Addr, bool) {
-	return s.register(hw, ip, source, false, lifetime, onExpiration)
+	return s.register(hw, ip, source, kind{}, lifetime, onExpiration)
 }
 
 // registerLocal is Register for the local discovery: source is the interface that saw it.
 func (s *State) registerLocal(hw net.HardwareAddr, ip netip.Addr, iface string, lifetime time.Duration, onExpiration func(*Addr, AddrExpirationRemainingEvents)) (*Addr, bool) {
-	return s.register(hw, ip, iface, true, lifetime, onExpiration)
+	return s.register(hw, ip, iface, kind{local: true}, lifetime, onExpiration)
 }
 
-func (s *State) register(hw net.HardwareAddr, ip netip.Addr, source string, local bool, lifetime time.Duration, onExpiration func(*Addr, AddrExpirationRemainingEvents)) (*Addr, bool) {
+// registerSelf is registerLocal for an address of this machine's own, on iface; temporary, as the
+// kernel says.
+func (s *State) registerSelf(hw net.HardwareAddr, ip netip.Addr, iface string, temporary bool, lifetime time.Duration, onExpiration func(*Addr, AddrExpirationRemainingEvents)) (*Addr, bool) {
+	return s.register(hw, ip, iface, kind{local: true, self: true, temporary: temporary}, lifetime, onExpiration)
+}
+
+// kind is what a registration says of the address, besides its source.
+type kind struct{ local, self, temporary bool }
+
+func (s *State) register(hw net.HardwareAddr, ip netip.Addr, source string, k kind, lifetime time.Duration, onExpiration func(*Addr, AddrExpirationRemainingEvents)) (*Addr, bool) {
 	ip = ip.Unmap()
 	if ip.Is4() && !s.IPv4() || ip.Is6() && !s.IPv6() {
 		return nil, true
@@ -131,9 +140,10 @@ func (s *State) register(hw net.HardwareAddr, ip netip.Addr, source string, loca
 	}
 
 	newAddr := NewAddr(hw, ip, source, lifetime, expire)
-	if local {
+	if k.local {
 		newAddr.interfaces = []string{source}
 	}
+	newAddr.self, newAddr.temporary = k.self, k.temporary
 	addr, existing, newSource := s.seen(newAddr, source)
 	if !existing || newSource {
 		defer s.changed()

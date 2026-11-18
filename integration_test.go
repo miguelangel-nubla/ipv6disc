@@ -69,6 +69,26 @@ func TestLiveDiscovery(t *testing.T) {
 	// and the neighbor table tells it.
 	waitFor(t, 30*time.Second, "the peer's IPv4 address", func() bool { return has(w, peerMAC, peerIPv4) })
 
+	// This machine's own addresses say so; the peer's don't.
+	self := func(ip netip.Addr) (bool, bool) {
+		for _, collection := range w.State.GetAll() {
+			for _, a := range collection.Get() {
+				if a.WithZone("") == ip {
+					return true, a.Self()
+				}
+			}
+		}
+		return false, false
+	}
+	waitFor(t, 30*time.Second, "the worker's own addresses", func() bool {
+		found6, self6 := self(workerAddr)
+		found4, self4 := self(workerIPv4)
+		return found6 && self6 && found4 && self4
+	})
+	if _, peerSelf := self(peerAddr); peerSelf {
+		t.Error("the peer's address said this machine's")
+	}
+
 	// A quiet address: not found until solicited.
 	ip(t, "-n", peerNamespace, "addr", "add", quietAddr.String()+"/64", "dev", "veth-peer", "nodad", "preferred_lft", "0")
 	time.Sleep(3 * time.Second)
