@@ -100,9 +100,10 @@ func (s *State) registerLocal(hw net.HardwareAddr, ip netip.Addr, iface string, 
 	return s.register(hw, ip, iface, kind{local: true}, lifetime, onExpiration)
 }
 
-// registerSelf is registerLocal for an address of this machine's own, on iface; temporary, as the
-// kernel says.
-func (s *State) registerSelf(hw net.HardwareAddr, ip netip.Addr, iface string, temporary bool, lifetime time.Duration, onExpiration func(*Addr, AddrExpirationRemainingEvents)) (*Addr, bool) {
+// RegisterSelf is Register for an address of this machine's own, on the local interface iface:
+// Addr.Self says so, and Addr.Temporary whether temporary is. The local discovery registers those of
+// the interfaces it runs on; a program can register others, as found otherwise.
+func (s *State) RegisterSelf(hw net.HardwareAddr, ip netip.Addr, iface string, temporary bool, lifetime time.Duration, onExpiration func(*Addr, AddrExpirationRemainingEvents)) (*Addr, bool) {
 	return s.register(hw, ip, iface, kind{local: true, self: true, temporary: temporary}, lifetime, onExpiration)
 }
 

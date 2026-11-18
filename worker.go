@@ -445,7 +445,7 @@ func (w *Worker) StartInterfaceAddr(ctx context.Context, iface net.Interface, ad
 	}()
 
 	discover := func() {
-		w.State.registerSelf(iface.HardwareAddr, addr, iface.Name, temporaryAddrs()[addr], w.config.Lifetime, addrOnExpiration)
+		w.State.RegisterSelf(iface.HardwareAddr, addr, iface.Name, temporaryAddrs()[addr], w.config.Lifetime, addrOnExpiration)
 
 		if !w.config.probesIPv6() {
 			return
