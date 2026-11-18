@@ -21,6 +21,8 @@ type Addr struct {
 	expiration     *time.Timer
 	expirationTime time.Time
 	sources        []string
+	// The local interfaces that saw it: sources too, but a plugin can have an interface's name.
+	interfaces []string
 
 	unwatch     chan struct{}
 	unwatchOnce sync.Once
@@ -67,14 +69,24 @@ func (a *Addr) Sources() []string {
 	return slices.Clone(a.sources)
 }
 
-// Seen extends the address lifetime, and records the source if one is given.
-func (a *Addr) Seen(source ...string) {
-	a.seen(0, source...)
+// Interfaces returns the local interfaces that have seen the address: of its sources, those that
+// aren't plugins.
+func (a *Addr) Interfaces() []string {
+	a.mutex.RLock()
+	defer a.mutex.RUnlock()
+
+	return slices.Clone(a.interfaces)
 }
 
-// seen is Seen, telling whether the source is new. A lifetime, when not zero, replaces the
-// address's from now on: the latest registration says how long it stays.
-func (a *Addr) seen(lifetime time.Duration, source ...string) bool {
+// Seen extends the address lifetime, and records the source if one is given.
+func (a *Addr) Seen(source ...string) {
+	a.seenBy(0, false, source...)
+}
+
+// seenBy is Seen, telling whether the source is new. A lifetime, when not zero, replaces the
+// address's from now on: the latest registration says how long it stays. local says the source is
+// a local interface.
+func (a *Addr) seenBy(lifetime time.Duration, local bool, source ...string) bool {
 	if lifetime > 0 {
 		a.mutex.Lock()
 		a.lifetime = lifetime
@@ -86,6 +98,9 @@ func (a *Addr) seen(lifetime time.Duration, source ...string) bool {
 	}
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
+	if local && !slices.Contains(a.interfaces, source[0]) {
+		a.interfaces = append(a.interfaces, source[0])
+	}
 	if slices.Contains(a.sources, source[0]) {
 		return false
 	}

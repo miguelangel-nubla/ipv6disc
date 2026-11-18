@@ -92,6 +92,15 @@ func (s *State) SetLogger(l *zap.SugaredLogger) {
 // onExpiration, which can be nil, is called on each expiration event of a new address. When the
 // address expires it is logged and taken out of the state, unless it was seen again meanwhile.
 func (s *State) Register(hw net.HardwareAddr, ip netip.Addr, source string, lifetime time.Duration, onExpiration func(*Addr, AddrExpirationRemainingEvents)) (*Addr, bool) {
+	return s.register(hw, ip, source, false, lifetime, onExpiration)
+}
+
+// registerLocal is Register for the local discovery: source is the interface that saw it.
+func (s *State) registerLocal(hw net.HardwareAddr, ip netip.Addr, iface string, lifetime time.Duration, onExpiration func(*Addr, AddrExpirationRemainingEvents)) (*Addr, bool) {
+	return s.register(hw, ip, iface, true, lifetime, onExpiration)
+}
+
+func (s *State) register(hw net.HardwareAddr, ip netip.Addr, source string, local bool, lifetime time.Duration, onExpiration func(*Addr, AddrExpirationRemainingEvents)) (*Addr, bool) {
 	ip = ip.Unmap()
 	if ip.Is4() && !s.IPv4() || ip.Is6() && !s.IPv6() {
 		return nil, true
@@ -121,7 +130,11 @@ func (s *State) Register(hw net.HardwareAddr, ip netip.Addr, source string, life
 		}
 	}
 
-	addr, existing, newSource := s.seen(NewAddr(hw, ip, source, lifetime, expire), source)
+	newAddr := NewAddr(hw, ip, source, lifetime, expire)
+	if local {
+		newAddr.interfaces = []string{source}
+	}
+	addr, existing, newSource := s.seen(newAddr, source)
 	if !existing || newSource {
 		defer s.changed()
 	}
@@ -147,11 +160,20 @@ func (s *State) Register(hw net.HardwareAddr, ip netip.Addr, source string, life
 }
 
 // Seen adds the address to the collection of its MAC, or marks the one there as seen.
-//
-// Unlike Register, it doesn't watch the address: one it adds is taken out on no expiration, only
-// counted invalid by AddrCollection.FilterValid. Register is the way to add a discovered address.
+// An address it adds expires as one Register adds: its onExpiration is called on each event, and
+// then it leaves the state.
 func (s *State) Seen(addr *Addr, source ...string) (*Addr, bool) {
+	given := addr.onExpiration
+	addr.onExpiration = func(expired *Addr, remaining AddrExpirationRemainingEvents) {
+		given(expired, remaining)
+		if remaining == 0 && s.remove(expired) {
+			s.changed()
+		}
+	}
 	addr, existing, newSource := s.seen(addr, source...)
+	if !existing {
+		addr.Watch()
+	}
 	if !existing || newSource {
 		s.changed()
 	}

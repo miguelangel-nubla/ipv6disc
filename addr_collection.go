@@ -45,7 +45,7 @@ func (c *AddrCollection) seen(newAddr *Addr, source ...string) (*Addr, bool, boo
 	addr, existing := c.Add(newAddr)
 	newSource := false
 	if existing {
-		newSource = addr.seen(newAddr.lifetime, source...)
+		newSource = addr.seenBy(newAddr.lifetime, len(newAddr.interfaces) > 0, source...)
 	}
 	return addr, existing, newSource
 }
