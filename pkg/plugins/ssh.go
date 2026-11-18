@@ -28,7 +28,7 @@ const sshConfigFormat = "interval,address,username,password[,identity_file[,host
 // ParseSSHConfig reads interval,address,username,password[,identity_file[,host_key]]. kind names
 // the plugin in errors.
 func ParseSSHConfig(kind string, config string) (SSHConfig, error) {
-	parts := strings.Split(config, ",")
+	parts := SplitParams(config)
 	if len(parts) < 4 || len(parts) > 6 {
 		return SSHConfig{}, fmt.Errorf("invalid %s config format, expected: %s", kind, sshConfigFormat)
 	}
