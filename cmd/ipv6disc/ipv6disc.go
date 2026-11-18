@@ -67,7 +67,7 @@ func (p *pluginsFlag) Set(value string) error {
 func init() {
 	flag.StringVar(&logLevel, "log_level", "info", "Logging level (debug, info, warn, error, fatal, panic) default: info")
 	flag.DurationVar(&lifetime, "lifetime", 4*time.Hour, "Time to keep a discovered host entry after it has been last seen. Default: 4h")
-	flag.BoolVar(&live, "live", false, "Show the currrent state live on the terminal, default: false")
+	flag.BoolVar(&live, "live", false, "Show the current state live on the terminal, default: false")
 
 	flag.BoolVar(&discoveryListen, "discovery-listen", true, "Enable listening for IPv6 discovery packets on interfaces")
 	flag.BoolVar(&discoveryActive, "discovery-active", true, "Enable active discovery (multicast Ping, SSDP, NDP solicitation)")
@@ -82,8 +82,6 @@ func main() {
 }
 
 func startUpdater() {
-	liveOutput := make(chan string)
-
 	sugar := initializeLogger()
 
 	rediscover := lifetime / 3
@@ -103,24 +101,18 @@ func startUpdater() {
 		sugar.Fatalf("can't start worker: %s", err)
 	}
 
+	if !live {
+		select {}
+	}
+
+	liveOutput := make(chan string)
 	go func() {
 		for {
-			if live {
-				var result strings.Builder
-				result.WriteString(worker.State.PrettyPrint("    ", true))
-				result.WriteString(worker.PrettyPrintStats("    "))
-				liveOutput <- result.String()
-			}
-
+			liveOutput <- worker.State.PrettyPrint("    ", true) + worker.PrettyPrintStats("    ")
 			time.Sleep(1 * time.Second)
 		}
 	}()
-
-	if live {
-		terminal.LiveOutput(liveOutput)
-	} else {
-		select {}
-	}
+	terminal.LiveOutput(liveOutput)
 }
 
 func initializeLogger() *zap.SugaredLogger {
@@ -139,10 +131,7 @@ func initializeLogger() *zap.SugaredLogger {
 	cfg.ErrorOutputPaths = []string{"stderr"}
 	cfg.EncoderConfig.EncodeTime = zapcore.RFC3339TimeEncoder
 
-	logger := zap.Must(cfg.Build())
-	defer logger.Sync()
-
-	return logger.Sugar()
+	return zap.Must(cfg.Build()).Sugar()
 }
 
 func getLogLevel(level string) (zapcore.Level, error) {
