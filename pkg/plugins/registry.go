@@ -112,10 +112,11 @@ func Create(typeName string, name string, config string, lifetime time.Duration)
 	}
 	if byName(config) {
 		values := make(map[string]string)
-		for _, part := range SplitParams(config) {
+		for i, part := range SplitParams(config) {
 			key, value, found := strings.Cut(part, "=")
 			if !found {
-				return nil, fmt.Errorf("plugin %s: %q isn't name=value, as the params before it", name, part)
+				// Not the part itself: it can be a piece of a password.
+				return nil, fmt.Errorf("plugin %s: param %d isn't name=value, as the first is (a comma in a value is \\,)", name, i+1)
 			}
 			if _, twice := values[key]; twice {
 				return nil, fmt.Errorf("plugin %s: %s given twice", name, key)
