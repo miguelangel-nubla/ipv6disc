@@ -82,7 +82,7 @@ jobs:
         run: go test -c -tags integration -o integration.test .
       -
         name: Test
-        run: sudo ./integration.test -test.run '^TestLiveDiscovery$' -test.v -test.timeout 4m
+        run: sudo ./integration.test -test.run '^TestLive' -test.v -test.timeout 4m
 
   lint:
     runs-on: ubuntu-latest
