@@ -45,7 +45,7 @@ func (c *AddrCollection) seen(newAddr *Addr, source ...string) (*Addr, bool, boo
 	addr, existing := c.Add(newAddr)
 	newSource := false
 	if existing {
-		newSource = addr.seenBy(newAddr.lifetime, len(newAddr.interfaces) > 0, source...)
+		newSource = addr.seenBy(newAddr, source...)
 	}
 	return addr, existing, newSource
 }
@@ -185,7 +185,14 @@ func (c *AddrCollection) Strings() []string {
 func (c *AddrCollection) PrettyPrint(prefix string) string {
 	var result strings.Builder
 	for _, addr := range c.Get() {
-		fmt.Fprintf(&result, "%s%s %s %s\n", prefix, addrKey(addr), time.Until(addr.GetExpiration()).Round(time.Second), strings.Join(addr.Sources(), ","))
+		var notes string
+		switch {
+		case addr.Temporary():
+			notes = " (this host, temporary)"
+		case addr.Self():
+			notes = " (this host)"
+		}
+		fmt.Fprintf(&result, "%s%s %s %s%s\n", prefix, addrKey(addr), time.Until(addr.GetExpiration()).Round(time.Second), strings.Join(addr.Sources(), ","), notes)
 	}
 	return result.String()
 }

@@ -24,6 +24,10 @@ On each interface with an IPv6 address, it listens for NDP: every neighbor adver
 
 Every minute, it reads the kernel's neighbor table: on Linux, the entries confirmed recently, as a stale one may be a host that left; elsewhere, those not expired. The sweep, every `-rediscover`, has the kernel resolve every address of the subnets, so the hosts that sent nothing are in the table too.
 
+### This machine's own addresses
+
+The addresses of the interfaces discovery runs on are registered too, with the interface's MAC, and marked as this machine's: `(this host)` in `-live`. On Linux, those the kernel made as temporary IPv6 privacy addresses are marked so, `(this host, temporary)`: they change every day or so. They are registered while the family listens.
+
 ## Solicitation
 
 Some addresses are never seen without asking: a host's stable IPv6 address, as it sends from temporary ones, or the IPv4 address of a host that sends nothing. The library asks given hosts:

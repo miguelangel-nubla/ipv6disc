@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/netip"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -239,5 +240,34 @@ func TestSeenAgain(t *testing.T) {
 			t.Fatal("seen again after it expired, it stays")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// An address of this machine says so, and whether it is temporary, as its latest registration as
+// this machine's does; a neighbor's registration of it changes neither.
+func TestSelfAddresses(t *testing.T) {
+	mac, _ := net.ParseMAC("00:1a:2b:3c:4d:10")
+	state := NewState()
+	ip := netip.MustParseAddr("2001:db8::10")
+
+	a, _ := state.Register(mac, ip, "router", time.Hour, nil)
+	defer a.Unwatch()
+	if a.Self() || a.Temporary() {
+		t.Errorf("a plugin's: self %v, temporary %v", a.Self(), a.Temporary())
+	}
+	state.registerSelf(mac, ip, "eth0", true, time.Hour, nil)
+	if !a.Self() || !a.Temporary() {
+		t.Errorf("this machine's, temporary: self %v, temporary %v", a.Self(), a.Temporary())
+	}
+	state.Register(mac, ip, "router", time.Hour, nil)
+	if !a.Self() || !a.Temporary() {
+		t.Error("a plugin's registration changed it")
+	}
+	state.registerSelf(mac, ip, "eth0", false, time.Hour, nil)
+	if a.Temporary() {
+		t.Error("no longer temporary, still said so")
+	}
+	if got := state.GetAll()[mac.String()].PrettyPrint(""); !strings.Contains(got, "(this host)") {
+		t.Errorf("the report: %q", got)
 	}
 }
