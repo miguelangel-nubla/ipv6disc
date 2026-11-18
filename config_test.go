@@ -3,8 +3,11 @@ package ipv6disc
 import (
 	"net"
 	"net/netip"
+	"slices"
 	"testing"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 func TestConfigInterfaces(t *testing.T) {
@@ -158,5 +161,51 @@ func TestAddressTakesTheLatestLifetime(t *testing.T) {
 	state.Register(mac, netip.MustParseAddr("2001:db8::1"), "eth0", time.Minute, nil)
 	if until := time.Until(a.GetExpiration()); until > 2*time.Minute {
 		t.Errorf("expires in %s, want a minute", until)
+	}
+}
+
+// A plugin named as a local interface doesn't make its hosts seen on that interface.
+func TestInterfacesOfAMACAreLocalOnly(t *testing.T) {
+	w := NewWorker(zap.NewNop().Sugar(), Config{Lifetime: time.Hour, IPv4: Family{Enabled: true}})
+	mac, _ := net.ParseMAC("00:1a:2b:3c:4d:0c")
+	other, _ := net.ParseMAC("00:1a:2b:3c:4d:0d")
+	interfaces := map[string]ipv4Interface{"eth0": {}, "eth1": {}}
+
+	a, _ := w.State.Register(mac, netip.MustParseAddr("192.0.2.1"), "eth0", time.Hour, nil) // a plugin named eth0
+	defer a.Unwatch()
+	if got := w.interfacesOf(mac, interfaces); !slices.Equal(got, []string{"eth0", "eth1"}) {
+		t.Errorf("seen by a plugin only: %v, want every interface", got)
+	}
+	b, _ := w.State.registerLocal(mac, netip.MustParseAddr("192.0.2.1"), "eth1", time.Hour, nil)
+	if b != a || !slices.Equal(a.Interfaces(), []string{"eth1"}) || !slices.Equal(a.Sources(), []string{"eth0", "eth1"}) {
+		t.Errorf("interfaces %v, sources %v", a.Interfaces(), a.Sources())
+	}
+	if got := w.interfacesOf(mac, interfaces); !slices.Equal(got, []string{"eth1"}) {
+		t.Errorf("seen on eth1: %v", got)
+	}
+	if got := w.interfacesOf(other, interfaces); len(got) != 2 {
+		t.Errorf("never seen: %v, want every interface", got)
+	}
+}
+
+// An address State.Seen adds expires, and leaves the state, as one Register adds.
+func TestSeenAddressesExpire(t *testing.T) {
+	mac, _ := net.ParseMAC("00:1a:2b:3c:4d:0e")
+	state := NewState()
+	changes, cancel := state.Subscribe()
+	defer cancel()
+	events := make(chan AddrExpirationRemainingEvents, 4)
+	state.Seen(NewAddr(mac, netip.MustParseAddr("2001:db8::e"), "test", 100*time.Millisecond, func(_ *Addr, n AddrExpirationRemainingEvents) { events <- n }), "test")
+	<-changes
+	select {
+	case <-changes:
+	case <-time.After(3 * time.Second):
+		t.Fatal("no change told at the expiration")
+	}
+	if len(state.GetAll()) != 0 {
+		t.Error("still in the state")
+	}
+	if len(events) != 4 {
+		t.Errorf("%d expiration events, want 4", len(events))
 	}
 }

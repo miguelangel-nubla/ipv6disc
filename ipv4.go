@@ -83,7 +83,7 @@ func (w *Worker) SolicitIPv4(ctx context.Context, targets []IPv4Target) (int, er
 				addrs, err := arp.Probe(ctx, &i.iface, prefix.Addr(), mac, asked)
 				// What was found before an error counts too.
 				for _, ip := range addrs {
-					if _, existing := w.State.Register(mac, ip, name, w.config.Lifetime, nil); !existing {
+					if _, existing := w.State.registerLocal(mac, ip, name, w.config.Lifetime, nil); !existing {
 						found++
 					}
 				}
@@ -118,12 +118,13 @@ func probeTargets(local netip.Prefix, prefixes []netip.Prefix) []netip.Addr {
 	return targets
 }
 
-// interfacesOf returns the interfaces to ask mac on: those of the state's addresses of it, of
-// either family, when there are; all of them otherwise, in order.
+// interfacesOf returns the interfaces to ask mac on: the local interfaces that saw its addresses,
+// of either family, when there are; all of them otherwise, in order. A plugin's name, even an
+// interface's, doesn't count.
 func (w *Worker) interfacesOf(mac net.HardwareAddr, interfaces map[string]ipv4Interface) []string {
 	var seenOn []string
 	for _, addr := range w.State.FilterMACs([]net.HardwareAddr{mac}).Get() {
-		for _, source := range addr.Sources() {
+		for _, source := range addr.Interfaces() {
 			if _, ok := interfaces[source]; ok && !slices.Contains(seenOn, source) {
 				seenOn = append(seenOn, source)
 			}
@@ -199,7 +200,7 @@ func (w *Worker) readIPv4Table() error {
 	interfaces := w.ipv4Interfaces()
 	for name, i := range interfaces {
 		for _, prefix := range i.prefixes {
-			w.State.Register(i.iface.HardwareAddr, prefix.Addr(), name, w.config.Lifetime, nil)
+			w.State.registerLocal(i.iface.HardwareAddr, prefix.Addr(), name, w.config.Lifetime, nil)
 		}
 	}
 
@@ -211,7 +212,7 @@ func (w *Worker) readIPv4Table() error {
 		if _, ok := interfaces[n.Interface]; !ok {
 			continue
 		}
-		w.State.Register(n.MAC, n.IP, n.Interface, w.config.Lifetime, nil)
+		w.State.registerLocal(n.MAC, n.IP, n.Interface, w.config.Lifetime, nil)
 	}
 	return nil
 }

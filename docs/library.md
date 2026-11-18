@@ -43,7 +43,7 @@ Import the plugins with `_ "github.com/miguelangel-nubla/ipv6disc/pkg/plugins/al
 
 The worker's `State` holds the addresses, by MAC:
 
-- `GetAll`, `FilterMACs`: the addresses, as `AddrCollection`s, which filter by family, subnet and validity. An `Addr` has its MAC, its sources, the interfaces and plugins that saw it, and its expiration.
+- `GetAll`, `FilterMACs`: the addresses, as `AddrCollection`s, which filter by family, subnet and validity. An `Addr` has its MAC, its sources, the interfaces and plugins that saw it, its `Interfaces`, the local ones of them, and its expiration.
 - `Subscribe`: a channel that receives a value after each change, an address added, expired, or seen by a new source. Changes coming faster than they are received are told once.
 - `Register`: adds an address, as the plugins do.
 

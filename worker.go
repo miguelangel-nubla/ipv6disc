@@ -369,7 +369,7 @@ func (w *Worker) StartInterfaceAddr(ctx context.Context, iface net.Interface, ad
 	}
 
 	processNDP := func(receivedAddr netip.Addr, receivedNetHardwareAddr net.HardwareAddr) bool {
-		_, existing := w.State.Register(receivedNetHardwareAddr, receivedAddr, iface.Name, w.config.Lifetime, addrOnExpiration)
+		_, existing := w.State.registerLocal(receivedNetHardwareAddr, receivedAddr, iface.Name, w.config.Lifetime, addrOnExpiration)
 		return !existing
 	}
 
@@ -445,7 +445,7 @@ func (w *Worker) StartInterfaceAddr(ctx context.Context, iface net.Interface, ad
 	}()
 
 	discover := func() {
-		w.State.Register(iface.HardwareAddr, addr, iface.Name, w.config.Lifetime, addrOnExpiration)
+		w.State.registerLocal(iface.HardwareAddr, addr, iface.Name, w.config.Lifetime, addrOnExpiration)
 
 		if !w.config.probesIPv6() {
 			return
