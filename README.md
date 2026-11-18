@@ -34,7 +34,9 @@ docker run -it --rm --network host ghcr.io/miguelangel-nubla/ipv6disc \
   -plugin "router=mikrotik:interval=60s,address=192.168.88.1,username=ipv6disc,password=secret"
 ```
 
-Local discovery needs root, or `CAP_NET_RAW`; in Docker, the host's network and the `NET_RAW` capability, which Docker grants by default. Without them, only the plugins find hosts.
+IPv6 local discovery needs root or `CAP_NET_RAW`, and in Docker the host's network: see [privileges](docs/discovery.md#privileges). The image has the binary alone: files a plugin reads, as an `identity_file`, are mounted in.
+
+The log has an event per change: `host identified` when an address is found, `host expired` when it goes, with its `ip`, `mac` and `source`; `-log_level debug` adds each refresh. `-live` shows the state instead of the log.
 
 In `-live`, to select and copy, run it in `screen`, and press `Ctrl+a` then `Esc` for copy mode; `Esc` again goes on updating.
 

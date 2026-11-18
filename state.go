@@ -160,18 +160,23 @@ func (s *State) register(hw net.HardwareAddr, ip netip.Addr, source string, loca
 }
 
 // Seen adds the address to the collection of its MAC, or marks the one there as seen.
-// An address it adds expires as one Register adds: its onExpiration is called on each event, and
-// then it leaves the state.
+// The address is taken as it is: unlike Register, Seen applies neither SetFamilies nor
+// SetLifetimes, and logs nothing. One it adds is watched, its onExpiration called on each event,
+// and it leaves the state when it expires.
 func (s *State) Seen(addr *Addr, source ...string) (*Addr, bool) {
-	given := addr.onExpiration
-	addr.onExpiration = func(expired *Addr, remaining AddrExpirationRemainingEvents) {
-		given(expired, remaining)
-		if remaining == 0 && s.remove(expired) {
-			s.changed()
-		}
-	}
 	addr, existing, newSource := s.seen(addr, source...)
 	if !existing {
+		addr.mutex.Lock()
+		given := addr.onExpiration
+		addr.onExpiration = func(expired *Addr, remaining AddrExpirationRemainingEvents) {
+			if given != nil {
+				given(expired, remaining)
+			}
+			if remaining == 0 && s.remove(expired) {
+				s.changed()
+			}
+		}
+		addr.mutex.Unlock()
 		addr.Watch()
 	}
 	if !existing || newSource {

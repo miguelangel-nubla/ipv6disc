@@ -18,24 +18,35 @@ Active probing needs listening, which reads the answers: without it, nothing is 
 
 ### IPv6
 
-On each interface with an IPv6 address, it listens for NDP: every neighbor advertisement and solicitation tells an address and its MAC. The probes, multicast ping, SSDP M-SEARCH and WS-Discovery Probe, make the hosts answer; a host that answers from an address whose MAC isn't known is asked it with a neighbor solicitation. Before an address expires, it is pinged three times, so a host still there keeps it.
+On each interface with an IPv6 address, it listens for NDP: every neighbor advertisement and solicitation tells an address and its MAC. The probes, multicast ping, SSDP M-SEARCH and WS-Discovery Probe, make the hosts answer, and each address that answers is asked its MAC with a neighbor solicitation. Before an address the local discovery found expires, it is pinged three times, so a host still there keeps it; one only a plugin found isn't.
 
 ### IPv4
 
-Every minute, it reads the kernel's neighbor table, and keeps the entries confirmed recently: a stale one may be a host that left. The sweep, every `-rediscover`, has the kernel resolve every address of the subnets, so the hosts that sent nothing are in the table too.
+Every minute, it reads the kernel's neighbor table: on Linux, the entries confirmed recently, as a stale one may be a host that left; elsewhere, those not expired. The sweep, every `-rediscover`, has the kernel resolve every address of the subnets, so the hosts that sent nothing are in the table too.
 
 ## Solicitation
 
 Some addresses are never seen without asking: a host's stable IPv6 address, as it sends from temporary ones, or the IPv4 address of a host that sends nothing. The library asks given hosts:
 
 - `Worker.Solicit(addr)` sends a neighbor solicitation for an IPv6 address, on the links whose /64 it is in.
-- `Worker.SolicitIPv4(ctx, targets)` asks each target MAC, with ARP requests sent to it alone, for the addresses of the local subnets within its prefixes, up to 4096, on the interfaces the MAC was seen on. Nothing is broadcast, though a switch that no longer knows where the MAC is floods the requests, as any frame to it. It needs Linux and `CAP_NET_RAW`.
+- `Worker.SolicitIPv4(ctx, targets)` asks each target MAC, with ARP requests sent to it alone, for the addresses of the local subnets within its prefixes, up to 4096 nearest the local address, or without prefixes those a sweep would ask. It asks on the interfaces the local discovery saw the MAC on, or on all of them when it saw it on none. Nothing is broadcast, though a switch that no longer knows where the MAC is floods the requests, as any frame to it. It needs Linux and `CAP_NET_RAW`.
 
 An address that answers is registered as any other.
 
 ## Interfaces
 
-The local discovery of both families runs on every interface that is up, unless `-interfaces` names those it runs on, and `-exclude_interfaces` those it doesn't: names, or patterns as `docker*,veth*`. On a host running containers, leaving their bridges out keeps the containers out of the state, and the probes off their networks. The plugins aren't concerned.
+The local discovery runs on every interface that is up and not a loopback, with multicast for IPv6, with broadcast and a MAC for IPv4, unless `-interfaces` names those it runs on, and `-exclude_interfaces` those it doesn't: names, or patterns as `docker*,veth*`. On a host running containers, leaving their bridges out keeps the containers out of the state, and the probes off their networks. The plugins aren't concerned.
+
+## Privileges
+
+| | Needs |
+|---|---|
+| IPv6 listening and probing, `Worker.Solicit` | Root, or `CAP_NET_RAW`: raw ICMPv6 sockets |
+| IPv4 listening, the sweep | Nothing |
+| `Worker.SolicitIPv4` | Linux, and root or `CAP_NET_RAW`: raw ARP |
+| The plugins | Nothing, but the network to reach their host |
+
+In Docker, the local discovery needs the host's network, `--network host`, which Docker Desktop on macOS and Windows doesn't give: there, only the plugins find hosts. `NET_RAW` is granted by default. On Windows, the IPv6 listener has been seen to miss NDP packets: prefer the plugins there.
 
 ## Lifetimes and probing
 

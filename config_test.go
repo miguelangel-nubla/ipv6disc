@@ -205,7 +205,39 @@ func TestSeenAddressesExpire(t *testing.T) {
 	if len(state.GetAll()) != 0 {
 		t.Error("still in the state")
 	}
-	if len(events) != 4 {
-		t.Errorf("%d expiration events, want 4", len(events))
+	// Timers due together fire in any order, and the expiration stops the others: the last is told.
+	var last AddrExpirationRemainingEvents = -1
+	for len(events) > 0 {
+		last = <-events
+	}
+	if last != 0 {
+		t.Errorf("the last event %d, want the expiration, 0", last)
+	}
+}
+
+// Seen of an address already there changes nothing of it, nor races with its watch; one that
+// expired, given again, is watched again and expires again.
+func TestSeenAgain(t *testing.T) {
+	mac, _ := net.ParseMAC("00:1a:2b:3c:4d:0f")
+	state := NewState()
+	a, _ := state.Register(mac, netip.MustParseAddr("2001:db8::f"), "test", 30*time.Millisecond, nil)
+	for range 20 {
+		state.Seen(a, "test")
+		time.Sleep(2 * time.Millisecond)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for len(state.GetAll()) > 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("never expired")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	// Expired and unwatched: given again, it goes again.
+	state.Seen(a, "test")
+	for len(state.GetAll()) > 0 {
+		if time.Now().After(deadline.Add(3 * time.Second)) {
+			t.Fatal("seen again after it expired, it stays")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

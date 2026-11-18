@@ -24,8 +24,9 @@ type Addr struct {
 	// The local interfaces that saw it: sources too, but a plugin can have an interface's name.
 	interfaces []string
 
-	unwatch     chan struct{}
-	unwatchOnce sync.Once
+	// Closed by Unwatch; a Watch after it makes a new one.
+	unwatch   chan struct{}
+	unwatched bool
 
 	mutex sync.RWMutex
 }
@@ -69,8 +70,8 @@ func (a *Addr) Sources() []string {
 	return slices.Clone(a.sources)
 }
 
-// Interfaces returns the local interfaces that have seen the address: of its sources, those that
-// aren't plugins.
+// Interfaces returns the local interfaces that have seen the address: of its sources, those of
+// the worker's own local discovery, not plugins nor other callers of State.Register.
 func (a *Addr) Interfaces() []string {
 	a.mutex.RLock()
 	defer a.mutex.RUnlock()
@@ -111,18 +112,25 @@ func (a *Addr) seenBy(lifetime time.Duration, local bool, source ...string) bool
 // Watch calls onExpiration on each of the expiration events, until Unwatch is called. An address
 // seen again after it expired has its events again.
 func (a *Addr) Watch() {
+	a.mutex.Lock()
+	if a.unwatched {
+		a.unwatch, a.unwatched = make(chan struct{}), false
+	}
+	unwatch, onExpiration := a.unwatch, a.onExpiration
+	a.mutex.Unlock()
+
 	go func() {
 		for {
 			select {
 			case <-a.expiration3.C:
-				a.onExpiration(a, 3)
+				onExpiration(a, 3)
 			case <-a.expiration2.C:
-				a.onExpiration(a, 2)
+				onExpiration(a, 2)
 			case <-a.expiration1.C:
-				a.onExpiration(a, 1)
+				onExpiration(a, 1)
 			case <-a.expiration.C:
-				a.onExpiration(a, 0)
-			case <-a.unwatch:
+				onExpiration(a, 0)
+			case <-unwatch:
 				return
 			}
 		}
@@ -133,17 +141,17 @@ func (a *Addr) Watch() {
 
 // Unwatch stops the expiration events. It can be called more than once.
 func (a *Addr) Unwatch() {
-	a.unwatchOnce.Do(func() {
-		a.mutex.Lock()
-		defer a.mutex.Unlock()
-
-		a.expiration3.Stop()
-		a.expiration2.Stop()
-		a.expiration1.Stop()
-		a.expiration.Stop()
-
-		close(a.unwatch)
-	})
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+	if a.unwatched {
+		return
+	}
+	a.expiration3.Stop()
+	a.expiration2.Stop()
+	a.expiration1.Stop()
+	a.expiration.Stop()
+	close(a.unwatch)
+	a.unwatched = true
 }
 
 func NewAddr(hw net.HardwareAddr, addr netip.Addr, source string, lifetime time.Duration, onExpiration func(*Addr, AddrExpirationRemainingEvents)) *Addr {
