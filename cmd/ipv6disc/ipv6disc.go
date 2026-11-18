@@ -25,10 +25,8 @@ var (
 	lifetime time.Duration
 	live     bool
 
-	discoveryListen bool
-	discoveryActive bool
-	ipv4            bool
-	ipv4Sweep       bool
+	ipv6, ipv6Listen, ipv6Active bool
+	ipv4, ipv4Listen, ipv4Active bool
 
 	pluginsFlags pluginsFlag
 )
@@ -75,10 +73,15 @@ func init() {
 	flag.DurationVar(&lifetime, "lifetime", 4*time.Hour, "Time to keep a discovered host entry after it has been last seen. Default: 4h")
 	flag.BoolVar(&live, "live", false, "Show the current state live on the terminal, default: false")
 
-	flag.BoolVar(&discoveryListen, "discovery-listen", true, "Enable listening for IPv6 discovery packets on interfaces")
-	flag.BoolVar(&discoveryActive, "discovery-active", true, "Enable active discovery (multicast Ping, SSDP, NDP solicitation)")
-	flag.BoolVar(&ipv4Sweep, "ipv4-sweep", true, "With -ipv4 and active discovery, sweep the local subnets, which broadcasts an ARP request for each address")
-	flag.BoolVar(&ipv4, "ipv4", false, "Discover IPv4 neighbors too: the plugins read their router's ARP table, and the local discovery the kernel's, after a sweep of the local subnets with active discovery")
+	flag.BoolVar(&ipv6, "ipv6", true, "Discover IPv6 addresses")
+	flag.BoolVar(&ipv6Listen, "ipv6-listen", true, "IPv6: listen for NDP and the discovery protocols on the interfaces")
+	flag.BoolVar(&ipv6Active, "ipv6-active", true, "IPv6: probe the links, by multicast ping, SSDP and WS-Discovery")
+	flag.BoolVar(&ipv4, "ipv4", false, "Discover IPv4 addresses: the plugins read their router's ARP table")
+	flag.BoolVar(&ipv4Listen, "ipv4-listen", true, "IPv4: read the kernel's neighbor table")
+	flag.BoolVar(&ipv4Active, "ipv4-active", true, "IPv4: sweep the local subnets, which broadcasts an ARP request for each address")
+	// Before the families: the IPv6 ones.
+	flag.BoolVar(&ipv6Listen, "discovery-listen", true, "Deprecated: -ipv6-listen")
+	flag.BoolVar(&ipv6Active, "discovery-active", true, "Deprecated: -ipv6-active")
 
 	flag.Var(&pluginsFlags, "plugin", "Plugin configuration: name=type:params (can be specified multiple times)")
 }
@@ -94,13 +97,12 @@ func startUpdater() {
 
 	rediscover := lifetime / 3
 
-	worker := ipv6disc.NewWorker(sugar, rediscover, lifetime, discoveryListen, discoveryActive)
-	if ipv4 {
-		worker.State.EnableIPv4()
-	}
-	if !ipv4Sweep {
-		worker.DisableIPv4Sweep()
-	}
+	worker := ipv6disc.NewWorker(sugar, ipv6disc.Config{
+		Lifetime:   lifetime,
+		Rediscover: rediscover,
+		IPv6:       ipv6disc.Family{Enabled: ipv6, Listen: ipv6Listen, Active: ipv6Active},
+		IPv4:       ipv6disc.Family{Enabled: ipv4, Listen: ipv4Listen, Active: ipv4Active},
+	})
 
 	for _, pCfg := range pluginsFlags {
 		p, err := plugins.Create(pCfg.Type, pCfg.Name, pCfg.Params, lifetime)

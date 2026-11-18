@@ -24,7 +24,7 @@ func (w *Worker) discoverIPv4(ctx context.Context) {
 
 	var lastSweep time.Time
 	for {
-		if w.discoveryActive && !w.noIPv4Sweep.Load() && time.Since(lastSweep) >= w.rediscover {
+		if w.config.probesIPv4() && time.Since(lastSweep) >= w.rediscover {
 			lastSweep = time.Now()
 			w.sweepIPv4(ctx)
 			select {
@@ -47,13 +47,6 @@ func (w *Worker) discoverIPv4(ctx context.Context) {
 		case <-ticker.C:
 		}
 	}
-}
-
-// DisableIPv4Sweep keeps the local IPv4 discovery from sweeping the subnets, which broadcasts an ARP
-// request for each address: it reads the kernel's table only, and SolicitIPv4 asks the hosts wanted
-// by unicast. Call it before Start.
-func (w *Worker) DisableIPv4Sweep() {
-	w.noIPv4Sweep.Store(true)
 }
 
 // SolicitIPv4 asks each MAC, by ARP requests sent to it alone, for every address of the local

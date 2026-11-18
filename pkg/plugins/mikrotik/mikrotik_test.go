@@ -162,7 +162,7 @@ func TestDiscoverIPv4(t *testing.T) {
 	plugin := NewMikrotikPlugin("router", Config{Interval: time.Minute, Address: address, Username: "admin"}, time.Hour)
 
 	state := ipv6disc.NewState()
-	state.EnableIPv4()
+	state.SetFamilies(true, true)
 	found, err := plugin.discover(context.Background(), state)
 	if err != nil || found != 4 {
 		t.Errorf("found %d, %v, want the 3 IPv6 neighbors and the reachable IPv4 one", found, err)
@@ -175,5 +175,19 @@ func TestDiscoverIPv4(t *testing.T) {
 	}
 	if !slices.Contains(asked, "/ip/arp/print") {
 		t.Errorf("asked %v", asked)
+	}
+}
+
+func TestDiscoverIPv4Only(t *testing.T) {
+	var asked []string
+	address := serveRouterOS(t, nil, func(command string) []map[string]string {
+		asked = append(asked, command)
+		return neighborTable(command)
+	})
+	state := ipv6disc.NewState()
+	state.SetFamilies(false, true)
+	found, err := NewMikrotikPlugin("router", Config{Interval: time.Minute, Address: address, Username: "admin"}, time.Hour).discover(context.Background(), state)
+	if err != nil || found != 1 || !slices.Equal(asked, []string{"/ip/arp/print"}) {
+		t.Errorf("found %d, %v, asked %v", found, err, asked)
 	}
 }

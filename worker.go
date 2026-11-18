@@ -38,11 +38,8 @@ type Worker struct {
 	pcMutex       sync.RWMutex
 	// The goroutines Start starts, for Wait.
 	running sync.WaitGroup
-	// Whether the local IPv4 discovery skips the sweep.
-	noIPv4Sweep atomic.Bool
 
-	discoveryListen bool
-	discoveryActive bool
+	config Config
 }
 
 type worker interface {
@@ -60,20 +57,21 @@ type InterfaceProcesses struct {
 	Protocols     []*DiscoveryProtocol
 }
 
-func NewWorker(logger *zap.SugaredLogger, rediscover time.Duration, lifetime time.Duration, discoveryListen bool, discoveryActive bool) *Worker {
+// NewWorker makes a worker that discovers addresses as config says; Start runs it.
+func NewWorker(logger *zap.SugaredLogger, config Config) *Worker {
 	s := NewState()
 	s.SetLogger(logger)
+	s.SetFamilies(config.IPv6.Enabled, config.IPv4.Enabled)
 
 	return &Worker{
-		State:           s,
-		logger:          logger,
-		rediscover:      rediscover,
-		lifetime:        lifetime,
-		plugins:         make([]Plugin, 0),
-		protocolConns:   make(map[string]*InterfaceProcesses),
-		workerCancels:   make(map[string]context.CancelFunc),
-		discoveryListen: discoveryListen,
-		discoveryActive: discoveryActive,
+		State:         s,
+		logger:        logger,
+		config:        config,
+		rediscover:    config.Rediscover,
+		lifetime:      config.Lifetime,
+		plugins:       make([]Plugin, 0),
+		protocolConns: make(map[string]*InterfaceProcesses),
+		workerCancels: make(map[string]context.CancelFunc),
 	}
 }
 
@@ -157,8 +155,11 @@ func (w *Worker) PrettyPrintStats(prefix string) string {
 // which it keeps in step with the addresses the system has.
 // The discovery stops when ctx is done: Wait waits for it to.
 func (w *Worker) Start(ctx context.Context) error {
-	if len(w.plugins) == 0 && !w.discoveryListen {
-		return fmt.Errorf("no plugins configured and discovery listening disabled: nothing to do")
+	if err := w.config.validate(); err != nil {
+		return err
+	}
+	if len(w.plugins) == 0 && !w.config.listensIPv6() && !w.config.listensIPv4() {
+		return fmt.Errorf("no plugins configured and no local discovery: nothing to do")
 	}
 
 	for _, p := range w.plugins {
@@ -174,7 +175,7 @@ func (w *Worker) Start(ctx context.Context) error {
 		}()
 	}
 
-	if w.discoveryListen {
+	if w.config.listensIPv6() {
 		w.running.Add(1)
 		go func() {
 			defer w.running.Done()
@@ -190,14 +191,14 @@ func (w *Worker) Start(ctx context.Context) error {
 				}
 			}
 		}()
+	}
 
-		if w.State.IPv4() {
-			w.running.Add(1)
-			go func() {
-				defer w.running.Done()
-				w.discoverIPv4(ctx)
-			}()
-		}
+	if w.config.listensIPv4() {
+		w.running.Add(1)
+		go func() {
+			defer w.running.Done()
+			w.discoverIPv4(ctx)
+		}()
 	}
 
 	return nil
@@ -447,7 +448,7 @@ func (w *Worker) StartInterfaceAddr(ctx context.Context, iface net.Interface, ad
 	discover := func() {
 		w.State.Register(iface.HardwareAddr, addr, iface.Name, w.lifetime, addrOnExpiration)
 
-		if !w.discoveryActive {
+		if !w.config.probesIPv6() {
 			return
 		}
 

@@ -131,7 +131,7 @@ func TestDiscoverIPv4(t *testing.T) {
 	}
 
 	state = ipv6disc.NewState()
-	state.EnableIPv4()
+	state.SetFamilies(true, true)
 	found, err := NewLinuxPlugin("router", cfg, time.Hour).discover(context.Background(), state, nil)
 	if err != nil || found != 2 {
 		t.Errorf("with IPv4: found %d, %v, want the reachable IPv4 and the IPv6", found, err)
@@ -140,6 +140,30 @@ func TestDiscoverIPv4(t *testing.T) {
 		t.Errorf("the IPv4 neighbor: %v", got)
 	}
 	if got := server.Commands(); got[0] != "ip -6 neigh" || got[1] != "ip neigh" {
+		t.Errorf("commands: %v", got)
+	}
+}
+
+func TestDiscoverIPv4Only(t *testing.T) {
+	server := sshtest.Start(t, "root", "secret", func(command string) ([]byte, error) {
+		if command != "ip -4 neigh" {
+			return nil, errors.New("unexpected command " + command)
+		}
+		return []byte("192.168.1.10 dev eth0 lladdr 00:1a:2b:3c:4d:10 REACHABLE\n"), nil
+	})
+	state := ipv6disc.NewState()
+	state.SetFamilies(false, true)
+	cfg := Config{Interval: time.Minute, Address: server.Address, Username: "root", Password: "secret", HostKey: server.HostKey}
+	if found, err := NewLinuxPlugin("router", cfg, time.Hour).discover(context.Background(), state, nil); err != nil || found != 1 {
+		t.Errorf("IPv4 only: found %d, %v", found, err)
+	}
+
+	// No family on: nothing to read, no connection.
+	state.SetFamilies(false, false)
+	if found, err := NewLinuxPlugin("router", cfg, time.Hour).discover(context.Background(), state, nil); err != nil || found != 0 {
+		t.Errorf("no family: found %d, %v", found, err)
+	}
+	if got := server.Commands(); len(got) != 1 {
 		t.Errorf("commands: %v", got)
 	}
 }

@@ -29,8 +29,8 @@ func ParseConfig(config string) (Config, error) {
 	return plugins.ParseSSHConfig("freebsd", config)
 }
 
-// FreeBSDPlugin reads the neighbor table of a FreeBSD host over SSH: `ndp -an`, and `arp -an`
-// when the state takes IPv4.
+// FreeBSDPlugin reads the neighbor tables of a FreeBSD host over SSH, of the families the state
+// takes: `ndp -an` for IPv6, `arp -an` for IPv4.
 type FreeBSDPlugin struct {
 	plugins.Poller
 
@@ -61,10 +61,17 @@ func (p *FreeBSDPlugin) discover(ctx context.Context, state *ipv6disc.State, onE
 	ctx, cancel := context.WithTimeout(ctx, plugins.PollTimeout)
 	defer cancel()
 
-	// The IPv4 table too, when the state takes it, in the same session.
-	command := "ndp -an"
-	if state.IPv4() {
+	// The tables of the families the state takes, in one session.
+	var command string
+	switch {
+	case state.IPv6() && state.IPv4():
 		command = "ndp -an; echo " + arpMarker + "; arp -an"
+	case state.IPv4():
+		command = "echo " + arpMarker + "; arp -an"
+	case state.IPv6():
+		command = "ndp -an"
+	default:
+		return 0, nil
 	}
 	output, hostKey, err := plugins.RunSSH(ctx, p.config, command)
 	if err != nil {
