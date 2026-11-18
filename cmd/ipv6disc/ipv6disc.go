@@ -28,6 +28,7 @@ var (
 	discoveryListen bool
 	discoveryActive bool
 	ipv4            bool
+	ipv4Sweep       bool
 
 	pluginsFlags pluginsFlag
 )
@@ -76,6 +77,7 @@ func init() {
 
 	flag.BoolVar(&discoveryListen, "discovery-listen", true, "Enable listening for IPv6 discovery packets on interfaces")
 	flag.BoolVar(&discoveryActive, "discovery-active", true, "Enable active discovery (multicast Ping, SSDP, NDP solicitation)")
+	flag.BoolVar(&ipv4Sweep, "ipv4-sweep", true, "With -ipv4 and active discovery, sweep the local subnets, which broadcasts an ARP request for each address")
 	flag.BoolVar(&ipv4, "ipv4", false, "Discover IPv4 neighbors too: the plugins read their router's ARP table, and the local discovery the kernel's, after a sweep of the local subnets with active discovery")
 
 	flag.Var(&pluginsFlags, "plugin", "Plugin configuration: name=type:params (can be specified multiple times)")
@@ -95,6 +97,9 @@ func startUpdater() {
 	worker := ipv6disc.NewWorker(sugar, rediscover, lifetime, discoveryListen, discoveryActive)
 	if ipv4 {
 		worker.State.EnableIPv4()
+	}
+	if !ipv4Sweep {
+		worker.DisableIPv4Sweep()
 	}
 
 	for _, pCfg := range pluginsFlags {

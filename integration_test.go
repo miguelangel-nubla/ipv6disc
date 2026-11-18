@@ -12,6 +12,7 @@ package ipv6disc
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/netip"
 	"os"
 	"os/exec"
@@ -48,7 +49,7 @@ func ip(t *testing.T, args ...string) {
 
 func TestLiveDiscovery(t *testing.T) {
 	if os.Getenv(insideEnv) == "" {
-		runInNamespace(t)
+		runInNamespace(t, "TestLiveDiscovery")
 		return
 	}
 
@@ -127,8 +128,50 @@ func waitFor(t *testing.T, timeout time.Duration, what string, done func() bool)
 	}
 }
 
+// The IPv4 addresses of a host that sends nothing, found with nothing broadcast: no sweep, the peer
+// asked by unicast ARP.
+func TestLiveIPv4Solicit(t *testing.T) {
+	if os.Getenv(insideEnv) == "" {
+		runInNamespace(t, "TestLiveIPv4Solicit")
+		return
+	}
+
+	w := NewWorker(zaptest.NewLogger(t).Sugar(), 2*time.Second, time.Minute, true, true)
+	w.State.EnableIPv4()
+	w.DisableIPv4Sweep()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := w.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(5 * time.Second)
+	if has(w, peerMAC, peerIPv4) {
+		t.Fatalf("%s found without a sweep or a solicitation", peerIPv4)
+	}
+
+	found, err := w.SolicitIPv4(ctx, []net.HardwareAddr{mustMAC(peerMAC)})
+	if err != nil || found == 0 || !has(w, peerMAC, peerIPv4) {
+		t.Fatalf("solicited: found %d, %v; the peer's IPv4 known: %v", found, err, has(w, peerMAC, peerIPv4))
+	}
+
+	if found, err := w.SolicitIPv4(ctx, []net.HardwareAddr{mustMAC("02:00:00:00:00:99")}); err != nil || found != 0 {
+		t.Errorf("a MAC not on the link: found %d, %v", found, err)
+	}
+	cancel()
+	w.Wait()
+}
+
+func mustMAC(s string) net.HardwareAddr {
+	mac, err := net.ParseMAC(s)
+	if err != nil {
+		panic(err)
+	}
+	return mac
+}
+
 // runInNamespace makes the namespaces and their link, and runs the test inside the worker's.
-func runInNamespace(t *testing.T) {
+func runInNamespace(t *testing.T, name string) {
 	if os.Geteuid() != 0 {
 		t.Skip("needs root, to make network namespaces")
 	}
@@ -155,7 +198,7 @@ func runInNamespace(t *testing.T) {
 	ip(t, "-n", workerNamespace, "addr", "add", workerIPv4.String()+"/24", "dev", "veth-worker")
 	ip(t, "-n", peerNamespace, "addr", "add", peerIPv4.String()+"/24", "dev", "veth-peer")
 
-	cmd := exec.Command("ip", "netns", "exec", workerNamespace, os.Args[0], "-test.run=^TestLiveDiscovery$", "-test.v", "-test.timeout=3m")
+	cmd := exec.Command("ip", "netns", "exec", workerNamespace, os.Args[0], "-test.run=^"+name+"$", "-test.v", "-test.timeout=3m")
 	cmd.Env = append(os.Environ(), insideEnv+"=1")
 	out, err := cmd.CombinedOutput()
 	t.Logf("inside %s:\n%s", workerNamespace, out)

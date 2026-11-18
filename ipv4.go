@@ -3,6 +3,7 @@ package ipv6disc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/netip"
 	"time"
@@ -23,7 +24,7 @@ func (w *Worker) discoverIPv4(ctx context.Context) {
 
 	var lastSweep time.Time
 	for {
-		if w.discoveryActive && time.Since(lastSweep) >= w.rediscover {
+		if w.discoveryActive && !w.noIPv4Sweep.Load() && time.Since(lastSweep) >= w.rediscover {
 			lastSweep = time.Now()
 			w.sweepIPv4(ctx)
 			select {
@@ -46,6 +47,46 @@ func (w *Worker) discoverIPv4(ctx context.Context) {
 		case <-ticker.C:
 		}
 	}
+}
+
+// DisableIPv4Sweep keeps the local IPv4 discovery from sweeping the subnets, which broadcasts an ARP
+// request for each address: it reads the kernel's table only, and SolicitIPv4 asks the hosts wanted
+// by unicast. Call it before Start.
+func (w *Worker) DisableIPv4Sweep() {
+	w.noIPv4Sweep.Store(true)
+}
+
+// SolicitIPv4 asks each MAC, by ARP requests sent to it alone, for every address of the local
+// subnets, and registers those it answers for: the IPv4 addresses of a host that stays quiet, with
+// nothing broadcast. It needs Linux and CAP_NET_RAW, and the state taking IPv4. It returns how many
+// addresses were found.
+func (w *Worker) SolicitIPv4(ctx context.Context, macs []net.HardwareAddr) (int, error) {
+	if !w.State.IPv4() {
+		return 0, errors.New("soliciting IPv4 addresses: the state doesn't take IPv4")
+	}
+	found := 0
+	var errs []error
+	for name, i := range ipv4Interfaces() {
+		for _, prefix := range i.prefixes {
+			targets := arp.SweepTargets(prefix)
+			for _, mac := range macs {
+				addrs, err := arp.Probe(ctx, &i.iface, prefix.Addr(), mac, targets)
+				if err != nil {
+					errs = append(errs, fmt.Errorf("%s on %s: %w", mac, name, err))
+					if errors.Is(err, errors.ErrUnsupported) || ctx.Err() != nil {
+						return found, errors.Join(errs...)
+					}
+					continue
+				}
+				for _, ip := range addrs {
+					if _, existing := w.State.Register(mac, ip, name, w.lifetime, nil); !existing {
+						found++
+					}
+				}
+			}
+		}
+	}
+	return found, errors.Join(errs...)
 }
 
 // ipv4Interface is an interface IPv4 discovery runs on, with its IPv4 addresses.

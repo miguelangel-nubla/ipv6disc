@@ -38,6 +38,8 @@ type Worker struct {
 	pcMutex       sync.RWMutex
 	// The goroutines Start starts, for Wait.
 	running sync.WaitGroup
+	// Whether the local IPv4 discovery skips the sweep.
+	noIPv4Sweep atomic.Bool
 
 	discoveryListen bool
 	discoveryActive bool
