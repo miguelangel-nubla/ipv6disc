@@ -6,9 +6,11 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/miguelangel-nubla/ipv6disc/pkg/plugins"
 )
@@ -16,13 +18,6 @@ import (
 var update = flag.Bool("update", false, "write the reference pages")
 
 const generated = "<!-- Generated from the code by `go test ./cmd/ipv6disc -update`: edit it, not this page. -->\n\n"
-
-// pluginTypes says what each plugin type reads, and how.
-var pluginTypes = map[string]string{
-	"freebsd":  "A FreeBSD host, as pfSense or OPNsense, over SSH: `ndp -an` for IPv6, `arp -an` for IPv4.",
-	"linux":    "A Linux host, as OpenWrt, over SSH: `ip neigh`.",
-	"mikrotik": "A Mikrotik router, over its API: `/ipv6/neighbor` for IPv6, `/ip/arp` for IPv4.",
-}
 
 func cell(s string) string { return strings.ReplaceAll(s, "|", `\|`) }
 
@@ -61,7 +56,7 @@ func pluginsPage() (string, error) {
 		if err != nil {
 			return "", err
 		}
-		fmt.Fprintf(&b, "\n## %s\n\n%s\n\n| Param | |\n|---|---|\n", name, pluginTypes[name])
+		fmt.Fprintf(&b, "\n## %s\n\n%s\n\n| Param | |\n|---|---|\n", name, plugins.Description(name))
 		for _, f := range fields {
 			desc := f.Description
 			if f.Required {
@@ -97,8 +92,8 @@ func TestReferenceUpToDate(t *testing.T) {
 		}
 	}
 	for _, name := range plugins.Types() {
-		if pluginTypes[name] == "" {
-			t.Errorf("plugin %s: no description in pluginTypes", name)
+		if plugins.Description(name) == "" {
+			t.Errorf("plugin %s: no description: plugins.Describe", name)
 		}
 		fields, _ := plugins.Fields(name)
 		for _, f := range fields {
@@ -106,5 +101,29 @@ func TestReferenceUpToDate(t *testing.T) {
 				t.Errorf("plugin %s, %s: no description", name, f.Name)
 			}
 		}
+	}
+}
+
+// Every -plugin of the documentation is one the plugins take.
+func TestDocPluginExamples(t *testing.T) {
+	root := filepath.Join("..", "..")
+	files, _ := filepath.Glob(filepath.Join(root, "docs", "*.md"))
+	files = append(files, filepath.Join(root, "README.md"))
+	example := regexp.MustCompile(`-plugin "([^"=]+)=([a-z]+):([^"]*)"`)
+	checked := 0
+	for _, f := range files {
+		content, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range example.FindAllStringSubmatch(string(content), -1) {
+			if _, err := plugins.Create(m[2], m[1], m[3], time.Hour); err != nil {
+				t.Errorf("%s: -plugin %q: %v", f, m[0], err)
+			}
+			checked++
+		}
+	}
+	if checked == 0 {
+		t.Error("no example found")
 	}
 }

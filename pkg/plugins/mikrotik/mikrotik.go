@@ -18,6 +18,7 @@ import (
 )
 
 func init() {
+	plugins.Describe("mikrotik", "A Mikrotik router, over its API: `/ipv6/neighbor` for IPv6, `/ip/arp` for IPv4.")
 	plugins.Register("mikrotik", func(name string, config string, lifetime time.Duration) (ipv6disc.Plugin, error) {
 		cfg, err := ParseConfig(config)
 		if err != nil {

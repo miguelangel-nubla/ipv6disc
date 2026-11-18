@@ -19,16 +19,23 @@ if err != nil {
 }
 worker.RegisterPlugin(plugin)
 
+// Before Start, not to miss the first changes.
+changes, cancel := worker.State.Subscribe()
+defer cancel()
+
 if err := worker.Start(ctx); err != nil { // until ctx is done
 	return err
 }
 defer worker.Wait()
 
-changes, cancel := worker.State.Subscribe()
-defer cancel()
-for range changes {
-	for mac, addrs := range worker.State.GetAll() {
-		fmt.Println(mac, addrs.FilterValid().Strings())
+for {
+	select {
+	case <-ctx.Done():
+		return nil
+	case <-changes:
+		for mac, addrs := range worker.State.GetAll() {
+			fmt.Println(mac, addrs.FilterValid().Strings())
+		}
 	}
 }
 ```
@@ -37,7 +44,7 @@ Import the plugins with `_ "github.com/miguelangel-nubla/ipv6disc/pkg/plugins/al
 
 ## Config
 
-`Config` is what the [command's flags](reference/cli.md) set: a `Family` for each of `IPv6` and `IPv4`, with `Enabled`, `Listen`, `Active` and `Lifetime`, the `Lifetime` and `Rediscover` of all, and the `Interfaces` and `ExcludeInterfaces`. The [discovery](discovery.md) page says what each does. A zero `Rediscover`, or a family's zero `Lifetime`, takes the default.
+`Config` is what the [command's flags](reference/cli.md) set: a `Family` for each of `IPv6` and `IPv4`, with `Enabled`, `Listen`, `Active` and `Lifetime`, the `Lifetime` and `Rediscover` of all, and the `Interfaces` and `ExcludeInterfaces`. The [discovery](discovery.md) page says what each does. A zero `Rediscover` is a third of the shortest lifetime of the families that probe. A family's zero `Lifetime` leaves each registration its own: `Config.Lifetime` for the local discovery, and for a plugin the lifetime it was made with.
 
 ## State
 

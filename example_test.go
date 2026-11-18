@@ -30,19 +30,25 @@ func Example() {
 		}
 		worker.RegisterPlugin(plugin)
 
+		// Before Start, not to miss the first changes.
+		changes, cancel := worker.State.Subscribe()
+		defer cancel()
+
 		if err := worker.Start(ctx); err != nil { // until ctx is done
 			return err
 		}
 		defer worker.Wait()
 
-		changes, cancel := worker.State.Subscribe()
-		defer cancel()
-		for range changes {
-			for mac, addrs := range worker.State.GetAll() {
-				fmt.Println(mac, addrs.FilterValid().Strings())
+		for {
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-changes:
+				for mac, addrs := range worker.State.GetAll() {
+					fmt.Println(mac, addrs.FilterValid().Strings())
+				}
 			}
 		}
-		return nil
 	}
 	_ = run
 }
@@ -58,7 +64,7 @@ func TestLibraryPageShowsTheExample(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := regexp.MustCompile(`(?s)run := func\(\) error \{\n(.*?)\n\t\treturn nil\n\t\}`).FindSubmatch(source)
+	body := regexp.MustCompile(`(?s)run := func\(\) error \{\n(.*?)\n\t\}\n\t_ = run`).FindSubmatch(source)
 	if shown == nil || body == nil {
 		t.Fatal("no code to compare")
 	}

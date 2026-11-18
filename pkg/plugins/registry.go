@@ -22,8 +22,9 @@ type Field struct {
 }
 
 type registered struct {
-	factory Factory
-	fields  []Field
+	factory     Factory
+	fields      []Field
+	description string
 }
 
 var (
@@ -36,7 +37,23 @@ var (
 func Register(name string, factory Factory, fields ...Field) {
 	mu.Lock()
 	defer mu.Unlock()
-	registry[name] = registered{factory, fields}
+	registry[name] = registered{factory: factory, fields: fields, description: registry[name].description}
+}
+
+// Describe says what a plugin type reads, and how, for the documentation.
+func Describe(typeName, description string) {
+	mu.Lock()
+	defer mu.Unlock()
+	r := registry[typeName]
+	r.description = description
+	registry[typeName] = r
+}
+
+// Description returns what Describe said of a plugin type.
+func Description(typeName string) string {
+	mu.RLock()
+	defer mu.RUnlock()
+	return registry[typeName].description
 }
 
 // Types returns the plugin types registered.
