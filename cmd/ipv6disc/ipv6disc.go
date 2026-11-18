@@ -21,9 +21,10 @@ import (
 )
 
 var (
-	logLevel string
-	lifetime time.Duration
-	live     bool
+	logLevel   string
+	lifetime   time.Duration
+	rediscover time.Duration
+	live       bool
 
 	ipv6, ipv6Listen, ipv6Active bool
 	ipv4, ipv4Listen, ipv4Active bool
@@ -88,23 +89,64 @@ func (p *pluginsFlag) Set(value string) error {
 func init() {
 	flag.StringVar(&logLevel, "log_level", "info", "Logging level (debug, info, warn, error, fatal, panic) default: info")
 	flag.DurationVar(&lifetime, "lifetime", 4*time.Hour, "Time to keep a discovered host entry after it has been last seen. Default: 4h")
+	flag.DurationVar(&rediscover, "rediscover", 0, "How often the active discovery probes every host. Default: a third of -lifetime")
 	flag.BoolVar(&live, "live", false, "Show the current state live on the terminal, default: false")
 
 	flag.BoolVar(&ipv6, "ipv6", true, "Discover IPv6 addresses")
-	flag.BoolVar(&ipv6Listen, "ipv6-listen", true, "IPv6: listen for NDP and the discovery protocols on the interfaces")
-	flag.BoolVar(&ipv6Active, "ipv6-active", true, "IPv6: probe the links, by multicast ping, SSDP and WS-Discovery")
+	flag.BoolVar(&ipv6Listen, "ipv6_listen", true, "IPv6: listen for NDP and the discovery protocols on the interfaces")
+	flag.BoolVar(&ipv6Active, "ipv6_active", true, "IPv6: probe the links, by multicast ping, SSDP and WS-Discovery")
+	flag.DurationVar(&ipv6Lifetime, "ipv6_lifetime", 0, "IPv6: time to keep an address after it was last seen, in place of -lifetime")
 	flag.BoolVar(&ipv4, "ipv4", false, "Discover IPv4 addresses: the plugins read their router's ARP table")
-	flag.BoolVar(&ipv4Listen, "ipv4-listen", true, "IPv4: read the kernel's neighbor table")
-	flag.BoolVar(&ipv4Active, "ipv4-active", true, "IPv4: sweep the local subnets, which broadcasts an ARP request for each address")
-	flag.DurationVar(&ipv6Lifetime, "ipv6-lifetime", 0, "IPv6: time to keep an address after it was last seen, in place of -lifetime")
-	flag.DurationVar(&ipv4Lifetime, "ipv4-lifetime", 0, "IPv4: time to keep an address after it was last seen, in place of -lifetime")
+	flag.BoolVar(&ipv4Listen, "ipv4_listen", true, "IPv4: read the kernel's neighbor table")
+	flag.BoolVar(&ipv4Active, "ipv4_active", true, "IPv4: sweep the local subnets, which broadcasts an ARP request for each address")
+	flag.DurationVar(&ipv4Lifetime, "ipv4_lifetime", 0, "IPv4: time to keep an address after it was last seen, in place of -lifetime")
 	flag.Var(&interfaces, "interfaces", "Local discovery only on these interfaces: names or patterns, as en*, comma separated. Default: all")
-	flag.Var(&excludeInterfaces, "exclude-interfaces", "No local discovery on these interfaces: names or patterns, as docker*,veth*")
-	// Before the families: the IPv6 ones.
-	flag.BoolVar(&ipv6Listen, "discovery-listen", true, "Deprecated: -ipv6-listen")
-	flag.BoolVar(&ipv6Active, "discovery-active", true, "Deprecated: -ipv6-active")
+	flag.Var(&excludeInterfaces, "exclude_interfaces", "No local discovery on these interfaces: names or patterns, as docker*,veth*")
 
 	flag.Var(&pluginsFlags, "plugin", "Plugin configuration: name=type:params (can be specified multiple times)")
+
+	// The names from before, as the flags they became.
+	for old, current := range deprecatedFlags {
+		flag.Var(flag.Lookup(current).Value, old, "Deprecated: -"+current)
+	}
+	flag.Usage = usage
+}
+
+// deprecatedFlags are the names flags had, and the flags they are now.
+var deprecatedFlags = map[string]string{
+	"discovery-listen":   "ipv6_listen",
+	"discovery-active":   "ipv6_active",
+	"ipv6-listen":        "ipv6_listen",
+	"ipv6-active":        "ipv6_active",
+	"ipv6-lifetime":      "ipv6_lifetime",
+	"ipv4-listen":        "ipv4_listen",
+	"ipv4-active":        "ipv4_active",
+	"ipv4-lifetime":      "ipv4_lifetime",
+	"exclude-interfaces": "exclude_interfaces",
+}
+
+// usage lists the flags, as flag does, without the deprecated names.
+func usage() {
+	listed := flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
+	listed.SetOutput(flag.CommandLine.Output())
+	flag.VisitAll(func(f *flag.Flag) {
+		if _, deprecated := deprecatedFlags[f.Name]; !deprecated {
+			listed.Var(f.Value, f.Name, f.Usage)
+		}
+	})
+	fmt.Fprintf(listed.Output(), "Usage of %s:\n", os.Args[0])
+	listed.PrintDefaults()
+}
+
+// deprecatedFlagsGiven tells what to use in place of the deprecated names given.
+func deprecatedFlagsGiven() []string {
+	var warnings []string
+	flag.Visit(func(f *flag.Flag) {
+		if current, ok := deprecatedFlags[f.Name]; ok {
+			warnings = append(warnings, fmt.Sprintf("-%s is deprecated: it is -%s", f.Name, current))
+		}
+	})
+	return warnings
 }
 
 func main() {
@@ -115,8 +157,13 @@ func main() {
 
 func startUpdater() {
 	sugar := initializeLogger()
+	for _, warning := range deprecatedFlagsGiven() {
+		sugar.Warn(warning)
+	}
 
-	rediscover := lifetime / 3
+	if rediscover == 0 {
+		rediscover = lifetime / 3
+	}
 
 	worker := ipv6disc.NewWorker(sugar, ipv6disc.Config{
 		Lifetime:   lifetime,
