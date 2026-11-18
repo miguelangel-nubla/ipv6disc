@@ -40,8 +40,8 @@ func SweepTargets(local netip.Prefix) []netip.Addr {
 const MaxProbeAddrs = 4096
 
 // ProbeTargets returns the addresses of local's subnet, but the network's, the broadcast and
-// local's own, that are in within: all of them when within isn't valid, in the /24 of local for a
-// subnet larger than a /22, as a sweep. At most MaxProbeAddrs, the first ones.
+// local's own, that are in within. Without within, those of a sweep: the subnet, or the /24 of
+// local in a subnet larger than a /22. At most MaxProbeAddrs: those nearest local.
 func ProbeTargets(local netip.Prefix, within netip.Prefix) []netip.Addr {
 	if !within.IsValid() {
 		return SweepTargets(local)
@@ -57,6 +57,13 @@ func ProbeTargets(local netip.Prefix, within netip.Prefix) []netip.Addr {
 		span = within
 	}
 	first, last := span.Addr(), lastAddr(span)
+	// A span too large for the cap: the window of it around local.
+	if size := uint64(1) << (32 - span.Bits()); size > MaxProbeAddrs {
+		lo, hi, at := toUint(first), toUint(last), toUint(local.Addr())
+		start := max(int64(at)-MaxProbeAddrs/2, int64(lo))
+		start = min(start, int64(hi)-MaxProbeAddrs+1)
+		first, last = fromUint(uint32(start)), fromUint(uint32(start+MaxProbeAddrs-1))
+	}
 	subnetFirst, subnetLast := subnet.Addr(), lastAddr(subnet)
 	var targets []netip.Addr
 	for a := first; a.IsValid() && a.Compare(last) <= 0 && len(targets) < MaxProbeAddrs; a = a.Next() {
@@ -66,6 +73,15 @@ func ProbeTargets(local netip.Prefix, within netip.Prefix) []netip.Addr {
 		targets = append(targets, a)
 	}
 	return targets
+}
+
+func toUint(a netip.Addr) uint32 {
+	b := a.As4()
+	return uint32(b[0])<<24 | uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3])
+}
+
+func fromUint(v uint32) netip.Addr {
+	return netip.AddrFrom4([4]byte{byte(v >> 24), byte(v >> 16), byte(v >> 8), byte(v)})
 }
 
 func lastAddr(p netip.Prefix) netip.Addr {

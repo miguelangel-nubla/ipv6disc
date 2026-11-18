@@ -13,7 +13,7 @@ type Config struct {
 	// How long an address stays after it was last seen, unless its family says.
 	Lifetime time.Duration
 	// How often the active discovery runs. Zero: a third of the shortest lifetime of the families
-	// on, so that a quiet host is probed before it expires.
+	// that probe, so that a quiet host is probed before it expires.
 	Rediscover time.Duration
 
 	IPv6 Family
@@ -71,14 +71,16 @@ func (c Config) validate() error {
 	return errors.Join(errs...)
 }
 
-// withDefaults fills in what is left zero: the families' lifetimes, and the rediscovery interval.
+// withDefaults fills in what is left zero: the families' lifetimes, and the rediscovery interval,
+// from the families that probe.
 func (c Config) withDefaults() Config {
 	shortest := time.Duration(0)
 	for _, f := range []*Family{&c.IPv6, &c.IPv4} {
 		if f.Lifetime == 0 {
 			f.Lifetime = c.Lifetime
 		}
-		if f.Enabled && (shortest == 0 || f.Lifetime < shortest) {
+		probes := f.Enabled && f.Listen && f.Active
+		if probes && (shortest == 0 || f.Lifetime < shortest) {
 			shortest = f.Lifetime
 		}
 	}
