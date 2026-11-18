@@ -51,14 +51,19 @@ When a host responds to any of these probes, the tool triggers a specific **NDP 
 For hosts that might not be directly reachable via multicast (e.g. on different VLANs or filtered by firewalls) or to get a comprehensive view from the network gateway, `ipv6disc` supports plugins.
 Plugins connect to routers/firewalls (Linux, FreeBSD/OPNsense, Mikrotik) to fetch their known neighbor tables. This allows populating the list with hosts that the router sees.
 
-### 3. IPv4 neighbors, with `-ipv4`
-Off by default. With it:
-- The plugins also read their host's IPv4 neighbor table, ARP: `ip neigh`, `arp -an`, `/ip/arp/print`.
-- The local discovery reads the kernel's: through netlink on Linux, with no command needed; `arp -an` on macOS and the BSDs; not on Windows.
-- With active discovery, it first sweeps: it sends a UDP packet to the discard port of each address of the local subnets (a /22 at most, or the /24 of the address), so the kernel resolves the hosts that stay quiet. That needs no privilege, but broadcasts an ARP request for each address: `-ipv4-sweep=false` leaves it out.
-- A program using the library can instead ask specific hosts, with nothing broadcast: `Worker.SolicitIPv4` sends ARP requests to each MAC alone, for every address of the local subnets, and registers those it answers for. That needs Linux and `CAP_NET_RAW`.
+### 3. The same ways for each family
+Each family, IPv6 and IPv4, is discovered the same ways, each of which can be turned off:
 
-As for IPv6, only the entries confirmed recently count, so that hosts that left expire.
+| | IPv6 | IPv4 (off by default: `-ipv4`) |
+|---|---|---|
+| **Plugins** | the routers' IPv6 neighbor tables | their ARP tables: `ip neigh`, `arp -an`, `/ip/arp/print` |
+| **Listen** (`-ipv6-listen`, `-ipv4-listen`) | NDP, and the answers of the protocols | the kernel's neighbor table: netlink on Linux, `arp -an` on macOS and the BSDs, not on Windows |
+| **Active** (`-ipv6-active`, `-ipv4-active`), probing every host | multicast ping, SSDP, WS-Discovery | a sweep: a UDP packet to the discard port of each address of the local subnets (a /22 at most, or the /24 of the address), so the kernel resolves the quiet hosts. It needs no privilege, but broadcasts an ARP request for each address |
+| **Solicit**, asking given hosts, for programs using the library | `Worker.Solicit`, a neighbor solicitation for an address | `Worker.SolicitIPv4`, ARP requests sent to a MAC alone, for every address of the local subnets: nothing is broadcast. It needs Linux and `CAP_NET_RAW` |
+
+Active discovery needs listening, which reads its answers. Only the entries confirmed recently count, so that hosts that left expire.
+
+In Go, `ipv6disc.NewWorker(logger, config)` takes the same, in a `Config` with an `IPv6` and an `IPv4` `Family`: `Enabled`, `Listen` and `Active`. `ipv6disc.DefaultConfig()` is IPv6 by every means, no IPv4.
 
 ## Usage
 
@@ -80,8 +85,8 @@ If you need to pause and select/copy data use `screen`, launch `ipv6disc -live [
 - `-log_level`: Set the logging level (default: "info"). Available options: "debug", "info", "warn", "error", "fatal", "panic".
 - `-lifetime`: Set the lifetime for a discovered host entry after it has been last seen (default: 4 hours).
 - `-live`: Show the current state live on the terminal (default: false).
-- `-ipv4`: Discover IPv4 neighbors too, see above (default: false).
-- `-ipv4-sweep`: With `-ipv4` and active discovery, sweep the local subnets, which broadcasts an ARP request for each address (default: true).
+- `-ipv6`, `-ipv6-listen`, `-ipv6-active`: Discover IPv6 addresses, by listening, and by probing the links (default: all true). `-discovery-listen` and `-discovery-active`, from before, are the same as `-ipv6-listen` and `-ipv6-active`.
+- `-ipv4`, `-ipv4-listen`, `-ipv4-active`: Discover IPv4 addresses (default: false), by reading the kernel's table, and by sweeping the subnets (default: true once `-ipv4`). See above.
 - `-plugin`: Plugin configuration: `name=type:params` (can be specified multiple times, multiple instances of the same plugin connected to different hosts are allowed)
 
 ## Plugins

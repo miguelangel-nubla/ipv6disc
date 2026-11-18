@@ -32,7 +32,7 @@ func TestGetAll(t *testing.T) {
 }
 
 func TestWorkerPrefixesAndSolicitWithoutListeners(t *testing.T) {
-	w := NewWorker(zap.NewNop().Sugar(), time.Minute, time.Minute, false, false)
+	w := NewWorker(zap.NewNop().Sugar(), Config{Lifetime: time.Minute, Rediscover: time.Minute, IPv6: Family{Enabled: true}})
 	w.protocolConns["2001:db8:1::5"] = &InterfaceProcesses{InterfaceName: "eth0", Address: netip.MustParseAddr("2001:db8:1::5")}
 	w.protocolConns["2001:db8:1::6"] = &InterfaceProcesses{InterfaceName: "eth0", Address: netip.MustParseAddr("2001:db8:1::6")}
 	w.protocolConns["fd00:2::7"] = &InterfaceProcesses{InterfaceName: "eth1", Address: netip.MustParseAddr("fd00:2::7")}
@@ -110,5 +110,51 @@ func TestAddressSeenAtExpirationStillExpires(t *testing.T) {
 			time.Sleep(lifetime * 3 / 4)
 		}
 		assert.Eventually(t, func() bool { return len(state.GetAll()) == 0 }, time.Second, time.Millisecond)
+	}
+}
+
+func TestStateFamilies(t *testing.T) {
+	mac, _ := net.ParseMAC("00:1a:2b:3c:4d:08")
+	for _, tt := range []struct{ ipv6, ipv4, want6, want4 bool }{
+		{true, false, true, false}, // the default
+		{true, true, true, true},
+		{false, true, false, true},
+	} {
+		state := NewState()
+		if tt.ipv6 != true || tt.ipv4 {
+			state.SetFamilies(tt.ipv6, tt.ipv4)
+		}
+		a6, _ := state.Register(mac, netip.MustParseAddr("2001:db8::1"), "test", time.Hour, nil)
+		a4, _ := state.Register(mac, netip.MustParseAddr("192.0.2.1"), "test", time.Hour, nil)
+		if (a6 != nil) != tt.want6 || (a4 != nil) != tt.want4 || state.IPv6() != tt.ipv6 || state.IPv4() != tt.ipv4 {
+			t.Errorf("families %v/%v: registered IPv6 %v, IPv4 %v", tt.ipv6, tt.ipv4, a6 != nil, a4 != nil)
+		}
+		for _, a := range []*Addr{a6, a4} {
+			if a != nil {
+				a.Unwatch()
+			}
+		}
+	}
+}
+
+func TestConfigValidate(t *testing.T) {
+	if err := DefaultConfig().validate(); err != nil {
+		t.Errorf("the default: %v", err)
+	}
+	bad := DefaultConfig()
+	bad.IPv4 = Family{Enabled: true, Active: true}
+	if err := bad.validate(); err == nil {
+		t.Error("IPv4 active without listening: want an error")
+	}
+	bad = DefaultConfig()
+	bad.Lifetime = 0
+	if err := bad.validate(); err == nil {
+		t.Error("no lifetime: want an error")
+	}
+	// Active without listening, on a family off: nothing runs, nothing to refuse.
+	off := DefaultConfig()
+	off.IPv4 = Family{Active: true}
+	if err := off.validate(); err != nil {
+		t.Errorf("a family off: %v", err)
 	}
 }

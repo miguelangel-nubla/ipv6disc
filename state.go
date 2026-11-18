@@ -18,14 +18,21 @@ type State struct {
 	macs      map[string]*AddrCollection
 	macsMutex sync.RWMutex
 	logger    *zap.SugaredLogger
-	// Whether it takes IPv4 addresses: IPv6 only by default.
-	ipv4 atomic.Bool
+	// The families it takes: IPv6 only by default.
+	noIPv6 atomic.Bool
+	ipv4   atomic.Bool
 }
 
-// EnableIPv4 makes the state take IPv4 addresses too, and the plugins and the local discovery
-// read the IPv4 neighbors: ARP. Without it, Register leaves IPv4 addresses out.
-func (s *State) EnableIPv4() {
-	s.ipv4.Store(true)
+// SetFamilies sets the families whose addresses the state takes, and the plugins read: Register
+// leaves the others out.
+func (s *State) SetFamilies(ipv6, ipv4 bool) {
+	s.noIPv6.Store(!ipv6)
+	s.ipv4.Store(ipv4)
+}
+
+// IPv6 tells whether the state takes IPv6 addresses, for the plugins to read them.
+func (s *State) IPv6() bool {
+	return !s.noIPv6.Load()
 }
 
 // IPv4 tells whether the state takes IPv4 addresses, for the plugins to read them.
@@ -37,13 +44,13 @@ func (s *State) SetLogger(l *zap.SugaredLogger) {
 	s.logger = l
 }
 
-// Register adds a discovered address to the state, or refreshes the one already there. An IPv4
-// address, unless EnableIPv4 was called, is left out: it returns nil and true, as if known.
+// Register adds a discovered address to the state, or refreshes the one already there. An address
+// of a family the state doesn't take is left out: it returns nil and true, as if known.
 // onExpiration, which can be nil, is called on each expiration event of a new address. When the
 // address expires it is logged and taken out of the state, unless it was seen again meanwhile.
 func (s *State) Register(hw net.HardwareAddr, ip netip.Addr, source string, lifetime time.Duration, onExpiration func(*Addr, AddrExpirationRemainingEvents)) (*Addr, bool) {
 	ip = ip.Unmap()
-	if ip.Is4() && !s.IPv4() {
+	if ip.Is4() && !s.IPv4() || ip.Is6() && !s.IPv6() {
 		return nil, true
 	}
 

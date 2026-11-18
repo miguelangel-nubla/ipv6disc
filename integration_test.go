@@ -53,8 +53,8 @@ func TestLiveDiscovery(t *testing.T) {
 		return
 	}
 
-	w := NewWorker(zaptest.NewLogger(t).Sugar(), 2*time.Second, 6*time.Second, true, true)
-	w.State.EnableIPv4()
+	w := NewWorker(zaptest.NewLogger(t).Sugar(), Config{Lifetime: 6 * time.Second, Rediscover: 2 * time.Second,
+		IPv6: Family{Enabled: true, Listen: true, Active: true}, IPv4: Family{Enabled: true, Listen: true, Active: true}})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if err := w.Start(ctx); err != nil {
@@ -136,9 +136,8 @@ func TestLiveIPv4Solicit(t *testing.T) {
 		return
 	}
 
-	w := NewWorker(zaptest.NewLogger(t).Sugar(), 2*time.Second, time.Minute, true, true)
-	w.State.EnableIPv4()
-	w.DisableIPv4Sweep()
+	w := NewWorker(zaptest.NewLogger(t).Sugar(), Config{Lifetime: time.Minute, Rediscover: 2 * time.Second,
+		IPv6: Family{Enabled: true, Listen: true, Active: true}, IPv4: Family{Enabled: true, Listen: true}})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if err := w.Start(ctx); err != nil {

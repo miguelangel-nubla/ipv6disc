@@ -128,9 +128,12 @@ func (p *MikrotikPlugin) discover(ctx context.Context, state *ipv6disc.State) (i
 	}
 	defer client.Close()
 
-	tables := []string{"/ipv6/neighbor/print"}
+	// The tables of the families the state takes, alike.
+	var tables []string
+	if state.IPv6() {
+		tables = append(tables, "/ipv6/neighbor/print")
+	}
 	if state.IPv4() {
-		// The IPv4 neighbors, ARP, alike.
 		tables = append(tables, "/ip/arp/print")
 	}
 

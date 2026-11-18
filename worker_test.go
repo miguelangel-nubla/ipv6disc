@@ -19,7 +19,7 @@ func (p *blockingPlugin) Start(ctx context.Context, _ *State, _ func(error)) err
 }
 
 func TestWorkerStopsWithItsContext(t *testing.T) {
-	w := NewWorker(zap.NewNop().Sugar(), time.Minute, time.Hour, false, false)
+	w := NewWorker(zap.NewNop().Sugar(), Config{Lifetime: time.Hour, Rediscover: time.Minute, IPv6: Family{Enabled: true}})
 	plugin := &blockingPlugin{stopped: make(chan struct{})}
 	w.RegisterPlugin(plugin)
 
@@ -44,7 +44,7 @@ func TestWorkerStopsWithItsContext(t *testing.T) {
 }
 
 func TestWorkerWithNothingToDo(t *testing.T) {
-	w := NewWorker(zap.NewNop().Sugar(), time.Minute, time.Hour, false, false)
+	w := NewWorker(zap.NewNop().Sugar(), Config{Lifetime: time.Hour, Rediscover: time.Minute, IPv6: Family{Enabled: true}})
 	if err := w.Start(context.Background()); err == nil {
 		t.Error("no plugins and no listening: want an error")
 	}
