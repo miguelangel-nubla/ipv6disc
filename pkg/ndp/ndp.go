@@ -15,7 +15,11 @@ type Conn struct {
 	iface      *net.Interface
 	listenAddr *netip.Addr
 
-	stats Stats
+	stats struct {
+		// Preserve eight-byte alignment even in arrays on 32-bit systems.
+		_ [0]atomic.Uint64
+		Stats
+	}
 }
 
 type Stats struct {
