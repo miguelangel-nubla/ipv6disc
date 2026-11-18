@@ -3,18 +3,27 @@ package ipv6disc
 import (
 	"errors"
 	"fmt"
+	"path"
+	"slices"
 	"time"
 )
 
 // Config is how a Worker discovers addresses: the same for each family.
 type Config struct {
-	// How long an address stays after it was last seen.
+	// How long an address stays after it was last seen, unless its family says.
 	Lifetime time.Duration
 	// How often the active discovery runs.
 	Rediscover time.Duration
 
 	IPv6 Family
 	IPv4 Family
+
+	// Interfaces limits the local discovery, of both families, to the interfaces whose name
+	// matches one of these patterns, as path.Match takes them: "eth0", "en*". None means every
+	// interface. ExcludeInterfaces then leaves out those matching one of its own: "docker*",
+	// "veth*". The plugins, which read other hosts' tables, aren't concerned.
+	Interfaces        []string
+	ExcludeInterfaces []string
 }
 
 // Family is how a family's addresses are discovered. Targeted discovery, of given hosts, is
@@ -30,6 +39,9 @@ type Family struct {
 	// and WS-Discovery. IPv4: a sweep of the subnets, which broadcasts an ARP request for each
 	// address. It needs Listen, which reads the answers.
 	Active bool
+	// How long the family's addresses stay after they were last seen, the plugins' too:
+	// Config.Lifetime when zero.
+	Lifetime time.Duration
 }
 
 // DefaultConfig discovers IPv6 addresses by every means, and no IPv4 ones.
@@ -51,7 +63,28 @@ func (c Config) validate() error {
 	if c.Lifetime <= 0 || c.Rediscover <= 0 {
 		errs = append(errs, fmt.Errorf("invalid lifetime %s or rediscovery interval %s: they must be positive", c.Lifetime, c.Rediscover))
 	}
+	if c.IPv6.Lifetime < 0 || c.IPv4.Lifetime < 0 {
+		errs = append(errs, fmt.Errorf("invalid family lifetime: IPv6 %s, IPv4 %s", c.IPv6.Lifetime, c.IPv4.Lifetime))
+	}
+	for _, pattern := range slices.Concat(c.Interfaces, c.ExcludeInterfaces) {
+		if _, err := path.Match(pattern, ""); err != nil {
+			errs = append(errs, fmt.Errorf("invalid interface pattern %q: %w", pattern, err))
+		}
+	}
 	return errors.Join(errs...)
+}
+
+// usesInterface tells whether the local discovery runs on the interface of this name.
+func (c Config) usesInterface(name string) bool {
+	matches := func(patterns []string) bool {
+		for _, pattern := range patterns {
+			if ok, _ := path.Match(pattern, name); ok {
+				return true
+			}
+		}
+		return false
+	}
+	return (len(c.Interfaces) == 0 || matches(c.Interfaces)) && !matches(c.ExcludeInterfaces)
 }
 
 // listensIPv6 and the others tell what of the configuration runs.

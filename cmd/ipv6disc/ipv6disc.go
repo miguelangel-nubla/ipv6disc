@@ -28,8 +28,25 @@ var (
 	ipv6, ipv6Listen, ipv6Active bool
 	ipv4, ipv4Listen, ipv4Active bool
 
+	ipv6Lifetime, ipv4Lifetime    time.Duration
+	interfaces, excludeInterfaces listFlag
+
 	pluginsFlags pluginsFlag
 )
+
+// listFlag is a comma separated list, which the flag can also be given several times for.
+type listFlag []string
+
+func (l *listFlag) String() string { return strings.Join(*l, ",") }
+
+func (l *listFlag) Set(value string) error {
+	for _, v := range strings.Split(value, ",") {
+		if v = strings.TrimSpace(v); v != "" {
+			*l = append(*l, v)
+		}
+	}
+	return nil
+}
 
 type pluginsFlag []struct {
 	Name   string
@@ -79,6 +96,10 @@ func init() {
 	flag.BoolVar(&ipv4, "ipv4", false, "Discover IPv4 addresses: the plugins read their router's ARP table")
 	flag.BoolVar(&ipv4Listen, "ipv4-listen", true, "IPv4: read the kernel's neighbor table")
 	flag.BoolVar(&ipv4Active, "ipv4-active", true, "IPv4: sweep the local subnets, which broadcasts an ARP request for each address")
+	flag.DurationVar(&ipv6Lifetime, "ipv6-lifetime", 0, "IPv6: time to keep an address after it was last seen, in place of -lifetime")
+	flag.DurationVar(&ipv4Lifetime, "ipv4-lifetime", 0, "IPv4: time to keep an address after it was last seen, in place of -lifetime")
+	flag.Var(&interfaces, "interfaces", "Local discovery only on these interfaces: names or patterns, as en*, comma separated. Default: all")
+	flag.Var(&excludeInterfaces, "exclude-interfaces", "No local discovery on these interfaces: names or patterns, as docker*,veth*")
 	// Before the families: the IPv6 ones.
 	flag.BoolVar(&ipv6Listen, "discovery-listen", true, "Deprecated: -ipv6-listen")
 	flag.BoolVar(&ipv6Active, "discovery-active", true, "Deprecated: -ipv6-active")
@@ -100,8 +121,11 @@ func startUpdater() {
 	worker := ipv6disc.NewWorker(sugar, ipv6disc.Config{
 		Lifetime:   lifetime,
 		Rediscover: rediscover,
-		IPv6:       ipv6disc.Family{Enabled: ipv6, Listen: ipv6Listen, Active: ipv6Active},
-		IPv4:       ipv6disc.Family{Enabled: ipv4, Listen: ipv4Listen, Active: ipv4Active},
+		IPv6:       ipv6disc.Family{Enabled: ipv6, Listen: ipv6Listen, Active: ipv6Active, Lifetime: ipv6Lifetime},
+		IPv4:       ipv6disc.Family{Enabled: ipv4, Listen: ipv4Listen, Active: ipv4Active, Lifetime: ipv4Lifetime},
+
+		Interfaces:        interfaces,
+		ExcludeInterfaces: excludeInterfaces,
 	})
 
 	for _, pCfg := range pluginsFlags {

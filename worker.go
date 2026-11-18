@@ -62,6 +62,7 @@ func NewWorker(logger *zap.SugaredLogger, config Config) *Worker {
 	s := NewState()
 	s.SetLogger(logger)
 	s.SetFamilies(config.IPv6.Enabled, config.IPv4.Enabled)
+	s.SetLifetimes(config.IPv6.Lifetime, config.IPv4.Lifetime)
 
 	return &Worker{
 		State:         s,
@@ -275,7 +276,7 @@ func (w *Worker) checkInterfaces(ctx context.Context) {
 	seenAddrs := make(map[string]bool)
 
 	for _, iface := range ifaces {
-		if err := isValidInterface(&iface); err != nil {
+		if err := isValidInterface(&iface); err != nil || !w.config.usesInterface(iface.Name) {
 			continue
 		}
 
