@@ -2,9 +2,10 @@ package ipv6disc
 
 import (
 	"fmt"
+	"maps"
 	"net"
 	"net/netip"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -22,81 +23,97 @@ func (s *State) SetLogger(l *zap.SugaredLogger) {
 	s.logger = l
 }
 
-// Register adds a discovered address to the state.
-// It handles creation of new Addr objects, calling Seen, and logging "host identified" events.
-// If onExpiration is nil, a default handler is used which logs "host expired".
+// Register adds a discovered address to the state, or refreshes the one already there.
+// onExpiration, which can be nil, is called on each expiration event of a new address. When the
+// address expires it is logged and taken out of the state, unless it was seen again meanwhile.
 func (s *State) Register(hw net.HardwareAddr, ip netip.Addr, source string, lifetime time.Duration, onExpiration func(*Addr, AddrExpirationRemainingEvents)) (*Addr, bool) {
-	if onExpiration == nil {
-		onExpiration = func(expiredAddr *Addr, remainingEvents AddrExpirationRemainingEvents) {
-			if remainingEvents == 0 && s.logger != nil {
-				s.logger.Infow("host expired",
-					zap.String("ipv6", netip.AddrFrom16(expiredAddr.As16()).String()),
-					zap.String("mac", expiredAddr.Hw.String()),
-					zap.String("source", source),
-				)
-			}
+	expire := func(expiredAddr *Addr, remainingEvents AddrExpirationRemainingEvents) {
+		if onExpiration != nil {
+			onExpiration(expiredAddr, remainingEvents)
+		}
+		if remainingEvents != 0 || !s.remove(expiredAddr) {
+			return
+		}
+		if s.logger != nil {
+			s.logger.Infow("host expired",
+				zap.String("ipv6", expiredAddr.WithZone("").String()),
+				zap.String("mac", expiredAddr.Hw.String()),
+				zap.String("source", source),
+			)
 		}
 	}
 
-	newAddr := NewAddr(hw, ip, source, lifetime, onExpiration)
-	addr, existing := s.Seen(newAddr, source)
+	addr, existing := s.Seen(NewAddr(hw, ip, source, lifetime, expire), source)
 
 	if !existing {
 		addr.Watch()
 		if s.logger != nil {
 			s.logger.Infow("host identified",
-				zap.String("ipv6", netip.AddrFrom16(ip.As16()).String()),
+				zap.String("ipv6", ip.WithZone("").String()),
 				zap.String("mac", hw.String()),
 				zap.String("source", source),
 			)
 		}
-	} else {
-		if s.logger != nil {
-			s.logger.Debugw("ttl refreshed",
-				zap.String("ipv6", ip.String()),
-				zap.String("mac", hw.String()),
-				zap.String("source", source),
-			)
-		}
+	} else if s.logger != nil {
+		s.logger.Debugw("ttl refreshed",
+			zap.String("ipv6", ip.String()),
+			zap.String("mac", hw.String()),
+			zap.String("source", source),
+		)
 	}
 
 	return addr, existing
 }
 
-// accepts default TTL and onExpiration function
+// Seen adds the address to the collection of its MAC, or marks the one there as seen.
 func (s *State) Seen(addr *Addr, source ...string) (*Addr, bool) {
 	s.macsMutex.Lock()
 	defer s.macsMutex.Unlock()
 
 	mac := addr.Hw.String()
-	_, exists := s.macs[mac]
+	collection, exists := s.macs[mac]
 	if !exists {
-		s.macs[mac] = NewAddrCollection()
+		collection = NewAddrCollection()
+		s.macs[mac] = collection
 	}
 
-	return s.macs[mac].Seen(addr, source...)
+	return collection.Seen(addr, source...)
 }
 
+// remove takes an expired address out of the state, unless it was seen again since. It returns
+// whether it did.
+func (s *State) remove(addr *Addr) bool {
+	s.macsMutex.Lock()
+	defer s.macsMutex.Unlock()
+
+	mac := addr.Hw.String()
+	collection, ok := s.macs[mac]
+	if !ok {
+		return false
+	}
+	removed, empty := collection.removeExpired(addr)
+	if empty {
+		delete(s.macs, mac)
+	}
+	return removed
+}
+
+// GetAll returns the addresses of each MAC.
 func (s *State) GetAll() map[string]*AddrCollection {
 	s.macsMutex.RLock()
 	defer s.macsMutex.RUnlock()
 
-	entries := make(map[string]*AddrCollection, len(s.macs))
-	for k, v := range s.macs {
-		entries[k] = v
-	}
-	return entries
+	return maps.Clone(s.macs)
 }
 
 func (s *State) FilterMACs(hws []net.HardwareAddr) *AddrCollection {
 	results := NewAddrCollection()
 
-	s.macsMutex.Lock()
-	defer s.macsMutex.Unlock()
+	s.macsMutex.RLock()
+	defer s.macsMutex.RUnlock()
 
 	for _, hw := range hws {
-		collection, exists := s.macs[hw.String()]
-		if exists {
+		if collection, exists := s.macs[hw.String()]; exists {
 			results.Join(collection)
 		}
 	}
@@ -104,27 +121,19 @@ func (s *State) FilterMACs(hws []net.HardwareAddr) *AddrCollection {
 	return results
 }
 
+// PrettyPrint lists the addresses of each MAC. hideSensible is there for symmetry with the other
+// PrettyPrint methods: nothing here is sensible.
 func (s *State) PrettyPrint(prefix string, hideSensible bool) string {
 	var result strings.Builder
 
-	s.macsMutex.Lock()
-	defer s.macsMutex.Unlock()
+	s.macsMutex.RLock()
+	defer s.macsMutex.RUnlock()
 
 	fmt.Fprintf(&result, "%sDiscovery:\n", prefix)
 
-	// Get the keys from the map
-	keys := make([]string, 0, len(s.macs))
-	for k := range s.macs {
-		keys = append(keys, k)
-	}
-
-	// Sort the keys
-	sort.Strings(keys)
-
-	// Iterate ordered
-	for _, key := range keys {
-		fmt.Fprintf(&result, "%s    %s\n", prefix, key)
-		fmt.Fprint(&result, s.macs[key].PrettyPrint(prefix+"        "))
+	for _, mac := range slices.Sorted(maps.Keys(s.macs)) {
+		fmt.Fprintf(&result, "%s    %s\n", prefix, mac)
+		fmt.Fprint(&result, s.macs[mac].PrettyPrint(prefix+"        "))
 	}
 
 	return result.String()
