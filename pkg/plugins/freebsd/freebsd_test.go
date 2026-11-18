@@ -65,3 +65,22 @@ func TestDiscoverOverSSH(t *testing.T) {
 		t.Errorf("found %d, %v", found, err)
 	}
 }
+
+func TestDiscoverIPv4OverSSH(t *testing.T) {
+	server := sshtest.Start(t, "root", "secret", func(command string) ([]byte, error) {
+		if command != "ndp -an; echo "+arpMarker+"; arp -an" {
+			return nil, errors.New("unexpected command")
+		}
+		return []byte("Neighbor Linklayer Address Netif Expire S Flags\n2001:db8::1 00:11:22:33:44:55 em0 permanent R\n" + arpMarker + "\n? (192.168.1.10) at 00:11:22:33:44:10 on em0 expires in 1189 seconds [ethernet]\n? (192.168.1.12) at (incomplete) on em0 expired [ethernet]\n"), nil
+	})
+	state := ipv6disc.NewState()
+	state.EnableIPv4()
+	plugin := NewFreeBSDPlugin("firewall", Config{Interval: time.Minute, Address: server.Address, Username: "root", Password: "secret", HostKey: server.HostKey}, time.Hour)
+	found, err := plugin.discover(context.Background(), state, nil)
+	if err != nil || found != 2 {
+		t.Errorf("found %d, %v, want the IPv6 and the IPv4 neighbor", found, err)
+	}
+	if got := state.GetAll()["00:11:22:33:44:10"]; got == nil || got.Strings()[0] != "192.168.1.10" {
+		t.Errorf("the IPv4 neighbor: %v", got)
+	}
+}

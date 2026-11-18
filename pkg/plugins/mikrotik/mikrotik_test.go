@@ -53,9 +53,18 @@ var neighbors = []map[string]string{
 	{"address": "2001:db8::8", "mac-address": "not a MAC", "status": "reachable"},
 }
 
+var arpTable = []map[string]string{
+	{"address": "192.168.88.10", "mac-address": "00:11:22:33:44:10", "interface": "bridge", "status": "reachable"},
+	{"address": "192.168.88.11", "mac-address": "00:11:22:33:44:11", "interface": "bridge", "status": "stale"},
+	{"address": "192.168.88.12", "interface": "bridge", "status": "failed"},
+}
+
 func neighborTable(command string) []map[string]string {
-	if command == "/ipv6/neighbor/print" {
+	switch command {
+	case "/ipv6/neighbor/print":
 		return neighbors
+	case "/ip/arp/print":
+		return arpTable
 	}
 	return nil
 }
@@ -142,4 +151,29 @@ func FuzzParseConfig(f *testing.F) {
 			t.Errorf("%q: fingerprint %q not normalized", config, cfg.TLSFingerprint)
 		}
 	})
+}
+
+func TestDiscoverIPv4(t *testing.T) {
+	var asked []string
+	address := serveRouterOS(t, nil, func(command string) []map[string]string {
+		asked = append(asked, command)
+		return neighborTable(command)
+	})
+	plugin := NewMikrotikPlugin("router", Config{Interval: time.Minute, Address: address, Username: "admin"}, time.Hour)
+
+	state := ipv6disc.NewState()
+	state.EnableIPv4()
+	found, err := plugin.discover(context.Background(), state)
+	if err != nil || found != 4 {
+		t.Errorf("found %d, %v, want the 3 IPv6 neighbors and the reachable IPv4 one", found, err)
+	}
+	if got := state.GetAll()["00:11:22:33:44:10"]; got == nil || got.Strings()[0] != "192.168.88.10" {
+		t.Errorf("the IPv4 neighbor: %v", got)
+	}
+	if _, stale := state.GetAll()["00:11:22:33:44:11"]; stale {
+		t.Error("the stale IPv4 neighbor is registered")
+	}
+	if !slices.Contains(asked, "/ip/arp/print") {
+		t.Errorf("asked %v", asked)
+	}
 }

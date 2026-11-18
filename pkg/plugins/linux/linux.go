@@ -29,7 +29,8 @@ func ParseConfig(config string) (Config, error) {
 	return plugins.ParseSSHConfig("linux", config)
 }
 
-// LinuxPlugin reads the neighbor table of a Linux host, `ip -6 neigh`, over SSH.
+// LinuxPlugin reads the neighbor table of a Linux host over SSH: `ip -6 neigh`, or `ip neigh`
+// with the IPv4 neighbors too, when the state takes them.
 type LinuxPlugin struct {
 	plugins.Poller
 
@@ -60,7 +61,12 @@ func (p *LinuxPlugin) discover(ctx context.Context, state *ipv6disc.State, onErr
 	ctx, cancel := context.WithTimeout(ctx, plugins.PollTimeout)
 	defer cancel()
 
-	output, hostKey, err := plugins.RunSSH(ctx, p.config, "ip -6 neigh")
+	// Both families in one table, when the state takes IPv4: their lines are alike.
+	command := "ip -6 neigh"
+	if state.IPv4() {
+		command = "ip neigh"
+	}
+	output, hostKey, err := plugins.RunSSH(ctx, p.config, command)
 	if err != nil {
 		return 0, err
 	}
