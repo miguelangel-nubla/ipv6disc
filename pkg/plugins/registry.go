@@ -13,9 +13,15 @@ import (
 
 type Factory func(name string, config string, lifetime time.Duration) (ipv6disc.Plugin, error)
 
+// Field is a param of a plugin type, by name.
+type Field struct {
+	Name     string
+	Required bool
+}
+
 type registered struct {
 	factory Factory
-	fields  []string
+	fields  []Field
 }
 
 var (
@@ -23,9 +29,9 @@ var (
 	mu       sync.RWMutex
 )
 
-// Register makes a plugin type available to Create. fields names its params, in their order, so
+// Register makes a plugin type available to Create. fields are its params, in their order, so
 // that they can also be given by name: "interval=60s,address=192.0.2.1,...".
-func Register(name string, factory Factory, fields ...string) {
+func Register(name string, factory Factory, fields ...Field) {
 	mu.Lock()
 	defer mu.Unlock()
 	registry[name] = registered{factory, fields}
@@ -38,8 +44,8 @@ func Types() []string {
 	return slices.Sorted(maps.Keys(registry))
 }
 
-// Fields returns the names of a plugin type's params, in their order.
-func Fields(typeName string) ([]string, error) {
+// Fields returns the params of a plugin type, in their order.
+func Fields(typeName string) ([]Field, error) {
 	mu.RLock()
 	defer mu.RUnlock()
 	r, ok := registry[typeName]
@@ -57,18 +63,29 @@ func FieldParams(typeName string, values map[string]string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	names := make([]string, len(fields))
+	var missing []string
+	for i, f := range fields {
+		names[i] = f.Name
+		if f.Required && values[f.Name] == "" {
+			missing = append(missing, f.Name)
+		}
+	}
 	var unknown []string
 	for name := range values {
-		if !slices.Contains(fields, name) {
+		if !slices.Contains(names, name) {
 			unknown = append(unknown, name)
 		}
 	}
 	if len(unknown) > 0 {
 		slices.Sort(unknown)
-		return "", fmt.Errorf("a %s plugin has no %s: its params are %s", typeName, strings.Join(unknown, ", "), strings.Join(fields, ", "))
+		return "", fmt.Errorf("a %s plugin has no %s: its params are %s", typeName, strings.Join(unknown, ", "), strings.Join(names, ", "))
+	}
+	if len(missing) > 0 {
+		return "", fmt.Errorf("a %s plugin needs %s", typeName, strings.Join(missing, ", "))
 	}
 	ordered := make([]string, len(fields))
-	for i, name := range fields {
+	for i, name := range names {
 		ordered[i] = values[name]
 	}
 	for len(ordered) > 4 && ordered[len(ordered)-1] == "" {
@@ -77,11 +94,12 @@ func FieldParams(typeName string, values map[string]string) (string, error) {
 	return JoinParams(ordered...), nil
 }
 
-// byName tells whether params are given by name: their first is one of the type's fields
-// followed by "=". A positional first param, an interval, never has one.
-func byName(params string, fields []string) bool {
+// byName tells whether params are given by name: their first is a name, as "interval", and "=".
+// A positional first param, an interval, never has one. A name the type doesn't have is then told,
+// rather than taken for an interval.
+func byName(params string) bool {
 	first, _, found := strings.Cut(SplitParams(params)[0], "=")
-	return found && slices.Contains(fields, first)
+	return found && first != "" && strings.Trim(first, "abcdefghijklmnopqrstuvwxyz_") == ""
 }
 
 // Create makes a plugin of the type, with its params in order, or by name.
@@ -92,7 +110,7 @@ func Create(typeName string, name string, config string, lifetime time.Duration)
 	if !ok {
 		return nil, fmt.Errorf("plugin %s not found", typeName)
 	}
-	if byName(config, r.fields) {
+	if byName(config) {
 		values := make(map[string]string)
 		for _, part := range SplitParams(config) {
 			key, value, found := strings.Cut(part, "=")

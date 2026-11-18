@@ -36,6 +36,38 @@ func SweepTargets(local netip.Prefix) []netip.Addr {
 	return targets
 }
 
+// MaxProbeAddrs bounds the addresses a probe of one host asks for on one subnet: a /20.
+const MaxProbeAddrs = 4096
+
+// ProbeTargets returns the addresses of local's subnet, but the network's, the broadcast and
+// local's own, that are in within: all of them when within isn't valid, in the /24 of local for a
+// subnet larger than a /22, as a sweep. At most MaxProbeAddrs, the first ones.
+func ProbeTargets(local netip.Prefix, within netip.Prefix) []netip.Addr {
+	if !within.IsValid() {
+		return SweepTargets(local)
+	}
+	subnet := local.Masked()
+	within = within.Masked()
+	if !local.Addr().Is4() || !within.Addr().Is4() || !subnet.Overlaps(within) {
+		return nil
+	}
+	// Of two overlapping prefixes, the longer is in the other.
+	span := subnet
+	if within.Bits() > subnet.Bits() {
+		span = within
+	}
+	first, last := span.Addr(), lastAddr(span)
+	subnetFirst, subnetLast := subnet.Addr(), lastAddr(subnet)
+	var targets []netip.Addr
+	for a := first; a.IsValid() && a.Compare(last) <= 0 && len(targets) < MaxProbeAddrs; a = a.Next() {
+		if a == local.Addr() || subnet.Bits() < 31 && (a == subnetFirst || a == subnetLast) {
+			continue
+		}
+		targets = append(targets, a)
+	}
+	return targets
+}
+
 func lastAddr(p netip.Prefix) netip.Addr {
 	b := p.Addr().As4()
 	host := uint32(1)<<(32-p.Bits()) - 1

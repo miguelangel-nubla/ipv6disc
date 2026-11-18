@@ -41,11 +41,11 @@ func (c *AddrCollection) Seen(addr *Addr, source ...string) (*Addr, bool) {
 }
 
 // seen is Seen, telling also whether source is new to an address already there.
-func (c *AddrCollection) seen(addr *Addr, source ...string) (*Addr, bool, bool) {
-	addr, existing := c.Add(addr)
+func (c *AddrCollection) seen(newAddr *Addr, source ...string) (*Addr, bool, bool) {
+	addr, existing := c.Add(newAddr)
 	newSource := false
 	if existing {
-		newSource = addr.seen(source...)
+		newSource = addr.seen(newAddr.lifetime, source...)
 	}
 	return addr, existing, newSource
 }

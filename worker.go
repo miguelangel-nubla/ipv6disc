@@ -30,8 +30,6 @@ func (e *InvalidInterfaceError) Error() string {
 type Worker struct {
 	*State
 	logger        *zap.SugaredLogger
-	rediscover    time.Duration
-	lifetime      time.Duration
 	plugins       []Plugin
 	protocolConns map[string]*InterfaceProcesses
 	workerCancels map[string]context.CancelFunc
@@ -59,6 +57,7 @@ type InterfaceProcesses struct {
 
 // NewWorker makes a worker that discovers addresses as config says; Start runs it.
 func NewWorker(logger *zap.SugaredLogger, config Config) *Worker {
+	config = config.withDefaults()
 	s := NewState()
 	s.SetLogger(logger)
 	s.SetFamilies(config.IPv6.Enabled, config.IPv4.Enabled)
@@ -68,8 +67,6 @@ func NewWorker(logger *zap.SugaredLogger, config Config) *Worker {
 		State:         s,
 		logger:        logger,
 		config:        config,
-		rediscover:    config.Rediscover,
-		lifetime:      config.Lifetime,
 		plugins:       make([]Plugin, 0),
 		protocolConns: make(map[string]*InterfaceProcesses),
 		workerCancels: make(map[string]context.CancelFunc),
@@ -371,7 +368,7 @@ func (w *Worker) StartInterfaceAddr(ctx context.Context, iface net.Interface, ad
 	}
 
 	processNDP := func(receivedAddr netip.Addr, receivedNetHardwareAddr net.HardwareAddr) bool {
-		_, existing := w.State.Register(receivedNetHardwareAddr, receivedAddr, iface.Name, w.lifetime, addrOnExpiration)
+		_, existing := w.State.Register(receivedNetHardwareAddr, receivedAddr, iface.Name, w.config.Lifetime, addrOnExpiration)
 		return !existing
 	}
 
@@ -447,7 +444,7 @@ func (w *Worker) StartInterfaceAddr(ctx context.Context, iface net.Interface, ad
 	}()
 
 	discover := func() {
-		w.State.Register(iface.HardwareAddr, addr, iface.Name, w.lifetime, addrOnExpiration)
+		w.State.Register(iface.HardwareAddr, addr, iface.Name, w.config.Lifetime, addrOnExpiration)
 
 		if !w.config.probesIPv6() {
 			return
@@ -463,7 +460,7 @@ func (w *Worker) StartInterfaceAddr(ctx context.Context, iface net.Interface, ad
 	discover()
 
 	// Periodic re-discovery
-	ticker := time.NewTicker(w.rediscover)
+	ticker := time.NewTicker(w.config.Rediscover)
 	defer ticker.Stop()
 
 	for {

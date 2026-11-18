@@ -13,7 +13,7 @@ func TestParamsByName(t *testing.T) {
 	Register("fake", func(name, config string, lifetime time.Duration) (ipv6disc.Plugin, error) {
 		got = config
 		return nil, nil
-	}, "interval", "address", "username", "password", "use_tls", "fingerprint")
+	}, Field{"interval", true}, Field{"address", false}, Field{"username", false}, Field{"password", false}, Field{"use_tls", false}, Field{"fingerprint", false})
 	defer func() {
 		mu.Lock()
 		delete(registry, "fake")
@@ -39,6 +39,8 @@ func TestParamsByName(t *testing.T) {
 		"interval=60s,port=22":      "has no port",
 		"interval=60s,192.0.2.1":    "isn't name=value",
 		"interval=60s,interval=30s": "given twice",
+		"intreval=60s,address=a":    "has no intreval",
+		"address=a":                 "needs interval",
 	} {
 		if _, err := Create("fake", "test", config, time.Hour); err == nil || !strings.Contains(err.Error(), wantErr) {
 			t.Errorf("%s: got %v, want %q", config, err, wantErr)

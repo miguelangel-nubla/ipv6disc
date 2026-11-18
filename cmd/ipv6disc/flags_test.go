@@ -21,4 +21,12 @@ func TestDeprecatedFlags(t *testing.T) {
 	if warnings := deprecatedFlagsGiven(); len(warnings) != 3 {
 		t.Errorf("warnings: %v", warnings)
 	}
+
+	// From before the families: both.
+	if err := flag.CommandLine.Parse([]string{"-discovery-active=false", "-discovery-listen"}); err != nil {
+		t.Fatal(err)
+	}
+	if ipv6Active || ipv4Active || !ipv6Listen || !ipv4Listen {
+		t.Errorf("-discovery-*: active %v/%v, listen %v/%v", ipv6Active, ipv4Active, ipv6Listen, ipv4Listen)
+	}
 }

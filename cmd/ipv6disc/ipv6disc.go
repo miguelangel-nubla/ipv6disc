@@ -89,7 +89,7 @@ func (p *pluginsFlag) Set(value string) error {
 func init() {
 	flag.StringVar(&logLevel, "log_level", "info", "Logging level (debug, info, warn, error, fatal, panic) default: info")
 	flag.DurationVar(&lifetime, "lifetime", 4*time.Hour, "Time to keep a discovered host entry after it has been last seen. Default: 4h")
-	flag.DurationVar(&rediscover, "rediscover", 0, "How often the active discovery probes every host. Default: a third of -lifetime")
+	flag.DurationVar(&rediscover, "rediscover", 0, "How often the active discovery probes every host. Default: a third of the shortest lifetime of the families on")
 	flag.BoolVar(&live, "live", false, "Show the current state live on the terminal, default: false")
 
 	flag.BoolVar(&ipv6, "ipv6", true, "Discover IPv6 addresses")
@@ -105,15 +105,21 @@ func init() {
 
 	flag.Var(&pluginsFlags, "plugin", "Plugin configuration: name=type:params (can be specified multiple times)")
 
-	// The names from before, as the flags they became.
+	// The names from before, as the flags they became. Those from before the families set both.
 	for old, current := range deprecatedFlags {
-		flag.Var(flag.Lookup(current).Value, old, "Deprecated: -"+current)
+		var value flag.Value = flag.Lookup(current).Value
+		if old == "discovery-listen" || old == "discovery-active" {
+			ipv4Flag := strings.Replace(current, "ipv6", "ipv4", 1)
+			value = bothValues{value, flag.Lookup(ipv4Flag).Value}
+		}
+		flag.Var(value, old, "Deprecated: -"+current)
 	}
 	flag.Usage = usage
 }
 
 // deprecatedFlags are the names flags had, and the flags they are now.
 var deprecatedFlags = map[string]string{
+	// These set the IPv4 ones too, as they did.
 	"discovery-listen":   "ipv6_listen",
 	"discovery-active":   "ipv6_active",
 	"ipv6-listen":        "ipv6_listen",
@@ -125,6 +131,20 @@ var deprecatedFlags = map[string]string{
 	"exclude-interfaces": "exclude_interfaces",
 }
 
+// bothValues sets two flags at once.
+type bothValues [2]flag.Value
+
+func (b bothValues) String() string { return b[0].String() }
+func (b bothValues) Set(v string) error {
+	if err := b[0].Set(v); err != nil {
+		return err
+	}
+	return b[1].Set(v)
+}
+
+// IsBoolFlag lets it be given without a value, as the flags it sets.
+func (b bothValues) IsBoolFlag() bool { return true }
+
 // usage lists the flags, as flag does, without the deprecated names.
 func usage() {
 	listed := flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
@@ -132,6 +152,8 @@ func usage() {
 	flag.VisitAll(func(f *flag.Flag) {
 		if _, deprecated := deprecatedFlags[f.Name]; !deprecated {
 			listed.Var(f.Value, f.Name, f.Usage)
+			// The default, rather than the value given: usage can come after a parse error.
+			listed.Lookup(f.Name).DefValue = f.DefValue
 		}
 	})
 	fmt.Fprintf(listed.Output(), "Usage of %s:\n", os.Args[0])
@@ -143,6 +165,9 @@ func deprecatedFlagsGiven() []string {
 	var warnings []string
 	flag.Visit(func(f *flag.Flag) {
 		if current, ok := deprecatedFlags[f.Name]; ok {
+			if f.Name == "discovery-listen" || f.Name == "discovery-active" {
+				current += " and -" + strings.Replace(current, "ipv6", "ipv4", 1)
+			}
 			warnings = append(warnings, fmt.Sprintf("-%s is deprecated: it is -%s", f.Name, current))
 		}
 	})
@@ -161,9 +186,6 @@ func startUpdater() {
 		sugar.Warn(warning)
 	}
 
-	if rediscover == 0 {
-		rediscover = lifetime / 3
-	}
 
 	worker := ipv6disc.NewWorker(sugar, ipv6disc.Config{
 		Lifetime:   lifetime,

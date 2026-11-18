@@ -20,7 +20,7 @@ func init() {
 			return nil, err
 		}
 		return NewFreeBSDPlugin(name, cfg, lifetime), nil
-	}, "interval", "address", "username", "password", "identity_file", "host_key")
+	}, plugins.SSHFields...)
 }
 
 type Config = plugins.SSHConfig

@@ -45,3 +45,9 @@ func parseReply(b []byte) (net.HardwareAddr, netip.Addr, bool) {
 	ip := netip.AddrFrom4([4]byte(b[14:18]))
 	return mac, ip, true
 }
+
+// repliesTo tells whether an ARP reply is addressed to the host at mac and ip: the answer to its
+// own request, not to another's, nor a gratuitous one.
+func repliesTo(b []byte, mac net.HardwareAddr, ip netip.Addr) bool {
+	return len(b) >= packetLen && net.HardwareAddr(b[18:24]).String() == mac.String() && netip.AddrFrom4([4]byte(b[24:28])) == ip
+}

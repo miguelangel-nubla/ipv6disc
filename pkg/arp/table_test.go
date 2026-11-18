@@ -153,9 +153,20 @@ func TestPacket(t *testing.T) {
 	reply[7] = opReply
 	copy(reply[8:14], []byte{0x02, 0, 0, 0, 0, 2})
 	copy(reply[14:18], []byte{10, 0, 0, 2})
+	// Addressed to the asker.
+	copy(reply[18:24], sender)
+	copy(reply[24:28], []byte{10, 0, 0, 1})
 	mac, ip, ok := parseReply(reply)
 	if !ok || mac.String() != "02:00:00:00:00:02" || ip.String() != "10.0.0.2" {
 		t.Errorf("reply: %s %s %v", mac, ip, ok)
+	}
+	// To the sender of the request, not to another host.
+	if !repliesTo(reply, sender, netip.MustParseAddr("10.0.0.1")) {
+		t.Error("the reply to the request not seen as one")
+	}
+	copy(reply[24:28], []byte{10, 0, 0, 9})
+	if repliesTo(reply, sender, netip.MustParseAddr("10.0.0.1")) {
+		t.Error("a reply to another address seen as ours")
 	}
 	if _, _, ok := parseReply(reply[:20]); ok {
 		t.Error("a truncated reply read")

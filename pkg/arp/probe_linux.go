@@ -19,8 +19,10 @@ import (
 const probeSettle = 500 * time.Millisecond
 
 // Probe asks mac, by ARP requests sent to it alone, for each of the targets, from local on iface,
-// and returns those it answered for. Nothing is broadcast: the rest of the link sees nothing. It
-// needs CAP_NET_RAW.
+// and returns those of the targets it answered for, the answers to these requests only. Nothing is
+// broadcast, but a switch that doesn't know where mac is, as for a host quiet for minutes, floods
+// the requests to every port, as any frame to it. It needs CAP_NET_RAW. On an error, it returns
+// what was found until then too.
 func Probe(ctx context.Context, iface *net.Interface, local netip.Addr, mac net.HardwareAddr, targets []netip.Addr) ([]netip.Addr, error) {
 	if len(mac) != 6 || len(iface.HardwareAddr) != 6 {
 		return nil, fmt.Errorf("probing %s on %s: not Ethernet", mac, iface.Name)
@@ -39,6 +41,10 @@ func Probe(ctx context.Context, iface *net.Interface, local netip.Addr, mac net.
 		return nil, err
 	}
 
+	asked := make(map[netip.Addr]bool, len(targets))
+	for _, target := range targets {
+		asked[target] = true
+	}
 	var mutex sync.Mutex
 	found := make(map[netip.Addr]bool)
 	done := make(chan struct{})
@@ -57,7 +63,7 @@ func Probe(ctx context.Context, iface *net.Interface, local netip.Addr, mac net.
 				continue // the timeout, to look at done
 			}
 			sender, ip, ok := parseReply(buf[:n])
-			if ok && bytes.Equal(sender, mac) {
+			if ok && bytes.Equal(sender, mac) && asked[ip] && repliesTo(buf[:n], iface.HardwareAddr, local) {
 				mutex.Lock()
 				found[ip] = true
 				mutex.Unlock()
