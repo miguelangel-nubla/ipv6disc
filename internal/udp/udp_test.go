@@ -3,6 +3,7 @@ package udp
 import (
 	"net"
 	"net/netip"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -11,9 +12,10 @@ func TestListen(t *testing.T) {
 	loopback := netip.MustParseAddr("::1")
 	iface := &net.Interface{Name: ""}
 	found := make(chan netip.Addr, 2)
+	var calls atomic.Int32
 	conn, err := Listen(iface, loopback, func(addr netip.Addr) bool {
 		found <- addr
-		return len(found) == 1 // the first sender counts as a host found, the second not
+		return calls.Add(1) == 1 // the first sender counts as a host found, the second not
 	}, func(err error) { t.Error(err) })
 	if err != nil {
 		t.Skipf("no IPv6 loopback: %v", err)
