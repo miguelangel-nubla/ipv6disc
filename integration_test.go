@@ -32,6 +32,8 @@ const (
 var (
 	workerAddr = netip.MustParseAddr("fd00:6:1::1")
 	peerAddr   = netip.MustParseAddr("fd00:6:1::2")
+	workerIPv4 = netip.MustParseAddr("10.66.1.1")
+	peerIPv4   = netip.MustParseAddr("10.66.1.2")
 	// An address of the peer's it never sends from, as a stable address a host keeps beside its
 	// temporary ones: deprecated, so never a source. Only a solicitation finds it.
 	quietAddr = netip.MustParseAddr("fd00:6:1::99")
@@ -51,6 +53,7 @@ func TestLiveDiscovery(t *testing.T) {
 	}
 
 	w := NewWorker(zaptest.NewLogger(t).Sugar(), 2*time.Second, 6*time.Second, true, true)
+	w.State.EnableIPv4()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if err := w.Start(ctx); err != nil {
@@ -60,6 +63,10 @@ func TestLiveDiscovery(t *testing.T) {
 	// Active discovery: the peer answers the multicast ping, and the solicitation that follows
 	// tells its MAC.
 	waitFor(t, 30*time.Second, "the peer's address", func() bool { return has(w, peerMAC, peerAddr) })
+
+	// Its IPv4 address: the peer sends nothing of itself, the sweep has the kernel resolve it,
+	// and the neighbor table tells it.
+	waitFor(t, 30*time.Second, "the peer's IPv4 address", func() bool { return has(w, peerMAC, peerIPv4) })
 
 	// A quiet address: not found until solicited.
 	ip(t, "-n", peerNamespace, "addr", "add", quietAddr.String()+"/64", "dev", "veth-peer", "nodad", "preferred_lft", "0")
@@ -145,6 +152,8 @@ func runInNamespace(t *testing.T) {
 	}
 	ip(t, "-n", workerNamespace, "addr", "add", workerAddr.String()+"/64", "dev", "veth-worker", "nodad")
 	ip(t, "-n", peerNamespace, "addr", "add", peerAddr.String()+"/64", "dev", "veth-peer", "nodad")
+	ip(t, "-n", workerNamespace, "addr", "add", workerIPv4.String()+"/24", "dev", "veth-worker")
+	ip(t, "-n", peerNamespace, "addr", "add", peerIPv4.String()+"/24", "dev", "veth-peer")
 
 	cmd := exec.Command("ip", "netns", "exec", workerNamespace, os.Args[0], "-test.run=^TestLiveDiscovery$", "-test.v", "-test.timeout=3m")
 	cmd.Env = append(os.Environ(), insideEnv+"=1")

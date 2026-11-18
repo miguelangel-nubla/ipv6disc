@@ -51,6 +51,14 @@ When a host responds to any of these probes, the tool triggers a specific **NDP 
 For hosts that might not be directly reachable via multicast (e.g. on different VLANs or filtered by firewalls) or to get a comprehensive view from the network gateway, `ipv6disc` supports plugins.
 Plugins connect to routers/firewalls (Linux, FreeBSD/OPNsense, Mikrotik) to fetch their known neighbor tables. This allows populating the list with hosts that the router sees.
 
+### 3. IPv4 neighbors, with `-ipv4`
+Off by default. With it:
+- The plugins also read their host's IPv4 neighbor table, ARP: `ip neigh`, `arp -an`, `/ip/arp/print`.
+- The local discovery reads the kernel's: through netlink on Linux, with no command needed; `arp -an` on macOS and the BSDs; not on Windows.
+- With active discovery, it first sends a UDP packet to the discard port of each address of the local subnets (a /22 at most, or the /24 of the address), so the kernel resolves the hosts that stay quiet. That needs no privilege.
+
+As for IPv6, only the entries confirmed recently count, so that hosts that left expire.
+
 ## Usage
 
 By default, it will output the discovered hosts as JSON messages to `stdout`. You can easily parse the output with [`jq`](https://stedolan.github.io/jq/).
@@ -59,7 +67,7 @@ By default, it will output the discovered hosts as JSON messages to `stdout`. Yo
 > This utility needs to be executed as a superuser to be able to listen for IPv6 ICMP packets.
 
 ```
-sudo ipv6disc | jq 'select(.msg == "host identified") | .ipv6'
+sudo ipv6disc | jq 'select(.msg == "host identified") | .ip'
 ```
 
 Alternatively, using `-live` the data will be displayed on the screen in a human-readable form.
@@ -71,6 +79,7 @@ If you need to pause and select/copy data use `screen`, launch `ipv6disc -live [
 - `-log_level`: Set the logging level (default: "info"). Available options: "debug", "info", "warn", "error", "fatal", "panic".
 - `-lifetime`: Set the lifetime for a discovered host entry after it has been last seen (default: 4 hours).
 - `-live`: Show the current state live on the terminal (default: false).
+- `-ipv4`: Discover IPv4 neighbors too, see above (default: false).
 - `-plugin`: Plugin configuration: `name=type:params` (can be specified multiple times, multiple instances of the same plugin connected to different hosts are allowed)
 
 ## Plugins

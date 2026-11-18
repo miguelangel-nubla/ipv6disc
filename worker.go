@@ -188,6 +188,14 @@ func (w *Worker) Start(ctx context.Context) error {
 				}
 			}
 		}()
+
+		if w.State.IPv4() {
+			w.running.Add(1)
+			go func() {
+				defer w.running.Done()
+				w.discoverIPv4(ctx)
+			}()
+		}
 	}
 
 	return nil
