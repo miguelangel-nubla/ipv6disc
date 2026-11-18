@@ -25,9 +25,12 @@ func init() {
 		}
 		return NewMikrotikPlugin(name, cfg, lifetime), nil
 	},
-		plugins.Field{Name: "interval", Required: true}, plugins.Field{Name: "address", Required: true},
-		plugins.Field{Name: "username", Required: true}, plugins.Field{Name: "password"},
-		plugins.Field{Name: "use_tls"}, plugins.Field{Name: "tls_fingerprint"},
+		plugins.Field{Name: "interval", Required: true, Description: "How often the tables are read: 60s, 5m."},
+		plugins.Field{Name: "address", Required: true, Description: "The router, with its port unless the default: 8728, or 8729 with TLS."},
+		plugins.Field{Name: "username", Required: true, Description: "An API user: the read and api policies are enough."},
+		plugins.Field{Name: "password", Description: "Its password."},
+		plugins.Field{Name: "use_tls", Description: "true: the API over TLS, the api-ssl service."},
+		plugins.Field{Name: "tls_fingerprint", Description: "The SHA-256 fingerprint of the router's certificate, in hex, when it can't be verified otherwise."},
 	)
 }
 
