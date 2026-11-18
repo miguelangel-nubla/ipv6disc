@@ -36,6 +36,8 @@ type LinuxPlugin struct {
 	name     string
 	config   Config
 	lifetime time.Duration
+	// Whether the unverified host key was reported.
+	warned bool
 }
 
 func NewLinuxPlugin(name string, config Config, lifetime time.Duration) *LinuxPlugin {
@@ -51,13 +53,20 @@ func (p *LinuxPlugin) Name() string {
 }
 
 func (p *LinuxPlugin) Start(ctx context.Context, state *ipv6disc.State, onError func(error)) error {
-	return p.Run(ctx, p.config.Interval, func() (int, error) { return p.discover(state) }, onError)
+	return p.Run(ctx, p.config.Interval, func() (int, error) { return p.discover(ctx, state, onError) }, onError)
 }
 
-func (p *LinuxPlugin) discover(state *ipv6disc.State) (int, error) {
-	output, err := plugins.RunSSH(p.config, "ip -6 neigh")
+func (p *LinuxPlugin) discover(ctx context.Context, state *ipv6disc.State, onError func(error)) (int, error) {
+	ctx, cancel := context.WithTimeout(ctx, plugins.PollTimeout)
+	defer cancel()
+
+	output, hostKey, err := plugins.RunSSH(ctx, p.config, "ip -6 neigh")
 	if err != nil {
 		return 0, err
+	}
+	if p.config.HostKey == "" && !p.warned && onError != nil {
+		p.warned = true
+		onError(plugins.HostKeyWarning(p.config.Address, hostKey))
 	}
 	return p.parseNDPOutput(string(output), state), nil
 }

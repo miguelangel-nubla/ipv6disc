@@ -1,12 +1,15 @@
 package freebsd
 
 import (
+	"context"
+	"errors"
 	"net"
 	"net/netip"
 	"testing"
 	"time"
 
 	"github.com/miguelangel-nubla/ipv6disc"
+	"github.com/miguelangel-nubla/ipv6disc/internal/sshtest"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -46,4 +49,18 @@ invalid-ip                           00:11:22:33:44:55   em0 permanent R
 	ip2, _ := netip.ParseAddr("fe80::211:22ff:fe33:4455%em0")
 	_, existing2 := state.Register(mac1, ip2, plugin.Name(), time.Hour, nil)
 	assert.True(t, existing2, "fe80::...%em0 should be registered")
+}
+
+func TestDiscoverOverSSH(t *testing.T) {
+	server := sshtest.Start(t, "root", "secret", func(command string) ([]byte, error) {
+		if command != "ndp -an" {
+			return nil, errors.New("unexpected command")
+		}
+		return []byte("Neighbor Linklayer Address Netif Expire S Flags\n2001:db8::1 00:11:22:33:44:55 em0 permanent R\n"), nil
+	})
+	plugin := NewFreeBSDPlugin("firewall", Config{Interval: time.Minute, Address: server.Address, Username: "root", Password: "secret", HostKey: server.HostKey}, time.Hour)
+	found, err := plugin.discover(context.Background(), ipv6disc.NewState(), func(err error) { t.Errorf("warning: %v", err) })
+	if err != nil || found != 1 {
+		t.Errorf("found %d, %v", found, err)
+	}
 }

@@ -71,21 +71,23 @@ If you need to pause and select/copy data use `screen`, launch `ipv6disc -live [
 
 ### Linux / OpenWrt
 connect to a Linux host via SSH and parse `ip -6 neigh` output.
-format: `name=linux:interval,address,username,password[,identity_file]`
+format: `name=linux:interval,address,username,password[,identity_file[,host_key]]`
 - `interval`: Polling interval (e.g. `60s`, `5m`)
 - `address`: Hostname or IP address (and optional port) (e.g., `192.168.1.1`, `[2001:db8::1]:2222`)
 - `username`: SSH username
 - `password`: SSH password (optional if identity_file provided)
-- `identity_file`: Path to SSH private key file (optional)
+- `identity_file`: Path to SSH private key file (optional, leave it empty to give a host key only)
+- `host_key`: Fingerprint of the host's SSH key, `SHA256:...` (recommended). Without it any key is accepted, so anyone in between can impersonate the host, and a warning tells the fingerprint seen. To get it from a trusted network: `ssh-keyscan -t ed25519 192.168.1.1 | ssh-keygen -lf -`
 
 ### pfSense / OPNsense / FreeBSD
 Connect to a FreeBSD host via SSH and parse `ndp -an` output.
-format: `name=freebsd:interval,address,username,password[,identity_file]`
+format: `name=freebsd:interval,address,username,password[,identity_file[,host_key]]`
 - `interval`: Polling interval (e.g. `60s`, `5m`)
 - `address`: Hostname or IP address (and optional port)
 - `username`: SSH username
 - `password`: SSH password (optional if identity_file provided)
-- `identity_file`: Path to SSH private key file (optional)
+- `identity_file`: Path to SSH private key file (optional, leave it empty to give a host key only)
+- `host_key`: Fingerprint of the host's SSH key, `SHA256:...` (recommended). Without it any key is accepted, so anyone in between can impersonate the host, and a warning tells the fingerprint seen. To get it from a trusted network: `ssh-keyscan -t ed25519 192.168.1.1 | ssh-keygen -lf -`
 
 ### Mikrotik
 Connect to a Mikrotik router via API and parse IPv6 neighbor list.
