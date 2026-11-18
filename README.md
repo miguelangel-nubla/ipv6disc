@@ -1,5 +1,9 @@
 # IPv6 Host Discovery
 
+[![ci](https://github.com/miguelangel-nubla/ipv6disc/actions/workflows/ci.yaml/badge.svg)](https://github.com/miguelangel-nubla/ipv6disc/actions/workflows/ci.yaml)
+[![release](https://img.shields.io/github/v/release/miguelangel-nubla/ipv6disc)](https://github.com/miguelangel-nubla/ipv6disc/releases/latest)
+[![Go Reference](https://pkg.go.dev/badge/github.com/miguelangel-nubla/ipv6disc.svg)](https://pkg.go.dev/github.com/miguelangel-nubla/ipv6disc)
+
 This program scans the local network and discovers IPv6 hosts addresses.
 
 Used by [ipv6ddns](https://github.com/miguelangel-nubla/ipv6ddns)
@@ -12,15 +16,17 @@ Download the [latest release](https://github.com/miguelangel-nubla/ipv6disc/rele
 
 Minimal run (active discovery only):
 ```
-docker run -it --rm --network host gcr.io/miguelangel-nubla/ipv6disc -live
+docker run -it --rm --network host ghcr.io/miguelangel-nubla/ipv6disc -live
 ```
 
 Run with plugins (recommended):
 ```
-docker run -it --rm --network host gcr.io/miguelangel-nubla/ipv6disc \
+docker run -it --rm --network host ghcr.io/miguelangel-nubla/ipv6disc \
   -live \
   -plugin "router-main=mikrotik:60s,192.168.88.1,admin,password"
 ```
+
+The image is built for linux/386, amd64, arm/v6, arm/v7 and arm64. Active discovery needs the host's network (`--network host`) and raw sockets: the `NET_RAW` capability, which Docker grants by default but other runtimes, or a Kubernetes `securityContext`, can drop. Without them, listening fails with `operation not permitted`, and only the plugins work.
 
 > [!IMPORTANT]
 > **Docker IPv6 support is experimental/fragile.** Active local discovery (NDP/Multicast) often fails inside containers depending on the host network configuration. It is **highly recommended** to use [Plugins](#plugins) to fetch neighbor data directly from your router instead.
@@ -68,6 +74,10 @@ If you need to pause and select/copy data use `screen`, launch `ipv6disc -live [
 - `-plugin`: Plugin configuration: `name=type:params` (can be specified multiple times, multiple instances of the same plugin connected to different hosts are allowed)
 
 ## Plugins
+
+The params are separated by commas. A comma in a value, as in a password, is written `\,`, and a backslash before a comma or another backslash `\\`.
+
+The plugins register the neighbors their host saw recently: they skip the stale entries, which a router can keep long after their host left, so that the addresses of hosts that left expire.
 
 ### Linux / OpenWrt
 connect to a Linux host via SSH and parse `ip -6 neigh` output.

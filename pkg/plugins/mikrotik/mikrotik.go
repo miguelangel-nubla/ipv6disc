@@ -28,7 +28,7 @@ func init() {
 }
 
 func ParseConfig(config string) (Config, error) {
-	parts := strings.Split(config, ",")
+	parts := plugins.SplitParams(config)
 	if len(parts) < 4 {
 		return Config{}, fmt.Errorf("invalid mikrotik config format, expected: interval,address,username,password[,use_tls[,tls_fingerprint]]")
 	}
