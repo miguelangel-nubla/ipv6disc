@@ -5,35 +5,36 @@ import (
 	"maps"
 	"net/netip"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"time"
 )
 
+// AddrCollection is a set of addresses, keyed by the address without its zone.
 type AddrCollection struct {
-	// string in key avoids looping over Addr.String() in the map
 	addresses      map[string]*Addr
 	addressesMutex sync.RWMutex
 }
 
+func addrKey(addr *Addr) string {
+	return addr.WithZone("").String()
+}
+
+// Add puts the address in the collection unless it already has one with the same IP. It returns the
+// one the collection holds, and whether it was there already.
 func (c *AddrCollection) Add(addr *Addr) (*Addr, bool) {
 	c.addressesMutex.Lock()
 	defer c.addressesMutex.Unlock()
 
-	// Normalize address by removing zone for map key
-	addString := addr.WithZone("").String()
-
-	existing := false
-	if c.Contains(addr) {
-		existing = true
-	} else {
-		c.addresses[addString] = addr
+	key := addrKey(addr)
+	if existing, ok := c.addresses[key]; ok {
+		return existing, true
 	}
-
-	return c.addresses[addString], existing
+	c.addresses[key] = addr
+	return addr, false
 }
 
+// Seen adds the address, or marks the one already there as seen by source.
 func (c *AddrCollection) Seen(addr *Addr, source ...string) (*Addr, bool) {
 	addr, existing := c.Add(addr)
 	if existing {
@@ -43,37 +44,61 @@ func (c *AddrCollection) Seen(addr *Addr, source ...string) (*Addr, bool) {
 	return addr, existing
 }
 
+// Remove takes the address out of the collection, and stops its expiration events.
 func (c *AddrCollection) Remove(addr *Addr) {
 	c.addressesMutex.Lock()
 	defer c.addressesMutex.Unlock()
 
-	if c.Contains(addr) {
-		// Normalize address by removing zone for map key
-		key := addr.WithZone("").String()
-		c.addresses[key].Unwatch()
+	key := addrKey(addr)
+	if existing, ok := c.addresses[key]; ok {
+		existing.Unwatch()
 		delete(c.addresses, key)
 	}
 }
 
+// removeExpired removes addr if the collection still holds this very address and it was not seen
+// again since it expired. It returns whether it did, and whether the collection is left empty.
+func (c *AddrCollection) removeExpired(addr *Addr) (removed bool, empty bool) {
+	c.addressesMutex.Lock()
+	defer c.addressesMutex.Unlock()
+
+	key := addrKey(addr)
+	if existing, ok := c.addresses[key]; ok && existing == addr && !addr.Valid() {
+		addr.Unwatch()
+		delete(c.addresses, key)
+		removed = true
+	}
+	return removed, len(c.addresses) == 0
+}
+
 func (c *AddrCollection) Join(addrCollection *AddrCollection) {
+	if c == addrCollection {
+		return
+	}
+
 	c.addressesMutex.Lock()
 	defer c.addressesMutex.Unlock()
 
 	addrCollection.addressesMutex.RLock()
 	defer addrCollection.addressesMutex.RUnlock()
 
-	for key, addr := range addrCollection.addresses {
-		c.addresses[key] = addr
-	}
+	maps.Copy(c.addresses, addrCollection.addresses)
 }
 
 func (c *AddrCollection) Contains(addr *Addr) bool {
-	// Normalize address by removing zone for map key
-	_, ok := c.addresses[addr.WithZone("").String()]
+	c.addressesMutex.RLock()
+	defer c.addressesMutex.RUnlock()
+
+	_, ok := c.addresses[addrKey(addr)]
 	return ok
 }
 
+// Equal tells whether both collections hold the same IPs.
 func (c *AddrCollection) Equal(addrCollection *AddrCollection) bool {
+	if c == addrCollection {
+		return true
+	}
+
 	c.addressesMutex.RLock()
 	defer c.addressesMutex.RUnlock()
 	addrCollection.addressesMutex.RLock()
@@ -92,129 +117,70 @@ func (c *AddrCollection) Equal(addrCollection *AddrCollection) bool {
 	return true
 }
 
-func (c *AddrCollection) Copy() *AddrCollection {
+// filter returns a new collection with the addresses keep accepts.
+func (c *AddrCollection) filter(keep func(*Addr) bool) *AddrCollection {
 	c.addressesMutex.RLock()
 	defer c.addressesMutex.RUnlock()
 
 	result := NewAddrCollection()
-	for _, addr := range c.addresses {
-		result.Add(addr)
+	for key, addr := range c.addresses {
+		if keep(addr) {
+			result.addresses[key] = addr
+		}
 	}
 	return result
+}
+
+func (c *AddrCollection) Copy() *AddrCollection {
+	return c.filter(func(*Addr) bool { return true })
 }
 
 func (c *AddrCollection) FilterSubnets(subnets []netip.Prefix) *AddrCollection {
-	c.addressesMutex.RLock()
-	defer c.addressesMutex.RUnlock()
-
-	result := NewAddrCollection()
-
-	for _, addr := range c.addresses {
-		ip := addr.Addr.WithZone("")
-		for _, sub := range subnets {
-			if sub.Contains(ip) {
-				result.Add(addr)
-			}
-		}
-	}
-
-	return result
+	return c.filter(func(addr *Addr) bool {
+		ip := addr.WithZone("")
+		return slices.ContainsFunc(subnets, func(sub netip.Prefix) bool { return sub.Contains(ip) })
+	})
 }
 
 func (c *AddrCollection) Filter6() *AddrCollection {
-	c.addressesMutex.RLock()
-	defer c.addressesMutex.RUnlock()
-
-	result := NewAddrCollection()
-	for _, addr := range c.addresses {
-		if addr.Addr.Is6() {
-			result.Add(addr)
-		}
-	}
-	return result
+	return c.filter(func(addr *Addr) bool { return addr.Is6() })
 }
 
 func (c *AddrCollection) Filter4() *AddrCollection {
-	c.addressesMutex.RLock()
-	defer c.addressesMutex.RUnlock()
-
-	result := NewAddrCollection()
-	for _, addr := range c.addresses {
-		if addr.Addr.Is4() {
-			result.Add(addr)
-		}
-	}
-	return result
+	return c.filter(func(addr *Addr) bool { return addr.Is4() })
 }
 
 func (c *AddrCollection) FilterValid() *AddrCollection {
-	c.addressesMutex.RLock()
-	defer c.addressesMutex.RUnlock()
-
-	result := NewAddrCollection()
-	for _, addr := range c.addresses {
-		if addr.Valid() {
-			result.Add(addr)
-		}
-	}
-	return result
+	return c.filter((*Addr).Valid)
 }
 
+// Get returns the addresses, sorted by IP.
 func (c *AddrCollection) Get() []*Addr {
 	c.addressesMutex.RLock()
 	defer c.addressesMutex.RUnlock()
 
-	keys := make([]string, 0, len(c.addresses))
-	for key := range c.addresses {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-
-	addresses := make([]*Addr, 0, len(c.addresses))
-	for _, key := range keys {
-		addresses = append(addresses, c.addresses[key])
-	}
-
+	addresses := slices.Collect(maps.Values(c.addresses))
+	slices.SortFunc(addresses, func(a, b *Addr) int {
+		return a.WithZone("").Compare(b.WithZone(""))
+	})
 	return addresses
 }
 
+// Strings returns the IPs, without zones, sorted.
 func (c *AddrCollection) Strings() []string {
-	c.addressesMutex.RLock()
-	defer c.addressesMutex.RUnlock()
-
-	addressesMap := make(map[string]bool)
-	for _, addr := range c.addresses {
-		ip := addr.WithZone("").String()
-		addressesMap[ip] = true
+	addresses := c.Get()
+	result := make([]string, len(addresses))
+	for i, addr := range addresses {
+		result[i] = addrKey(addr)
 	}
-
-	return slices.Collect(maps.Keys(addressesMap))
+	return result
 }
 
 func (c *AddrCollection) PrettyPrint(prefix string) string {
-	c.addressesMutex.RLock()
-	defer c.addressesMutex.RUnlock()
-
 	var result strings.Builder
-
-	// Get the keys from the map
-	keys := make([]netip.Addr, 0, len(c.addresses))
-	for _, addr := range c.addresses {
-		keys = append(keys, addr.Addr)
+	for _, addr := range c.Get() {
+		fmt.Fprintf(&result, "%s%s %s %s\n", prefix, addrKey(addr), time.Until(addr.GetExpiration()).Round(time.Second), strings.Join(addr.Sources(), ","))
 	}
-
-	// Sort the keys
-	sort.Slice(keys, func(i, j int) bool {
-		return keys[i].Less(keys[j])
-	})
-
-	// Iterate ordered
-	for _, key := range keys {
-		// Normalize address by removing zone for map key
-		ipAddressInfo := c.addresses[key.WithZone("").String()]
-		fmt.Fprintf(&result, prefix+"%s %s %s\n", ipAddressInfo.Addr.WithZone("").String(), time.Until(ipAddressInfo.GetExpiration()).Round(time.Second), strings.Join(ipAddressInfo.Sources, ","))
-	}
-
 	return result.String()
 }
 

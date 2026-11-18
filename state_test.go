@@ -45,3 +45,70 @@ func TestWorkerPrefixesAndSolicitWithoutListeners(t *testing.T) {
 		t.Errorf("Solicit on another prefix: %d, %v", sent, err)
 	}
 }
+
+func TestExpiredAddressesLeaveTheState(t *testing.T) {
+	state := NewState()
+	mac, _ := net.ParseMAC("00:1a:2b:3c:4d:08")
+	expired := make(chan AddrExpirationRemainingEvents, 4)
+	state.Register(mac, netip.MustParseAddr("2001:db8::1"), "test", 50*time.Millisecond, func(_ *Addr, remaining AddrExpirationRemainingEvents) {
+		expired <- remaining
+	})
+	kept, _ := state.Register(mac, netip.MustParseAddr("2001:db8::2"), "test", time.Hour, nil)
+
+	for remaining := range expired {
+		if remaining == 0 {
+			break
+		}
+	}
+	// The expiration callback runs before the removal.
+	assert.Eventually(t, func() bool {
+		return len(state.GetAll()[mac.String()].Get()) == 1
+	}, time.Second, 5*time.Millisecond)
+	assert.Equal(t, []*Addr{kept}, state.GetAll()[mac.String()].Get())
+
+	state.remove(kept)
+	assert.Len(t, state.GetAll(), 1, "an address still valid stays")
+	kept.Unwatch()
+}
+
+func TestMACWithoutAddressesLeavesTheState(t *testing.T) {
+	state := NewState()
+	mac, _ := net.ParseMAC("00:1a:2b:3c:4d:08")
+	state.Register(mac, netip.MustParseAddr("2001:db8::1"), "test", 20*time.Millisecond, nil)
+	assert.Eventually(t, func() bool { return len(state.GetAll()) == 0 }, time.Second, 5*time.Millisecond)
+}
+
+func TestSeenAddsSources(t *testing.T) {
+	state := NewState()
+	mac, _ := net.ParseMAC("00:1a:2b:3c:4d:08")
+	addr, _ := state.Register(mac, netip.MustParseAddr("2001:db8::1"), "eth0", time.Hour, nil)
+	defer addr.Unwatch()
+
+	done := make(chan bool)
+	go func() {
+		for range 100 {
+			addr.Sources()
+		}
+		done <- true
+	}()
+	state.Register(mac, netip.MustParseAddr("2001:db8::1"), "router", time.Hour, nil)
+	state.Register(mac, netip.MustParseAddr("2001:db8::1"), "eth0", time.Hour, nil)
+	<-done
+	assert.Equal(t, []string{"eth0", "router"}, addr.Sources())
+}
+
+// An address seen again around its expiration keeps its events, and expires once left alone.
+func TestAddressSeenAtExpirationStillExpires(t *testing.T) {
+	for range 50 {
+		state := NewState()
+		mac, _ := net.ParseMAC("00:1a:2b:3c:4d:08")
+		ip := netip.MustParseAddr("2001:db8::1")
+		lifetime := 2 * time.Millisecond
+		deadline := time.Now().Add(20 * lifetime)
+		for time.Now().Before(deadline) {
+			state.Register(mac, ip, "test", lifetime, nil)
+			time.Sleep(lifetime * 3 / 4)
+		}
+		assert.Eventually(t, func() bool { return len(state.GetAll()) == 0 }, time.Second, time.Millisecond)
+	}
+}
