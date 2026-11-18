@@ -255,7 +255,7 @@ func TestSelfAddresses(t *testing.T) {
 	if a.Self() || a.Temporary() {
 		t.Errorf("a plugin's: self %v, temporary %v", a.Self(), a.Temporary())
 	}
-	state.registerSelf(mac, ip, "eth0", true, time.Hour, nil)
+	state.RegisterSelf(mac, ip, "eth0", true, time.Hour, nil)
 	if !a.Self() || !a.Temporary() {
 		t.Errorf("this machine's, temporary: self %v, temporary %v", a.Self(), a.Temporary())
 	}
@@ -263,7 +263,7 @@ func TestSelfAddresses(t *testing.T) {
 	if !a.Self() || !a.Temporary() {
 		t.Error("a plugin's registration changed it")
 	}
-	state.registerSelf(mac, ip, "eth0", false, time.Hour, nil)
+	state.RegisterSelf(mac, ip, "eth0", false, time.Hour, nil)
 	if a.Temporary() {
 		t.Error("no longer temporary, still said so")
 	}
