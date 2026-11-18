@@ -57,14 +57,14 @@ Each family, IPv6 and IPv4, is discovered the same ways, each of which can be tu
 | | IPv6 | IPv4 (off by default: `-ipv4`) |
 |---|---|---|
 | **Plugins** | the routers' IPv6 neighbor tables | their ARP tables: `ip neigh`, `arp -an`, `/ip/arp/print` |
-| **Listen** (`-ipv6-listen`, `-ipv4-listen`) | NDP, and the answers of the protocols | the kernel's neighbor table: netlink on Linux, `arp -an` on macOS and the BSDs, not on Windows |
-| **Active** (`-ipv6-active`, `-ipv4-active`), probing every host | multicast ping, SSDP, WS-Discovery | a sweep: a UDP packet to the discard port of each address of the local subnets (a /22 at most, or the /24 of the address), so the kernel resolves the quiet hosts. It needs no privilege, but broadcasts an ARP request for each address |
+| **Listen** (`-ipv6_listen`, `-ipv4_listen`) | NDP, and the answers of the protocols | the kernel's neighbor table: netlink on Linux, `arp -an` on macOS and the BSDs, not on Windows |
+| **Active** (`-ipv6_active`, `-ipv4_active`), probing every host | multicast ping, SSDP, WS-Discovery | a sweep: a UDP packet to the discard port of each address of the local subnets (a /22 at most, or the /24 of the address), so the kernel resolves the quiet hosts. It needs no privilege, but broadcasts an ARP request for each address |
 | **Solicit**, asking given hosts, for programs using the library | `Worker.Solicit`, a neighbor solicitation for an address | `Worker.SolicitIPv4`, ARP requests sent to a MAC alone, for the addresses of the local subnets in the prefixes it is given: nothing is broadcast, and a subnet out of them isn't asked. It needs Linux and `CAP_NET_RAW` |
-| **Lifetime** (`-ipv6-lifetime`, `-ipv4-lifetime`) | how long an address stays after it was last seen, the plugins' too | the same; both are `-lifetime` unless given |
+| **Lifetime** (`-ipv6_lifetime`, `-ipv4_lifetime`) | how long an address stays after it was last seen, the plugins' too | the same; both are `-lifetime` unless given |
 
 Active discovery needs listening, which reads its answers. Only the entries confirmed recently count, so that hosts that left expire.
 
-The local discovery, of both families, runs on every interface unless `-interfaces` names those it runs on, and `-exclude-interfaces` those it doesn't: names, or patterns as `docker*,veth*`. On a host running containers, leaving their bridges out keeps the containers out of the state and the ARP requests off their networks. The plugins aren't concerned.
+The local discovery, of both families, runs on every interface unless `-interfaces` names those it runs on, and `-exclude_interfaces` those it doesn't: names, or patterns as `docker*,veth*`. On a host running containers, leaving their bridges out keeps the containers out of the state and the ARP requests off their networks. The plugins aren't concerned.
 
 In Go, `ipv6disc.NewWorker(logger, config)` takes the same, in a `Config`: an `IPv6` and an `IPv4` `Family`, of `Enabled`, `Listen`, `Active` and `Lifetime`, and `Interfaces` and `ExcludeInterfaces`. `ipv6disc.DefaultConfig()` is IPv6 by every means, no IPv4. `State.Subscribe` tells of each change, an address added, expired, or seen by a new source, so a program can act on them rather than poll.
 
@@ -87,16 +87,17 @@ If you need to pause and select/copy data use `screen`, launch `ipv6disc -live [
 
 - `-log_level`: Set the logging level (default: "info"). Available options: "debug", "info", "warn", "error", "fatal", "panic".
 - `-lifetime`: Set the lifetime for a discovered host entry after it has been last seen (default: 4 hours).
+- `-rediscover`: How often the active discovery probes every host (default: a third of `-lifetime`).
 - `-live`: Show the current state live on the terminal (default: false).
-- `-ipv6`, `-ipv6-listen`, `-ipv6-active`: Discover IPv6 addresses, by listening, and by probing the links (default: all true). `-discovery-listen` and `-discovery-active`, from before, are the same as `-ipv6-listen` and `-ipv6-active`.
-- `-ipv4`, `-ipv4-listen`, `-ipv4-active`: Discover IPv4 addresses (default: false), by reading the kernel's table, and by sweeping the subnets (default: true once `-ipv4`). See above.
-- `-ipv6-lifetime`, `-ipv4-lifetime`: The lifetime of a family's addresses, in place of `-lifetime`.
-- `-interfaces`, `-exclude-interfaces`: The interfaces the local discovery runs on, and those it doesn't: comma separated names or patterns (default: all).
+- `-ipv6`, `-ipv6_listen`, `-ipv6_active`: Discover IPv6 addresses, by listening, and by probing the links (default: all true). The names from before, `-discovery-listen`, `-discovery-active` and those with hyphens, as `-ipv4-active`, still work, with a warning.
+- `-ipv4`, `-ipv4_listen`, `-ipv4_active`: Discover IPv4 addresses (default: false), by reading the kernel's table, and by sweeping the subnets (default: true once `-ipv4`). See above.
+- `-ipv6_lifetime`, `-ipv4_lifetime`: The lifetime of a family's addresses, in place of `-lifetime`.
+- `-interfaces`, `-exclude_interfaces`: The interfaces the local discovery runs on, and those it doesn't: comma separated names or patterns (default: all).
 - `-plugin`: Plugin configuration: `name=type:params` (can be specified multiple times, multiple instances of the same plugin connected to different hosts are allowed)
 
 ## Plugins
 
-The params are separated by commas. A comma in a value, as in a password, is written `\,`, and a backslash before a comma or another backslash `\\`.
+The params are separated by commas, in the order below, or given by name in any order, the optional ones left out: `router=mikrotik:interval=60s,address=192.168.88.1,username=admin,password=secret,use_tls=true`. A comma in a value, as in a password, is written `\,`, and a backslash before a comma or another backslash `\\`.
 
 The plugins register the neighbors their host saw recently: they skip the stale entries, which a router can keep long after their host left, so that the addresses of hosts that left expire.
 
