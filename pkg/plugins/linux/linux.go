@@ -20,7 +20,7 @@ func init() {
 			return nil, err
 		}
 		return NewLinuxPlugin(name, cfg, lifetime), nil
-	})
+	}, "interval", "address", "username", "password", "identity_file", "host_key")
 }
 
 type Config = plugins.SSHConfig

@@ -24,7 +24,7 @@ func init() {
 			return nil, err
 		}
 		return NewMikrotikPlugin(name, cfg, lifetime), nil
-	})
+	}, "interval", "address", "username", "password", "use_tls", "tls_fingerprint")
 }
 
 func ParseConfig(config string) (Config, error) {
