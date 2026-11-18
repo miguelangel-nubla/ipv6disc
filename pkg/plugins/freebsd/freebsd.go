@@ -85,6 +85,13 @@ func (p *FreeBSDPlugin) parseNDPOutput(output string, state *ipv6disc.State) int
 			continue
 		}
 
+		// A stale entry can stay long after its host is gone, and registering it would refresh
+		// the address at every poll, so it would never expire: as for Mikrotik, only the
+		// entries confirmed recently count. The state is the fifth field.
+		if len(fields) > 4 && fields[4] == "S" {
+			continue
+		}
+
 		// An incomplete entry has "(incomplete)" for its MAC, which doesn't parse either.
 		hw, err := net.ParseMAC(fields[1])
 		if err != nil {

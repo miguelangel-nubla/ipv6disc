@@ -29,7 +29,7 @@ func TestParseNDPOutput(t *testing.T) {
 
 	count := plugin.parseNDPOutput(output, state)
 
-	assert.Equal(t, 3, count)
+	assert.Equal(t, 2, count)
 
 	// Verify the valid entries were registered
 
@@ -37,7 +37,7 @@ func TestParseNDPOutput(t *testing.T) {
 	ip1, _ := netip.ParseAddr("fe80::20c:29ff:fe2c:2b08")
 	mac1, _ := net.ParseMAC("00:1a:2b:3c:4d:08")
 	_, existing1 := state.Register(mac1, ip1, plugin.Name(), time.Hour, nil)
-	assert.True(t, existing1, "fe80::... should be registered")
+	assert.False(t, existing1, "fe80::... is stale: it must not be registered")
 
 	// 2. 2001:db8::1
 	ip2, _ := netip.ParseAddr("2001:db8::1")

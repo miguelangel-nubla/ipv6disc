@@ -88,8 +88,11 @@ func (p *LinuxPlugin) parseNDPOutput(output string, state *ipv6disc.State) int {
 			continue
 		}
 
+		// A stale entry can stay long after its host is gone, and registering it would refresh
+		// the address at every poll, so it would never expire: as for Mikrotik, only the
+		// entries confirmed recently count.
 		switch fields[len(fields)-1] {
-		case "FAILED", "INCOMPLETE":
+		case "FAILED", "INCOMPLETE", "STALE":
 			continue
 		}
 
