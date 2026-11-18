@@ -36,6 +36,8 @@ type Worker struct {
 	protocolConns map[string]*InterfaceProcesses
 	workerCancels map[string]context.CancelFunc
 	pcMutex       sync.RWMutex
+	// The goroutines Start starts, for Wait.
+	running sync.WaitGroup
 
 	discoveryListen bool
 	discoveryActive bool
@@ -151,14 +153,17 @@ func (w *Worker) PrettyPrintStats(prefix string) string {
 
 // Start runs the plugins and, when listening is enabled, the discovery on every interface address,
 // which it keeps in step with the addresses the system has.
-func (w *Worker) Start() error {
+// The discovery stops when ctx is done: Wait waits for it to.
+func (w *Worker) Start(ctx context.Context) error {
 	if len(w.plugins) == 0 && !w.discoveryListen {
 		return fmt.Errorf("no plugins configured and discovery listening disabled: nothing to do")
 	}
 
 	for _, p := range w.plugins {
+		w.running.Add(1)
 		go func() {
-			err := p.Start(context.Background(), w.State, func(err error) {
+			defer w.running.Done()
+			err := p.Start(ctx, w.State, func(err error) {
 				w.logger.Errorf("plugin %s error: %s", p.Name(), err)
 			})
 			if err != nil {
@@ -168,18 +173,30 @@ func (w *Worker) Start() error {
 	}
 
 	if w.discoveryListen {
+		w.running.Add(1)
 		go func() {
+			defer w.running.Done()
 			ticker := time.NewTicker(interfaceCheckInterval)
 			defer ticker.Stop()
 
 			for {
-				w.checkInterfaces()
-				<-ticker.C
+				w.checkInterfaces(ctx)
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+				}
 			}
 		}()
 	}
 
 	return nil
+}
+
+// Wait returns once the discovery stopped, after the context of Start is done: the listeners are
+// closed, and the plugins returned.
+func (w *Worker) Wait() {
+	w.running.Wait()
 }
 
 // interfaceCheckInterval is how often the worker looks for interface addresses that came or went.
@@ -232,7 +249,11 @@ func (w *Worker) Solicit(target netip.Addr) (int, error) {
 	return sent, errors.Join(errs...)
 }
 
-func (w *Worker) checkInterfaces() {
+func (w *Worker) checkInterfaces(ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
+
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		w.logger.Errorf("error getting interfaces: %s", err)
@@ -270,10 +291,12 @@ func (w *Worker) checkInterfaces() {
 			w.pcMutex.Lock()
 			_, running := w.workerCancels[addrStr]
 			if !running {
-				ctx, cancel := context.WithCancel(context.Background())
+				ctx, cancel := context.WithCancel(ctx)
 				w.workerCancels[addrStr] = cancel
 				w.logger.Debugf("starting discovery on %s %s", iface.Name, addrStr)
+				w.running.Add(1)
 				go func() {
+					defer w.running.Done()
 					w.StartInterfaceAddr(ctx, iface, addr)
 					// It also ends on a failure to listen: let the next check try again, unless a
 					// new worker took its place already.

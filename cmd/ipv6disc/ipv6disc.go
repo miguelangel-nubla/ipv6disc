@@ -1,10 +1,14 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"go.uber.org/zap"
@@ -96,13 +100,19 @@ func startUpdater() {
 		worker.RegisterPlugin(p)
 	}
 
-	err := worker.Start()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	err := worker.Start(ctx)
 	if err != nil {
 		sugar.Fatalf("can't start worker: %s", err)
 	}
 
 	if !live {
-		select {}
+		<-ctx.Done()
+		sugar.Info("stopping")
+		worker.Wait()
+		return
 	}
 
 	liveOutput := make(chan string)

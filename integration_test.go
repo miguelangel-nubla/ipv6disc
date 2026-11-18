@@ -10,6 +10,7 @@ package ipv6disc
 // worker's namespace: the discovery sees that link only, not the machine's network.
 
 import (
+	"context"
 	"fmt"
 	"net/netip"
 	"os"
@@ -50,7 +51,9 @@ func TestLiveDiscovery(t *testing.T) {
 	}
 
 	w := NewWorker(zaptest.NewLogger(t).Sugar(), 2*time.Second, 6*time.Second, true, true)
-	if err := w.Start(); err != nil {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := w.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
 
@@ -76,6 +79,19 @@ func TestLiveDiscovery(t *testing.T) {
 	waitFor(t, 30*time.Second, "the removed address to expire", func() bool { return !has(w, peerMAC, quietAddr) })
 	if !has(w, peerMAC, peerAddr) {
 		t.Errorf("the peer's address expired too, though it answers")
+	}
+
+	// Stopping closes the listeners.
+	cancel()
+	stopped := make(chan struct{})
+	go func() { w.Wait(); close(stopped) }()
+	select {
+	case <-stopped:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the worker did not stop")
+	}
+	if prefixes := w.Prefixes(); len(prefixes) != 0 {
+		t.Errorf("still listening on %v after stopping", prefixes)
 	}
 }
 
