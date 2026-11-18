@@ -87,23 +87,23 @@ func (p *pluginsFlag) Set(value string) error {
 }
 
 func init() {
-	flag.StringVar(&logLevel, "log_level", "info", "Logging level (debug, info, warn, error, fatal, panic) default: info")
-	flag.DurationVar(&lifetime, "lifetime", 4*time.Hour, "Time to keep a discovered host entry after it has been last seen. Default: 4h")
-	flag.DurationVar(&rediscover, "rediscover", 0, "How often the active discovery probes every host. Default: a third of the shortest lifetime of the families that probe")
-	flag.BoolVar(&live, "live", false, "Show the current state live on the terminal, default: false")
+	flag.StringVar(&logLevel, "log_level", "info", "The logging level: debug, info, warn, error")
+	flag.DurationVar(&lifetime, "lifetime", 4*time.Hour, "How long an address stays after it was last seen")
+	flag.DurationVar(&rediscover, "rediscover", 0, "How often the active discovery probes every host. Without it: a third of the shortest lifetime of the families that probe")
+	flag.BoolVar(&live, "live", false, "Show the state in the terminal, updating, instead of the log")
 
 	flag.BoolVar(&ipv6, "ipv6", true, "Discover IPv6 addresses")
 	flag.BoolVar(&ipv6Listen, "ipv6_listen", true, "IPv6: listen for NDP and the discovery protocols on the interfaces")
 	flag.BoolVar(&ipv6Active, "ipv6_active", true, "IPv6: probe the links, by multicast ping, SSDP and WS-Discovery")
-	flag.DurationVar(&ipv6Lifetime, "ipv6_lifetime", 0, "IPv6: time to keep an address after it was last seen, in place of -lifetime")
-	flag.BoolVar(&ipv4, "ipv4", false, "Discover IPv4 addresses: the plugins read their router's ARP table")
+	flag.DurationVar(&ipv6Lifetime, "ipv6_lifetime", 0, "IPv6: how long an address stays after it was last seen, in place of -lifetime")
+	flag.BoolVar(&ipv4, "ipv4", false, "Discover IPv4 addresses: the plugins read their routers' ARP tables too")
 	flag.BoolVar(&ipv4Listen, "ipv4_listen", true, "IPv4: read the kernel's neighbor table")
 	flag.BoolVar(&ipv4Active, "ipv4_active", true, "IPv4: sweep the local subnets, which broadcasts an ARP request for each address")
-	flag.DurationVar(&ipv4Lifetime, "ipv4_lifetime", 0, "IPv4: time to keep an address after it was last seen, in place of -lifetime")
-	flag.Var(&interfaces, "interfaces", "Local discovery only on these interfaces: names or patterns, as en*, comma separated. Default: all")
-	flag.Var(&excludeInterfaces, "exclude_interfaces", "No local discovery on these interfaces: names or patterns, as docker*,veth*")
+	flag.DurationVar(&ipv4Lifetime, "ipv4_lifetime", 0, "IPv4: how long an address stays after it was last seen, in place of -lifetime")
+	flag.Var(&interfaces, "interfaces", "The local discovery only on these interfaces, comma separated: names, or patterns as en*. Without it: all")
+	flag.Var(&excludeInterfaces, "exclude_interfaces", "No local discovery on these interfaces, comma separated: names, or patterns as docker*,veth*")
 
-	flag.Var(&pluginsFlags, "plugin", "Plugin configuration: name=type:params (can be specified multiple times)")
+	flag.Var(&pluginsFlags, "plugin", "A plugin, name=type:params, as docs/reference/plugins.md says. Given several times, several plugins")
 
 	// The names from before, as the flags they became. Those from before the families set both.
 	for old, current := range deprecatedFlags {

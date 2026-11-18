@@ -17,6 +17,8 @@ type Factory func(name string, config string, lifetime time.Duration) (ipv6disc.
 type Field struct {
 	Name     string
 	Required bool
+	// What it is, for the documentation.
+	Description string
 }
 
 type registered struct {

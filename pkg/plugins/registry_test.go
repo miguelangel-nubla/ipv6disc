@@ -13,7 +13,7 @@ func TestParamsByName(t *testing.T) {
 	Register("fake", func(name, config string, lifetime time.Duration) (ipv6disc.Plugin, error) {
 		got = config
 		return nil, nil
-	}, Field{"interval", true}, Field{"address", false}, Field{"username", false}, Field{"password", false}, Field{"use_tls", false}, Field{"fingerprint", false})
+	}, Field{Name: "interval", Required: true}, Field{Name: "address"}, Field{Name: "username"}, Field{Name: "password"}, Field{Name: "use_tls"}, Field{Name: "fingerprint"})
 	defer func() {
 		mu.Lock()
 		delete(registry, "fake")
