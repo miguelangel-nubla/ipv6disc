@@ -1,3 +1,4 @@
 FROM scratch
+ARG TARGETPLATFORM
 ENTRYPOINT ["/ipv6disc"]
-COPY ipv6disc /
+COPY $TARGETPLATFORM/ipv6disc /
