@@ -55,7 +55,8 @@ Plugins connect to routers/firewalls (Linux, FreeBSD/OPNsense, Mikrotik) to fetc
 Off by default. With it:
 - The plugins also read their host's IPv4 neighbor table, ARP: `ip neigh`, `arp -an`, `/ip/arp/print`.
 - The local discovery reads the kernel's: through netlink on Linux, with no command needed; `arp -an` on macOS and the BSDs; not on Windows.
-- With active discovery, it first sends a UDP packet to the discard port of each address of the local subnets (a /22 at most, or the /24 of the address), so the kernel resolves the hosts that stay quiet. That needs no privilege.
+- With active discovery, it first sweeps: it sends a UDP packet to the discard port of each address of the local subnets (a /22 at most, or the /24 of the address), so the kernel resolves the hosts that stay quiet. That needs no privilege, but broadcasts an ARP request for each address: `-ipv4-sweep=false` leaves it out.
+- A program using the library can instead ask specific hosts, with nothing broadcast: `Worker.SolicitIPv4` sends ARP requests to each MAC alone, for every address of the local subnets, and registers those it answers for. That needs Linux and `CAP_NET_RAW`.
 
 As for IPv6, only the entries confirmed recently count, so that hosts that left expire.
 
@@ -80,6 +81,7 @@ If you need to pause and select/copy data use `screen`, launch `ipv6disc -live [
 - `-lifetime`: Set the lifetime for a discovered host entry after it has been last seen (default: 4 hours).
 - `-live`: Show the current state live on the terminal (default: false).
 - `-ipv4`: Discover IPv4 neighbors too, see above (default: false).
+- `-ipv4-sweep`: With `-ipv4` and active discovery, sweep the local subnets, which broadcasts an ARP request for each address (default: true).
 - `-plugin`: Plugin configuration: `name=type:params` (can be specified multiple times, multiple instances of the same plugin connected to different hosts are allowed)
 
 ## Plugins

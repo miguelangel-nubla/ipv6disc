@@ -138,3 +138,26 @@ func TestTable(t *testing.T) {
 		}
 	}
 }
+
+func TestPacket(t *testing.T) {
+	sender := net.HardwareAddr{0x02, 0, 0, 0, 0, 1}
+	b := request(sender, netip.MustParseAddr("10.0.0.1"), netip.MustParseAddr("10.0.0.2"))
+	if len(b) != packetLen || b[7] != opRequest || b[27] != 2 || b[17] != 1 {
+		t.Fatalf("request: % x", b)
+	}
+	if _, _, ok := parseReply(b); ok {
+		t.Error("a request read as a reply")
+	}
+	// The same packet, as the reply of 10.0.0.2 at its MAC.
+	reply := append([]byte(nil), b...)
+	reply[7] = opReply
+	copy(reply[8:14], []byte{0x02, 0, 0, 0, 0, 2})
+	copy(reply[14:18], []byte{10, 0, 0, 2})
+	mac, ip, ok := parseReply(reply)
+	if !ok || mac.String() != "02:00:00:00:00:02" || ip.String() != "10.0.0.2" {
+		t.Errorf("reply: %s %s %v", mac, ip, ok)
+	}
+	if _, _, ok := parseReply(reply[:20]); ok {
+		t.Error("a truncated reply read")
+	}
+}
