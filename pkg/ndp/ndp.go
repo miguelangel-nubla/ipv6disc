@@ -8,6 +8,7 @@ import (
 
 	"github.com/mdlayher/ndp"
 
+	"github.com/miguelangel-nubla/ipv6disc/internal/link"
 	"github.com/miguelangel-nubla/ipv6disc/pkg/stats"
 )
 
@@ -56,6 +57,9 @@ func ListenForNDP(iface *net.Interface, addr netip.Addr, processNDP func(netip.A
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen for NDP packets: %w", err)
 	}
+	// The socket, bound to an address that isn't link-local, hears the multicast NDP of the other
+	// interfaces too: their hosts aren't on this link.
+	link.Enable(conn)
 
 	result := &Conn{
 		Conn:       conn,
@@ -65,7 +69,7 @@ func ListenForNDP(iface *net.Interface, addr netip.Addr, processNDP func(netip.A
 
 	go func() {
 		for {
-			msg, _, from, err := conn.ReadFrom()
+			msg, cm, from, err := conn.ReadFrom()
 			if err != nil {
 				if errors.Is(err, net.ErrClosed) {
 					return
@@ -73,6 +77,9 @@ func ListenForNDP(iface *net.Interface, addr netip.Addr, processNDP func(netip.A
 				if onError != nil {
 					onError(fmt.Errorf("error reading: %w", err))
 				}
+				continue
+			}
+			if !link.From(cm, iface) {
 				continue
 			}
 			result.PacketsReceived.Add(1)

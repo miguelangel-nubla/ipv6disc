@@ -61,7 +61,7 @@ type IPv4Target struct {
 // SolicitIPv4 asks each target, by ARP requests sent to its MAC alone, for each address of the
 // local subnets in its prefixes (arp.ProbeTargets), and registers those it answers for: the IPv4
 // addresses of a host that stays quiet, with nothing broadcast. A subnet none of its addresses can
-// be in isn't asked; nor an interface other than those the state saw the MAC on, if any. It
+// be in isn't asked. Without prefixes, only the interfaces the state saw the MAC on are, if any. It
 // needs Linux and CAP_NET_RAW, and the state taking IPv4. It returns how many addresses were
 // found.
 func (w *Worker) SolicitIPv4(ctx context.Context, targets []IPv4Target) (int, error) {
@@ -72,31 +72,53 @@ func (w *Worker) SolicitIPv4(ctx context.Context, targets []IPv4Target) (int, er
 	var errs []error
 	interfaces := w.ipv4Interfaces()
 	for _, target := range targets {
-		mac := target.MAC
-		for _, name := range w.interfacesOf(mac, interfaces) {
-			i := interfaces[name]
-			for _, prefix := range i.prefixes {
-				asked := probeTargets(prefix, target.Prefixes)
-				if len(asked) == 0 {
-					continue
+		for _, p := range w.ipv4Probes(target, interfaces) {
+			addrs, err := arp.Probe(ctx, &p.iface.iface, p.local.Addr(), target.MAC, p.asked)
+			// What was found before an error counts too.
+			for _, ip := range addrs {
+				if _, existing := w.State.registerLocal(target.MAC, ip, p.name, w.config.Lifetime, nil); !existing {
+					found++
 				}
-				addrs, err := arp.Probe(ctx, &i.iface, prefix.Addr(), mac, asked)
-				// What was found before an error counts too.
-				for _, ip := range addrs {
-					if _, existing := w.State.registerLocal(mac, ip, name, w.config.Lifetime, nil); !existing {
-						found++
-					}
-				}
-				if err != nil {
-					errs = append(errs, fmt.Errorf("%s on %s: %w", mac, name, err))
-					if errors.Is(err, errors.ErrUnsupported) || ctx.Err() != nil {
-						return found, errors.Join(errs...)
-					}
+			}
+			if err != nil {
+				errs = append(errs, fmt.Errorf("%s on %s: %w", target.MAC, p.name, err))
+				if errors.Is(err, errors.ErrUnsupported) || ctx.Err() != nil {
+					return found, errors.Join(errs...)
 				}
 			}
 		}
 	}
 	return found, errors.Join(errs...)
+}
+
+// ipv4Probe is what SolicitIPv4 asks a target on an interface: the addresses of one of its subnets.
+type ipv4Probe struct {
+	name  string
+	iface ipv4Interface
+	local netip.Prefix
+	asked []netip.Addr
+}
+
+// ipv4Probes are the probes of a target. With prefixes, on each interface with a subnet a prefix
+// covers part of: they say where its addresses are, wherever the state saw the MAC, as a host
+// heard over IPv6 on one interface and with its IPv4 address on another, beside it on the same
+// wire. Without, on the interfaces the state saw it on, if any: else every subnet of every
+// interface would be asked.
+func (w *Worker) ipv4Probes(target IPv4Target, interfaces map[string]ipv4Interface) []ipv4Probe {
+	names := slices.Sorted(maps.Keys(interfaces))
+	if len(target.Prefixes) == 0 {
+		names = w.interfacesOf(target.MAC, interfaces)
+	}
+	var probes []ipv4Probe
+	for _, name := range names {
+		i := interfaces[name]
+		for _, local := range i.prefixes {
+			if asked := probeTargets(local, target.Prefixes); len(asked) > 0 {
+				probes = append(probes, ipv4Probe{name: name, iface: i, local: local, asked: asked})
+			}
+		}
+	}
+	return probes
 }
 
 // probeTargets returns the addresses of the subnet of local to ask, in one of the prefixes: all of

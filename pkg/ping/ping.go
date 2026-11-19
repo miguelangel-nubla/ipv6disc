@@ -10,6 +10,7 @@ import (
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv6"
 
+	"github.com/miguelangel-nubla/ipv6disc/internal/link"
 	"github.com/miguelangel-nubla/ipv6disc/pkg/stats"
 )
 
@@ -67,6 +68,10 @@ func ListenForICMP(iface *net.Interface, addr netip.Addr, onFoundAddr func(netip
 		return nil, fmt.Errorf("error listening for ICMPv6 packets on %v: %w", addr, err)
 	}
 
+	// Only the replies that come in on the interface: one routed in through another is that one's.
+	pc := conn.IPv6PacketConn()
+	link.Enable(pc)
+
 	result := &Conn{
 		PacketConn: conn,
 		iface:      iface,
@@ -75,7 +80,7 @@ func ListenForICMP(iface *net.Interface, addr netip.Addr, onFoundAddr func(netip
 	go func() {
 		packet := make([]byte, 1500)
 		for {
-			n, remote, err := conn.ReadFrom(packet)
+			n, cm, remote, err := pc.ReadFrom(packet)
 			if err != nil {
 				if errors.Is(err, net.ErrClosed) {
 					return
@@ -86,6 +91,9 @@ func ListenForICMP(iface *net.Interface, addr netip.Addr, onFoundAddr func(netip
 				continue
 			}
 
+			if !link.From(cm, iface) {
+				continue
+			}
 			msg, err := icmp.ParseMessage(ipv6.ICMPTypeEchoReply.Protocol(), packet[:n])
 			if err != nil {
 				if onError != nil {

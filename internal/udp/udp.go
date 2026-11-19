@@ -8,7 +8,9 @@ import (
 	"net"
 	"net/netip"
 
+	"github.com/miguelangel-nubla/ipv6disc/internal/link"
 	"github.com/miguelangel-nubla/ipv6disc/pkg/stats"
+	"golang.org/x/net/ipv6"
 )
 
 type Conn struct {
@@ -41,6 +43,10 @@ func Listen(iface *net.Interface, addr netip.Addr, onFoundAddr func(netip.Addr) 
 		return nil, err
 	}
 
+	// Only the answers that come in on the interface: one routed in through another is that one's.
+	pc := ipv6.NewPacketConn(conn)
+	link.Enable(pc)
+
 	result := &Conn{
 		PacketConn:     conn,
 		listenAddrPort: conn.LocalAddr().(*net.UDPAddr).AddrPort(),
@@ -50,7 +56,7 @@ func Listen(iface *net.Interface, addr netip.Addr, onFoundAddr func(netip.Addr) 
 	go func() {
 		buf := make([]byte, 4096)
 		for {
-			_, remote, err := conn.ReadFrom(buf)
+			_, cm, remote, err := pc.ReadFrom(buf)
 			if err != nil {
 				if errors.Is(err, net.ErrClosed) {
 					return
@@ -58,6 +64,9 @@ func Listen(iface *net.Interface, addr netip.Addr, onFoundAddr func(netip.Addr) 
 				if onError != nil {
 					onError(fmt.Errorf("read error: %w", err))
 				}
+				continue
+			}
+			if !link.From(cm, iface) {
 				continue
 			}
 			result.PacketsReceived.Add(1)

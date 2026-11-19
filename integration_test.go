@@ -16,6 +16,7 @@ import (
 	"net/netip"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -227,6 +228,116 @@ func runInNamespace(t *testing.T, name string) {
 	ip(t, "-n", peerNamespace, "addr", "add", peerAddr.String()+"/64", "dev", "veth-peer", "nodad")
 	ip(t, "-n", workerNamespace, "addr", "add", workerIPv4.String()+"/24", "dev", "veth-worker")
 	ip(t, "-n", peerNamespace, "addr", "add", peerIPv4.String()+"/24", "dev", "veth-peer")
+
+	cmd := exec.Command("ip", "netns", "exec", workerNamespace, os.Args[0], "-test.run=^"+name+"$", "-test.v", "-test.timeout=3m")
+	cmd.Env = append(os.Environ(), insideEnv+"=1")
+	out, err := cmd.CombinedOutput()
+	t.Logf("inside %s:\n%s", workerNamespace, out)
+	if err != nil {
+		t.Fatalf("the test inside the namespace failed: %v", err)
+	}
+}
+
+// Two networks of one wire, as two macvlan networks of a container on one bridge, and a bridge of
+// the machine's own, as Docker's: the peer, one MAC on the wire, is heard over IPv6 on one, and has
+// its IPv4 address on the other.
+const (
+	wirePeerMAC = "02:00:00:00:00:12"
+	bridgeName  = "brx"
+)
+
+var (
+	wireIPv6Worker = netip.MustParseAddr("fd00:6:2::1") // on wa, with 172.16.66.1/24
+	wireIPv6Peer   = netip.MustParseAddr("fd00:6:2::2")
+	wireIPv4Worker = netip.MustParseAddr("10.66.2.1") // on wb only
+	wireIPv4Peer   = netip.MustParseAddr("10.66.2.2")
+	bridgeIPv6     = netip.MustParseAddr("fd00:6:3::1") // the bridge's, with 172.20.66.1/24
+)
+
+// The peer's addresses are only on the interfaces of its wire: its multicast NDP, which a socket
+// bound to the bridge's address hears too, isn't the bridge's, nor are the hosts routed to it.
+// And its IPv4 address, in a prefix of the other network of the wire, is asked there, though its
+// MAC was only seen on the first.
+func TestLiveTwoNetworksOneWire(t *testing.T) {
+	if os.Getenv(insideEnv) == "" {
+		runInTwoNetworks(t, "TestLiveTwoNetworksOneWire")
+		return
+	}
+
+	w := NewWorker(zaptest.NewLogger(t).Sugar(), Config{Lifetime: time.Minute, Rediscover: 2 * time.Second,
+		IPv6: Family{Enabled: true, Listen: true, Active: true}, IPv4: Family{Enabled: true, Listen: true}})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := w.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 30*time.Second, "the peer's IPv6 address", func() bool { return has(w, wirePeerMAC, wireIPv6Peer) })
+
+	// The peer's multicast NDP: solicitations for the worker's address, which it forgets first, and
+	// an unsolicited advertisement of a new address, to all nodes.
+	for range 3 {
+		ip(t, "-n", peerNamespace, "neigh", "flush", "all")
+		exec.Command("ip", "netns", "exec", peerNamespace, "ping", "-6", "-c1", "-W1", wireIPv6Worker.String()).Run()
+		time.Sleep(time.Second)
+	}
+	ip(t, "-n", peerNamespace, "addr", "add", "fd00:6:2::22/64", "dev", "br0")
+	waitFor(t, 15*time.Second, "the peer's advertised address", func() bool { return has(w, wirePeerMAC, netip.MustParseAddr("fd00:6:2::22")) })
+	time.Sleep(2 * time.Second)
+	for _, a := range w.GetAll()[wirePeerMAC].Get() {
+		if slices.Contains(a.Interfaces(), bridgeName) || slices.Contains(a.Interfaces(), "wb") {
+			t.Errorf("%s seen on %v: only wa has the peer's IPv6", a.WithZone(""), a.Interfaces())
+		}
+	}
+
+	// Its IPv4 address, in wb's subnet, though its MAC was only heard on wa.
+	if has(w, wirePeerMAC, wireIPv4Peer) {
+		t.Fatalf("%s found before soliciting it", wireIPv4Peer)
+	}
+	found, err := w.SolicitIPv4(ctx, []IPv4Target{{MAC: mustMAC(wirePeerMAC), Prefixes: []netip.Prefix{netip.MustParsePrefix("10.66.2.0/24")}}})
+	if err != nil || found == 0 || !has(w, wirePeerMAC, wireIPv4Peer) {
+		t.Fatalf("solicited in wb's subnet: found %d, %v; known: %v", found, err, has(w, wirePeerMAC, wireIPv4Peer))
+	}
+	cancel()
+	w.Wait()
+}
+
+// runInTwoNetworks makes the worker's namespace with two links to the peer's bridge, wa and wb, and
+// a bridge of its own with no port, and runs the test inside it.
+func runInTwoNetworks(t *testing.T, name string) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root, to make network namespaces")
+	}
+	if _, err := exec.LookPath("ip"); err != nil {
+		t.Skip("needs iproute2")
+	}
+	for _, ns := range []string{workerNamespace, peerNamespace} {
+		exec.Command("ip", "netns", "del", ns).Run()
+		ip(t, "netns", "add", ns)
+		t.Cleanup(func() { exec.Command("ip", "netns", "del", ns).Run() })
+		for _, setting := range []string{"all", "default"} {
+			ip(t, "netns", "exec", ns, "sysctl", "-qw", fmt.Sprintf("net.ipv6.conf.%s.disable_ipv6=0", setting))
+		}
+		ip(t, "-n", ns, "link", "set", "lo", "up")
+	}
+	ip(t, "-n", peerNamespace, "link", "add", "br0", "address", wirePeerMAC, "type", "bridge")
+	ip(t, "netns", "exec", peerNamespace, "sysctl", "-qw", "net.ipv6.conf.br0.ndisc_notify=1")
+	for _, l := range []string{"wa", "wb"} {
+		ip(t, "link", "add", l, "netns", workerNamespace, "type", "veth", "peer", "name", "p"+l, "netns", peerNamespace)
+		ip(t, "-n", peerNamespace, "link", "set", "p"+l, "master", "br0")
+		ip(t, "-n", peerNamespace, "link", "set", "p"+l, "up")
+		ip(t, "-n", workerNamespace, "link", "set", l, "up")
+	}
+	ip(t, "-n", peerNamespace, "link", "set", "br0", "up")
+	ip(t, "-n", workerNamespace, "link", "add", bridgeName, "type", "bridge")
+	ip(t, "-n", workerNamespace, "link", "set", bridgeName, "up")
+
+	ip(t, "-n", workerNamespace, "addr", "add", wireIPv6Worker.String()+"/64", "dev", "wa", "nodad")
+	ip(t, "-n", workerNamespace, "addr", "add", "172.16.66.1/24", "dev", "wa")
+	ip(t, "-n", workerNamespace, "addr", "add", wireIPv4Worker.String()+"/24", "dev", "wb")
+	ip(t, "-n", workerNamespace, "addr", "add", bridgeIPv6.String()+"/64", "dev", bridgeName, "nodad")
+	ip(t, "-n", workerNamespace, "addr", "add", "172.20.66.1/24", "dev", bridgeName)
+	ip(t, "-n", peerNamespace, "addr", "add", wireIPv6Peer.String()+"/64", "dev", "br0", "nodad")
+	ip(t, "-n", peerNamespace, "addr", "add", wireIPv4Peer.String()+"/24", "dev", "br0")
 
 	cmd := exec.Command("ip", "netns", "exec", workerNamespace, os.Args[0], "-test.run=^"+name+"$", "-test.v", "-test.timeout=3m")
 	cmd.Env = append(os.Environ(), insideEnv+"=1")

@@ -1,6 +1,7 @@
 package ipv6disc
 
 import (
+	"fmt"
 	"net"
 	"net/netip"
 	"slices"
@@ -269,5 +270,47 @@ func TestSelfAddresses(t *testing.T) {
 	}
 	if got := state.GetAll()[mac.String()].PrettyPrint(""); !strings.Contains(got, "(this host)") {
 		t.Errorf("the report: %q", got)
+	}
+}
+
+// A target's probes: with prefixes, on the interfaces whose subnets they cover, wherever its MAC
+// was seen, as a host heard over IPv6 on one interface and with its IPv4 address on another, two
+// networks of one wire; without, only where it was seen.
+func TestIPv4ProbesFollowThePrefixes(t *testing.T) {
+	w := NewWorker(zap.NewNop().Sugar(), Config{Lifetime: time.Hour, IPv6: Family{Enabled: true}, IPv4: Family{Enabled: true}})
+	mac, _ := net.ParseMAC("00:1a:2b:3c:4d:0f")
+	interfaces := map[string]ipv4Interface{
+		"eth0": {prefixes: []netip.Prefix{netip.MustParsePrefix("10.2.3.75/24")}},  // lan-ipv4
+		"eth1": {prefixes: []netip.Prefix{netip.MustParsePrefix("172.16.2.2/24")}}, // lan-ipv6, the IPv6 heard here
+		"eth2": {prefixes: []netip.Prefix{netip.MustParsePrefix("172.20.53.11/29")}},
+	}
+	a, _ := w.State.registerLocal(mac, netip.MustParseAddr("fd00::1"), "eth1", time.Hour, nil)
+	if a == nil {
+		t.Fatal("the IPv6 address not taken")
+	}
+	defer a.Unwatch()
+	probed := func(target IPv4Target) []string {
+		var got []string
+		for _, p := range w.ipv4Probes(target, interfaces) {
+			got = append(got, fmt.Sprintf("%s %s %d", p.name, p.local.Masked(), len(p.asked)))
+		}
+		return got
+	}
+
+	if got := probed(IPv4Target{MAC: mac, Prefixes: []netip.Prefix{netip.MustParsePrefix("10.2.3.0/24")}}); !slices.Equal(got, []string{"eth0 10.2.3.0/24 253"}) {
+		t.Errorf("10.2.3.0/24, the MAC seen on eth1: %q, want eth0's subnet", got)
+	}
+	if got := probed(IPv4Target{MAC: mac, Prefixes: []netip.Prefix{netip.MustParsePrefix("10.2.3.200/30")}}); !slices.Equal(got, []string{"eth0 10.2.3.0/24 4"}) {
+		t.Errorf("a part of a subnet: %q", got)
+	}
+	if got := probed(IPv4Target{MAC: mac, Prefixes: []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}}); len(got) != 0 {
+		t.Errorf("a prefix of no interface: %q", got)
+	}
+	if got := probed(IPv4Target{MAC: mac}); !slices.Equal(got, []string{"eth1 172.16.2.0/24 253"}) {
+		t.Errorf("without prefixes, the MAC seen on eth1: %q, want eth1 only", got)
+	}
+	other, _ := net.ParseMAC("00:1a:2b:3c:4d:10")
+	if got := probed(IPv4Target{MAC: other}); len(got) != 3 {
+		t.Errorf("without prefixes, a MAC never seen: %q, want every interface", got)
 	}
 }
