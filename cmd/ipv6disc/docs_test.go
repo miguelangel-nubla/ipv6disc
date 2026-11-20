@@ -38,6 +38,7 @@ func cliPage() string {
 		}
 		fmt.Fprintf(&b, "| `-%s` | %s | %s |\n", f.Name, def, cell(f.Usage))
 	})
+	b.WriteString("\nA boolean flag is turned off as `-ipv6=false`, not `-ipv6 false`: a word that is no flag, nor a flag's value, is an error.\n")
 	b.WriteString("\nThe names from before still work, with a warning:")
 	for _, old := range sortedKeys(deprecatedFlags) {
 		fmt.Fprintf(&b, " `-%s`,", old)

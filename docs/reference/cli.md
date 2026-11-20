@@ -20,4 +20,6 @@
 | `-plugin` | - | A plugin, name=type:params, as docs/reference/plugins.md says. Given several times, several plugins |
 | `-rediscover` | - | How often the active discovery probes every host. Without it: a third of the shortest lifetime of the families that probe |
 
+A boolean flag is turned off as `-ipv6=false`, not `-ipv6 false`: a word that is no flag, nor a flag's value, is an error.
+
 The names from before still work, with a warning: `-discovery-active`, `-discovery-listen`, `-exclude-interfaces`, `-ipv4-active`, `-ipv4-lifetime`, `-ipv4-listen`, `-ipv6-active`, `-ipv6-lifetime`, `-ipv6-listen`.

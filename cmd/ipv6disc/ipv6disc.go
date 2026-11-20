@@ -87,6 +87,13 @@ func (p *pluginsFlag) Set(value string) error {
 }
 
 func init() {
+	defineFlags()
+}
+
+// defineFlags defines the flags on flag.CommandLine, each with its default: the tests define them
+// again on a new one, as a flag set can't forget what it was given.
+func defineFlags() {
+	interfaces, excludeInterfaces, pluginsFlags = nil, nil, nil
 	flag.StringVar(&logLevel, "log_level", "info", "The logging level: debug, info, warn, error")
 	flag.DurationVar(&lifetime, "lifetime", 4*time.Hour, "How long an address stays after it was last seen")
 	flag.DurationVar(&rediscover, "rediscover", 0, "How often the active discovery probes every host. Without it: a third of the shortest lifetime of the families that probe")
@@ -174,8 +181,23 @@ func deprecatedFlagsGiven() []string {
 	return warnings
 }
 
+// unexpectedArgs is the error of the words left after the flags. There are none to give: flag
+// stops at the first, so that the flags after it would be left out without a word, as -ipv4 and
+// -plugin after "-ipv6 false".
+func unexpectedArgs(args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	return fmt.Errorf("unexpected argument %q: the flags take no separate words, and a boolean one is turned off as -name=false", args[0])
+}
+
 func main() {
 	flag.Parse()
+	if err := unexpectedArgs(flag.Args()); err != nil {
+		fmt.Fprintln(flag.CommandLine.Output(), err)
+		flag.Usage()
+		os.Exit(2)
+	}
 
 	startUpdater()
 }
@@ -196,6 +218,7 @@ func startUpdater() {
 		ExcludeInterfaces: excludeInterfaces,
 	})
 
+	// The plugins get -lifetime: a family's own, when given, is the state's to put in its place.
 	for _, pCfg := range pluginsFlags {
 		p, err := plugins.Create(pCfg.Type, pCfg.Name, pCfg.Params, lifetime)
 		if err != nil {
@@ -204,11 +227,25 @@ func startUpdater() {
 		worker.RegisterPlugin(p)
 	}
 
+	// The terminal is raw in -live, so Ctrl-C is a key there, but a signal from elsewhere, as
+	// docker stop sends, has to end it too.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	if live {
+		// Before anything is started: without a terminal there is nothing to show it on. Not
+		// by the logger, which -live silences.
+		if err := terminal.Init(); err != nil {
+			fmt.Fprintln(os.Stderr, "-live needs a terminal:", err)
+			os.Exit(1)
+		}
+	}
+
 	err := worker.Start(ctx)
 	if err != nil {
+		if live {
+			terminal.Close()
+		}
 		sugar.Fatalf("can't start worker: %s", err)
 	}
 
@@ -216,17 +253,32 @@ func startUpdater() {
 		<-ctx.Done()
 		sugar.Info("stopping")
 		worker.Wait()
+		worker.State.Close()
 		return
 	}
 
 	liveOutput := make(chan string)
 	go func() {
+		refresh := time.NewTicker(1 * time.Second)
+		defer refresh.Stop()
 		for {
-			liveOutput <- worker.State.PrettyPrint("    ", true) + worker.PrettyPrintStats("    ")
-			time.Sleep(1 * time.Second)
+			select {
+			case liveOutput <- worker.State.PrettyPrint("    ", true) + worker.PrettyPrintStats("    "):
+			case <-ctx.Done():
+				return
+			}
+			select {
+			case <-refresh.C:
+			case <-ctx.Done():
+				return
+			}
 		}
 	}()
-	terminal.LiveOutput(liveOutput)
+	terminal.Run(ctx, liveOutput)
+	terminal.Close()
+	stop()
+	worker.Wait()
+	worker.State.Close()
 }
 
 func initializeLogger() *zap.SugaredLogger {
