@@ -26,7 +26,9 @@ type Addr struct {
 	expiration1    *time.Timer
 	expiration     *time.Timer
 	expirationTime time.Time
-	sources        []string
+	// Of a registration only: when what it registers was seen, past. Zero: now.
+	seenAt  time.Time
+	sources []string
 	// The local interfaces that saw it: sources too, but a plugin can have an interface's name.
 	interfaces []string
 	// An address of this machine, rather than of a neighbor; and, of those, one the kernel says is
@@ -45,18 +47,24 @@ type Addr struct {
 type AddrExpirationRemainingEvents int
 
 func (a *Addr) resetTimers(resetExpirationTime bool) {
+	a.resetTimersFrom(time.Now(), resetExpirationTime)
+}
+
+// resetTimersFrom is resetTimers, of an address seen at from, which can be past: the events come
+// that much sooner, at once those already due.
+func (a *Addr) resetTimersFrom(from time.Time, resetExpirationTime bool) {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
 
 	// Before the timers: the expiration timer can't fire before the address is invalid.
-	now := time.Now()
-	a.expiration3.Reset(a.lifetime / 3 * 2)
-	a.expiration2.Reset(a.lifetime / 4 * 3)
-	a.expiration1.Reset(a.lifetime / 5 * 4)
-	a.expiration.Reset(a.lifetime)
+	elapsed := time.Since(from)
+	a.expiration3.Reset(a.lifetime/3*2 - elapsed)
+	a.expiration2.Reset(a.lifetime/4*3 - elapsed)
+	a.expiration1.Reset(a.lifetime/5*4 - elapsed)
+	a.expiration.Reset(a.lifetime - elapsed)
 
 	if resetExpirationTime {
-		a.expirationTime = now.Add(a.lifetime)
+		a.expirationTime = from.Add(a.lifetime)
 	}
 }
 
@@ -112,11 +120,22 @@ func (a *Addr) Seen(source ...string) {
 // seenBy is Seen, by a registration of the same address, telling whether the source is new: its
 // lifetime, when not zero, replaces the address's from now on, as the latest registration says how
 // long it stays; it says whether the source is a local interface, and whether the address is this
-// machine's, and temporary.
+// machine's, and temporary. A registration of a sighting past, seenAt, counts from then, and only
+// when it lasts longer than what the address has: an older sighting never shortens it.
 func (a *Addr) seenBy(by *Addr, source ...string) bool {
 	local := len(by.interfaces) > 0
+	from := time.Now()
+	extends := true
 	a.mutex.Lock()
-	if by.lifetime > 0 {
+	if !by.seenAt.IsZero() {
+		from = by.seenAt
+		lifetime := a.lifetime
+		if by.lifetime > 0 {
+			lifetime = by.lifetime
+		}
+		extends = from.Add(lifetime).After(a.expirationTime)
+	}
+	if by.lifetime > 0 && extends {
 		a.lifetime = by.lifetime
 	}
 	if by.self {
@@ -126,7 +145,9 @@ func (a *Addr) seenBy(by *Addr, source ...string) bool {
 		a.notify = by.notify
 	}
 	a.mutex.Unlock()
-	a.resetTimers(true)
+	if extends {
+		a.resetTimersFrom(from, true)
+	}
 	if len(source) == 0 {
 		return false
 	}

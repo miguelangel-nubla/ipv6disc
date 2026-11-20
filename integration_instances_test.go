@@ -920,11 +920,9 @@ func TestLiveTwoHosts(t *testing.T) {
 	if took := b.report().Received["ndp"] - heard; took < asked/2 {
 		t.Errorf("b took %d NDP messages while a solicited q, which had left, %d times: it doesn't hear them", took, asked)
 	}
-	// Its IPv4 address is of the neighbor table, read every minute, right after a sweep. The read
-	// after q left still has its entry, which the kernel then asks again, having sent to it: the
-	// address is gone a lifetime after that read, not after the next, when the entry failed.
-	lastRead := started.Add(interfaceCheckInterval + sweepSettle)
-	waitFor(t, time.Until(lastRead.Add(ipv4Lifetime+10*time.Second)), "q's IPv4 address to expire on both", func() bool {
+	// Its IPv4 address is of the neighbor table, read every minute, once the kernel has checked
+	// what a sweep found: it is gone a lifetime after the kernel last confirmed q, before it left.
+	waitFor(t, time.Until(left.Add(ipv4Lifetime+5*time.Second)), "q's IPv4 address to expire on both", func() bool {
 		return !a.report().has(q.mac, q.ipv4) && !b.report().has(q.mac, q.ipv4)
 	})
 	t.Logf("%s expired on both %s after q left, %s after they started", q.ipv4, time.Since(left).Round(time.Second), time.Since(started).Round(time.Second))
@@ -1144,4 +1142,80 @@ func probeOf(frame []byte) (mac, kind string) {
 		}
 	}
 	return "", ""
+}
+
+// A host that leaves goes from IPv4 a lifetime after the kernel last confirmed it there: not a
+// lifetime after the next read of the table, which still has its entry, made stale by the sweep
+// before it, for the kernel to check. And the hosts that stay, stay, through every read.
+func TestLiveIPv4HostLeaves(t *testing.T) {
+	if os.Getenv(insideEnv) == "" {
+		runOnLAN(t, "TestLiveIPv4HostLeaves")
+		return
+	}
+	const lifetime = 90 * time.Second
+	// A rediscovery shorter than the minute between two reads: a sweep before each.
+	a := startInstance(t, lan["a"].namespace, Config{Lifetime: 9 * time.Second, Rediscover: 20 * time.Second,
+		IPv6: Family{Enabled: true, Listen: true}, IPv4: Family{Enabled: true, Listen: true, Active: true, Lifetime: lifetime}})
+	defer a.stop()
+	q := lan["q"]
+	staying := []lanHost{lan["p"], lan["b"]}
+	waitFor(t, 30*time.Second, "the hosts' IPv4 addresses, after the first sweep", func() bool {
+		r := a.report()
+		return r.has(q.mac, q.ipv4) && r.has(staying[0].mac, staying[0].ipv4) && r.has(staying[1].mac, staying[1].ipv4)
+	})
+	found := time.Now()
+
+	// From now on, those that stay are always there.
+	stop := make(chan struct{})
+	missing := make(chan string, 1)
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			case <-time.After(250 * time.Millisecond):
+			}
+			r := a.report()
+			for _, h := range staying {
+				if !r.has(h.mac, h.ipv4) {
+					select {
+					case missing <- fmt.Sprintf("%s went, %s after it was found, though it answers", h.ipv4, time.Since(found).Round(time.Second)):
+					default:
+					}
+				}
+			}
+		}
+	}()
+	defer close(stop)
+
+	// q leaves just after the read that found it: the next read is most of a minute away.
+	time.Sleep(5 * time.Second)
+	ip(t, "link", "set", "port-q", "down")
+	left := time.Now()
+
+	time.Sleep(lifetime - 30*time.Second)
+	if !a.report().has(q.mac, q.ipv4) {
+		t.Errorf("%s expired %s after q left, before its lifetime from when it was last confirmed", q.ipv4, time.Since(left).Round(time.Second))
+	}
+	waitFor(t, time.Until(left.Add(lifetime+5*time.Second)), "q's IPv4 address to expire, a lifetime after q left", func() bool {
+		return !a.report().has(q.mac, q.ipv4)
+	})
+	t.Logf("%s expired %s after q left, with a lifetime of %s", q.ipv4, time.Since(left).Round(100*time.Millisecond), lifetime)
+
+	// Two more reads, each after a sweep, with q gone: the others are still there.
+	time.Sleep(2*interfaceCheckInterval + 15*time.Second)
+	select {
+	case m := <-missing:
+		t.Error(m)
+	default:
+	}
+	r := a.report()
+	for _, h := range staying {
+		if !r.has(h.mac, h.ipv4) {
+			t.Errorf("%s is gone at the end", h.ipv4)
+		}
+	}
+	if r.has(q.mac, q.ipv4) {
+		t.Errorf("%s is back, though q left", q.ipv4)
+	}
 }

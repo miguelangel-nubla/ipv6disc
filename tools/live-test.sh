@@ -12,5 +12,5 @@ exec docker run --rm --privileged \
 		go test -race -count=1 ./...
 		go test -c -race -tags integration -o /tmp/integration.test .
 		go build -race -o /tmp/ipv6disc ./cmd/ipv6disc
-		cd /tmp && exec ./integration.test -test.v -test.timeout 12m "${@:--test.run=^TestLive}"
+		cd /tmp && exec ./integration.test -test.v -test.timeout 15m "${@:--test.run=^TestLive}"
 	' sh "$@"

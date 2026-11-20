@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"slices"
 	"strings"
+	"time"
 )
 
 // Neighbor is an IPv4 address and the MAC it was resolved to, with the interface.
@@ -14,6 +15,10 @@ type Neighbor struct {
 	IP        netip.Addr
 	MAC       net.HardwareAddr
 	Interface string
+	// When the system last confirmed the neighbor there: an answer to its own probe, or traffic
+	// that proves it. Zero where the table doesn't say, as arp -an, and for a permanent entry,
+	// which nothing confirms.
+	Confirmed time.Time
 }
 
 // ParseBSD reads the neighbors in the output of arp -an, of FreeBSD and macOS:

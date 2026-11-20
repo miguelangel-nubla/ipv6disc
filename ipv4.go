@@ -14,11 +14,12 @@ import (
 	"go.uber.org/zap"
 )
 
-// sweepSettle is how long after a sweep its answers take to land in the neighbor table.
-const sweepSettle = 3 * time.Second
-
-// arpTable reads the kernel's IPv4 neighbor table: a variable for the tests.
-var arpTable = arp.Table
+// arpTable reads the kernel's IPv4 neighbor table, and arpSettle says how long after a sweep it has
+// the answers: variables for the tests.
+var (
+	arpTable  = arp.Table
+	arpSettle = arp.Settle
+)
 
 // discoverIPv4 reads the kernel's IPv4 neighbor table every interfaceCheckInterval and, with active
 // discovery, sweeps the local subnets at every rediscovery first, so that the hosts there that
@@ -36,20 +37,23 @@ func (w *Worker) discoverIPv4(ctx context.Context) {
 	var lastSweep time.Time
 	own := make(map[workerKey]bool)
 	for {
+		// The start of the sweep this reading follows, if it follows one.
+		var swept time.Time
 		if neighbors && w.config.probesIPv4() && time.Since(lastSweep) >= w.config.Rediscover {
 			lastSweep = time.Now()
-			w.sweepIPv4(ctx)
+			swept = lastSweep
+			settle := w.sweepIPv4(ctx)
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(sweepSettle):
+			case <-time.After(settle):
 			}
 		}
 
 		interfaces, err := w.listIPv4Interfaces()
 		own = w.syncSelfIPv4(own, interfaces, err == nil)
 		if neighbors {
-			if err := w.readIPv4Table(interfaces); w.tableUnsupported(err) {
+			if err := w.readIPv4Table(interfaces, swept); w.tableUnsupported(err) {
 				neighbors = false
 			} else if err != nil {
 				w.logger.Errorf("IPv4 discovery: %s", err)
@@ -231,8 +235,14 @@ func (w *Worker) listIPv4Interfaces() (map[string]ipv4Interface, error) {
 	return result, errors.Join(errs...)
 }
 
-func (w *Worker) sweepIPv4(ctx context.Context) {
+// sweepIPv4 sweeps the subnets of the interfaces discovery runs on, and returns how long the table
+// then takes to have the answers: the longest of the interfaces swept.
+func (w *Worker) sweepIPv4(ctx context.Context) time.Duration {
+	settle := time.Duration(0)
 	for _, i := range w.ipv4Interfaces() {
+		if len(i.prefixes) > 0 {
+			settle = max(settle, arpSettle(i.iface.Name))
+		}
 		for _, prefix := range i.prefixes {
 			targets := arp.SweepTargets(prefix)
 			w.logger.Debugw("IPv4 sweep",
@@ -245,6 +255,7 @@ func (w *Worker) sweepIPv4(ctx context.Context) {
 			}
 		}
 	}
+	return settle
 }
 
 // registerSelfIPv4 registers the own addresses of the interfaces discovery runs on, or refreshes
@@ -282,8 +293,11 @@ func (w *Worker) syncSelfIPv4(previous map[workerKey]bool, interfaces map[string
 }
 
 // readIPv4Table registers the neighbors of the kernel's table on the interfaces discovery runs
-// on.
-func (w *Worker) readIPv4Table(interfaces map[string]ipv4Interface) error {
+// on. Those the kernel confirmed since swept, the start of the sweep the reading follows, are
+// there now: seen as they are read. The others, where the table says when the kernel last
+// confirmed them, as seen then, so that an entry it is still to check, of a host that left,
+// extends nothing.
+func (w *Worker) readIPv4Table(interfaces map[string]ipv4Interface, swept time.Time) error {
 	neighbors, err := arpTable()
 	if err != nil {
 		return err
@@ -292,7 +306,11 @@ func (w *Worker) readIPv4Table(interfaces map[string]ipv4Interface) error {
 		if _, ok := interfaces[n.Interface]; !ok {
 			continue
 		}
-		w.State.registerLocal(n.MAC, n.IP, n.Interface, w.config.Lifetime, nil)
+		if n.Confirmed.IsZero() || !swept.IsZero() && !n.Confirmed.Before(swept) || !n.Confirmed.Before(time.Now()) {
+			w.State.registerLocal(n.MAC, n.IP, n.Interface, w.config.Lifetime, nil)
+		} else {
+			w.State.registerLocalSeen(n.MAC, n.IP, n.Interface, w.config.Lifetime, n.Confirmed)
+		}
 	}
 	return nil
 }

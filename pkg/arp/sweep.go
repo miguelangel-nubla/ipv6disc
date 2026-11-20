@@ -120,3 +120,10 @@ func Sweep(ctx context.Context, local netip.Addr, targets []netip.Addr) error {
 	}
 	return nil
 }
+
+// The bounds of Settle: the answers to a sweep take a few seconds to land, and settings that would
+// have it wait longer than half a minute are taken as that.
+const (
+	minSettle = 3 * time.Second
+	maxSettle = 30 * time.Second
+)

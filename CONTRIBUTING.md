@@ -19,7 +19,7 @@ go test -c -tags integration -o integration.test . && go build -o ipv6disc ./cmd
 
 The command is built beside the test, which runs two of it at once.
 
-From another system, with Docker, `tools/live-test.sh` runs it, and the other tests under the race detector, in a privileged container that is thrown away. Among the live tests, what only a real socket tells: that a neighbor advertisement with a hop limit below 255 is left out, and that the same one from the link isn't; and several instances at once: two workers of one process, two processes and two commands on one machine, and two machines of one link, where the probes of each are counted on the wire, alone and with the other.
+From another system, with Docker, `tools/live-test.sh` runs it, and the other tests under the race detector, in a privileged container that is thrown away. Among the live tests, what only a real socket tells: that a neighbor advertisement with a hop limit below 255 is left out, and that the same one from the link isn't; and several instances at once: two workers of one process, two processes and two commands on one machine, and two machines of one link, where the probes of each are counted on the wire, alone and with the other; and a host that leaves the link, whose IPv4 address goes a lifetime after the kernel last confirmed it, while those that stay are there through every reading of the table.
 
 ## The documentation
 

@@ -96,7 +96,7 @@ jobs:
           go build -o ipv6disc ./cmd/ipv6disc
       -
         name: Test
-        run: sudo ./integration.test -test.run '^TestLive' -test.v -test.timeout 10m
+        run: sudo ./integration.test -test.run '^TestLive' -test.v -test.timeout 15m
 
   lint:
     runs-on: ubuntu-latest

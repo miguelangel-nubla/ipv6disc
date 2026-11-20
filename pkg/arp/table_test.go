@@ -11,7 +11,7 @@ import (
 )
 
 // neighMessage builds an RTM_NEWNEIGH message, as the kernel sends it.
-func neighMessage(family byte, index int32, state uint16, ip []byte, mac []byte) []byte {
+func neighMessage(family byte, index int32, state uint16, ip []byte, mac []byte, more ...[]byte) []byte {
 	attr := func(kind uint16, value []byte) []byte {
 		b := make([]byte, align(4+len(value)))
 		binary.NativeEndian.PutUint16(b[0:2], uint16(4+len(value)))
@@ -28,6 +28,9 @@ func neighMessage(family byte, index int32, state uint16, ip []byte, mac []byte)
 	}
 	if mac != nil {
 		data = append(data, attr(ndaLladdr, mac)...)
+	}
+	for _, info := range more {
+		data = append(data, attr(ndaCacheinfo, info)...)
 	}
 	header := make([]byte, nlmsgHeaderLen)
 	binary.NativeEndian.PutUint32(header[0:4], uint32(nlmsgHeaderLen+len(data)))
@@ -295,6 +298,46 @@ func TestPacket(t *testing.T) {
 		other[at]++
 		if _, _, ok := parseReply(other); ok {
 			t.Errorf("a reply with byte %d changed read", at)
+		}
+	}
+}
+
+// When the kernel last confirmed an entry, from its cache info, in USER_HZ ticks.
+func TestParseNetlinkNeighborsConfirmed(t *testing.T) {
+	mac := []byte{0, 0x11, 0x22, 0x33, 0x44, 0x55}
+	ip := []byte{192, 168, 1, 10}
+	cacheinfo := func(confirmed uint32, size int) []byte {
+		b := make([]byte, size)
+		binary.NativeEndian.PutUint32(b[0:4], confirmed)
+		if size >= 8 {
+			binary.NativeEndian.PutUint32(b[4:8], 1) // used: not the one read
+		}
+		return b
+	}
+	for name, c := range map[string]struct {
+		message []byte
+		age     time.Duration // -1: none
+	}{
+		"delay, confirmed 42s ago": {neighMessage(afInet, 2, nudDelay, ip, mac, cacheinfo(4200, 16)), 42 * time.Second},
+		"reachable, just now":      {neighMessage(afInet, 2, nudReachable, ip, mac, cacheinfo(0, 16)), 0},
+		"probe, 1.5s ago":          {neighMessage(afInet, 2, nudProbe, ip, mac, cacheinfo(150, 16)), 1500 * time.Millisecond},
+		"permanent":                {neighMessage(afInet, 2, nudPermanent, ip, mac, cacheinfo(4200, 16)), -1},
+		"no cache info":            {neighMessage(afInet, 2, nudDelay, ip, mac), -1},
+		"short cache info":         {neighMessage(afInet, 2, nudDelay, ip, mac, cacheinfo(4200, 8)), -1},
+	} {
+		before := time.Now()
+		got := parseNetlinkNeighbors(c.message, nil)
+		if len(got) != 1 {
+			t.Errorf("%s: got %v", name, got)
+			continue
+		}
+		switch confirmed := got[0].Confirmed; {
+		case c.age < 0:
+			if !confirmed.IsZero() {
+				t.Errorf("%s: confirmed %s, want none", name, confirmed)
+			}
+		case confirmed.Before(before.Add(-c.age)) || confirmed.After(time.Now().Add(-c.age)):
+			t.Errorf("%s: confirmed %s ago, want %s", name, time.Since(confirmed), c.age)
 		}
 	}
 }

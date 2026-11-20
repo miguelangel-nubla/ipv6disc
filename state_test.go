@@ -579,3 +579,87 @@ func TestStateConcurrently(t *testing.T) {
 	}
 	assert.Eventually(t, func() bool { return len(state.GetAll()) == 0 }, 5*time.Second, 5*time.Millisecond)
 }
+
+// A registration of a sighting past, as the kernel's table says of an entry: it stays its lifetime
+// from then, never shortens what is there, and of a sighting too old it registers nothing.
+func TestRegisterLocalSeen(t *testing.T) {
+	mac, _ := net.ParseMAC("00:1a:2b:3c:4d:09")
+	ip := netip.MustParseAddr("192.0.2.9")
+	ipv4State := func() *State {
+		s := NewState()
+		s.SetFamilies(true, true)
+		return s
+	}
+	near := func(t *testing.T, got, want time.Time) {
+		t.Helper()
+		if d := got.Sub(want); d < -50*time.Millisecond || d > 50*time.Millisecond {
+			t.Errorf("expires at %s, want %s", got.Format(time.StampMilli), want.Format(time.StampMilli))
+		}
+	}
+
+	t.Run("new", func(t *testing.T) {
+		state := ipv4State()
+		seen := time.Now().Add(-10 * time.Second)
+		a, existing := state.registerLocalSeen(mac, ip, "eth0", time.Minute, seen)
+		if a == nil || existing {
+			t.Fatalf("got %v, %v", a, existing)
+		}
+		defer a.Unwatch()
+		near(t, a.GetExpiration(), seen.Add(time.Minute))
+		if a.lifetime != time.Minute {
+			t.Errorf("lifetime %s: it stays the lifetime, counted from the sighting", a.lifetime)
+		}
+	})
+
+	t.Run("too old", func(t *testing.T) {
+		state := ipv4State()
+		if a, _ := state.registerLocalSeen(mac, ip, "eth0", time.Minute, time.Now().Add(-61*time.Second)); a != nil {
+			t.Errorf("registered %v", a)
+		}
+		assert.Empty(t, state.GetAll())
+	})
+
+	t.Run("never shortens", func(t *testing.T) {
+		state := ipv4State()
+		a, _ := state.registerLocal(mac, ip, "eth0", time.Minute, nil)
+		defer a.Unwatch()
+		before := a.GetExpiration()
+		b, existing := state.registerLocalSeen(mac, ip, "eth1", time.Minute, time.Now().Add(-10*time.Second))
+		if b != a || !existing {
+			t.Fatalf("got %v, %v", b, existing)
+		}
+		assert.Equal(t, before, a.GetExpiration())
+		assert.Equal(t, []string{"eth0", "eth1"}, a.Sources(), "the source is recorded all the same")
+	})
+
+	t.Run("extends", func(t *testing.T) {
+		state := ipv4State()
+		a, _ := state.registerLocal(mac, ip, "eth0", 5*time.Second, nil)
+		defer a.Unwatch()
+		seen := time.Now().Add(-time.Second)
+		state.registerLocalSeen(mac, ip, "eth0", time.Minute, seen)
+		near(t, a.GetExpiration(), seen.Add(time.Minute))
+	})
+
+	t.Run("of the family's lifetime", func(t *testing.T) {
+		state := ipv4State()
+		state.SetLifetimes(0, 30*time.Second)
+		seen := time.Now().Add(-10 * time.Second)
+		a, _ := state.registerLocalSeen(mac, ip, "eth0", time.Hour, seen)
+		defer a.Unwatch()
+		near(t, a.GetExpiration(), seen.Add(30*time.Second))
+	})
+
+	// Its timers count from the sighting: it leaves the state then, not a lifetime from now.
+	t.Run("expires", func(t *testing.T) {
+		state := ipv4State()
+		start := time.Now()
+		if a, _ := state.registerLocalSeen(mac, ip, "eth0", 500*time.Millisecond, start.Add(-300*time.Millisecond)); a == nil {
+			t.Fatal("not registered")
+		}
+		assert.Eventually(t, func() bool { return len(state.GetAll()) == 0 }, 2*time.Second, 5*time.Millisecond)
+		if took := time.Since(start); took > 400*time.Millisecond {
+			t.Errorf("left after %s, want about 200ms", took)
+		}
+	})
+}

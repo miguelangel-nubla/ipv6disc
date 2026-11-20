@@ -109,6 +109,13 @@ func (s *State) registerLocal(hw net.HardwareAddr, ip netip.Addr, iface string, 
 	return s.register(hw, ip, iface, kind{local: true}, lifetime, onExpiration)
 }
 
+// registerLocalSeen is registerLocal, of an address seen at seen, past: it stays its lifetime from
+// then. One already there that stays longer is left as it is, and one whose lifetime from then is
+// over isn't registered.
+func (s *State) registerLocalSeen(hw net.HardwareAddr, ip netip.Addr, iface string, lifetime time.Duration, seen time.Time) (*Addr, bool) {
+	return s.register(hw, ip, iface, kind{local: true, seen: seen}, lifetime, nil)
+}
+
 // RegisterSelf is Register for an address of this machine's own, on the local interface iface:
 // Addr.Self says so, and Addr.Temporary whether temporary is. The local discovery registers those of
 // the interfaces it runs on; a program can register others, as found otherwise.
@@ -116,8 +123,12 @@ func (s *State) RegisterSelf(hw net.HardwareAddr, ip netip.Addr, iface string, t
 	return s.register(hw, ip, iface, kind{local: true, self: true, temporary: temporary}, lifetime, onExpiration)
 }
 
-// kind is what a registration says of the address, besides its source.
-type kind struct{ local, self, temporary bool }
+// kind is what a registration says of the address, besides its source; and when it was seen, if
+// past.
+type kind struct {
+	local, self, temporary bool
+	seen                   time.Time
+}
 
 func (s *State) register(hw net.HardwareAddr, ip netip.Addr, source string, k kind, lifetime time.Duration, onExpiration func(*Addr, AddrExpirationRemainingEvents)) (*Addr, bool) {
 	ip = ip.Unmap()
@@ -133,6 +144,10 @@ func (s *State) register(hw net.HardwareAddr, ip netip.Addr, source string, k ki
 	}
 	if l := time.Duration(familyLifetime.Load()); l > 0 {
 		lifetime = l
+	}
+	if !k.seen.IsZero() && !k.seen.Add(lifetime).After(time.Now()) {
+		// Seen too long ago to be there: nothing to register, nor to extend.
+		return nil, true
 	}
 
 	// The callback is the address's, not this registration's: a later one can have given it.
@@ -161,6 +176,7 @@ func (s *State) register(hw net.HardwareAddr, ip netip.Addr, source string, k ki
 		newAddr.interfaces = []string{source}
 	}
 	newAddr.self, newAddr.temporary = k.self, k.temporary
+	newAddr.seenAt = k.seen
 	newAddr.notify = onExpiration
 	newAddr.removedBy = s
 	addr, existing, newSource := s.seen(newAddr, source)
@@ -170,6 +186,10 @@ func (s *State) register(hw net.HardwareAddr, ip netip.Addr, source string, k ki
 
 	if !existing {
 		addr.Watch()
+		if !k.seen.IsZero() {
+			// Its lifetime from when it was seen, not from now.
+			addr.resetTimersFrom(k.seen, true)
+		}
 		if s.logger != nil {
 			s.logger.Infow("host identified",
 				zap.String("ip", ip.WithZone("").String()),

@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"net"
 	"net/netip"
+	"time"
 )
 
 // What parseNetlinkNeighbors reads of the netlink messages of Linux, from linux/netlink.h,
@@ -15,12 +16,17 @@ const (
 	ndmsgLen       = 12
 	ndaDst         = 1
 	ndaLladdr      = 2
+	ndaCacheinfo   = 3
 	afInet         = 2
 
 	nudReachable = 0x02
 	nudDelay     = 0x08
 	nudProbe     = 0x10
 	nudPermanent = 0x80
+
+	// userHZ is the clock tick of the ages in nda_cacheinfo, USER_HZ: 100 on every architecture Go
+	// runs Linux on.
+	userHZ = 100
 )
 
 // parseNetlinkNeighbors reads the IPv4 neighbors of a dump of RTM_GETNEIGH. Those confirmed
@@ -29,7 +35,9 @@ const (
 // are no host's. An entry is REACHABLE for the kernel's base_reachable_time only, 15 to 45s, after
 // it was confirmed: what a sweep resolved is to be read right after it. Those of a broadcast or
 // multicast address, or of a MAC that isn't an Ethernet host's, are left out. interfaces names the
-// interface of an index.
+// interface of an index. An entry's Confirmed is when the kernel last confirmed it, from its
+// cache info: an entry in DELAY or PROBE is one the kernel is about to check, whose host may
+// have left since.
 func parseNetlinkNeighbors(b []byte, interfaces func(int) string) []Neighbor {
 	var neighbors []Neighbor
 	for len(b) >= nlmsgHeaderLen {
@@ -62,6 +70,8 @@ func parseNeighMessage(data []byte, interfaces func(int) string) (Neighbor, bool
 	}
 
 	var n Neighbor
+	var age time.Duration
+	hasAge := false
 	attributes := data[ndmsgLen:]
 	for len(attributes) >= 4 {
 		length := int(binary.NativeEndian.Uint16(attributes[0:2]))
@@ -79,11 +89,21 @@ func parseNeighMessage(data []byte, interfaces func(int) string) (Neighbor, bool
 			if len(value) == 6 && !allZero(value) {
 				n.MAC = net.HardwareAddr(append([]byte(nil), value...))
 			}
+		case ndaCacheinfo:
+			// struct nda_cacheinfo: ndm_confirmed, ndm_used, ndm_updated, ndm_refcnt; the first,
+			// how long ago it was confirmed.
+			if len(value) >= 16 {
+				age = time.Duration(binary.NativeEndian.Uint32(value[0:4])) * time.Second / userHZ
+				hasAge = true
+			}
 		}
 		attributes = attributes[min(align(length), len(attributes)):]
 	}
 	if !n.IP.IsValid() || n.MAC == nil || !isHost(n.IP, n.MAC) {
 		return Neighbor{}, false
+	}
+	if hasAge && state&nudPermanent == 0 {
+		n.Confirmed = time.Now().Add(-age)
 	}
 	if interfaces != nil {
 		n.Interface = interfaces(index)
