@@ -38,7 +38,8 @@ type FreeBSDPlugin struct {
 	name     string
 	config   Config
 	lifetime time.Duration
-	// Whether the unverified host key was reported.
+	// Whether the unverified host key was reported: once, after the first poll that succeeds.
+	// Without a lock: only the polls touch it, one at a time, so Start is called once.
 	warned bool
 }
 
@@ -83,6 +84,9 @@ func (p *FreeBSDPlugin) discover(ctx context.Context, state *ipv6disc.State, onE
 		onError(plugins.HostKeyWarning(p.config.Address, hostKey))
 	}
 
+	// Without the marker, IPv6 only, all of it is of ndp. The output has the stderr of the commands
+	// too, and the exit status is that of the last one: the lines that are not of a table, as a
+	// warning or the error of an ndp that failed, are skipped by the parsers.
 	ndpOutput, arpOutput, _ := strings.Cut(string(output), arpMarker+"\n")
 	found := p.parseNDPOutput(ndpOutput, state)
 	for _, n := range arp.ParseBSD(arpOutput) {
@@ -124,6 +128,9 @@ func (p *FreeBSDPlugin) parseNDPOutput(output string, state *ipv6disc.State) int
 			continue
 		}
 
+		// A link-local address comes with the host's interface as its zone, fe80::1%em0: the state
+		// keys and shows addresses without their zone, so it is never taken for an interface of
+		// this machine.
 		ip, err := netip.ParseAddr(fields[0])
 		if err != nil {
 			continue

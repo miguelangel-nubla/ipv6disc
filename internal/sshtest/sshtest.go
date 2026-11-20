@@ -3,7 +3,9 @@
 package sshtest
 
 import (
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
@@ -19,9 +21,20 @@ type Server struct {
 	Address string
 	// The fingerprint of its host key, as ssh-keygen -l shows it.
 	HostKey string
+	// The fingerprint of its second host key, an ECDSA one, when StartTwoKeys gave it one: the key
+	// a client shows by default then, as it prefers ECDSA.
+	ECDSAHostKey string
 
-	mutex    sync.Mutex
-	commands []string
+	mutex     sync.Mutex
+	commands  []string
+	passwords int
+}
+
+// Passwords returns how many times it was given a password, right or wrong.
+func (s *Server) Passwords() int {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	return s.passwords
 }
 
 // Commands returns the commands it was asked to run.
@@ -35,6 +48,19 @@ func (s *Server) Commands() []string {
 // command, and an error to exit with status 1.
 func Start(t testing.TB, user, password string, handle func(command string) ([]byte, error)) *Server {
 	t.Helper()
+	return start(t, user, password, handle, false)
+}
+
+// StartTwoKeys is Start for a server with two host keys, as most hosts have: an Ed25519 one,
+// HostKey, and an ECDSA one, ECDSAHostKey.
+func StartTwoKeys(t testing.TB, user, password string, handle func(command string) ([]byte, error)) *Server {
+	t.Helper()
+	return start(t, user, password, handle, true)
+}
+
+func start(t testing.TB, user, password string, handle func(command string) ([]byte, error), twoKeys bool) *Server {
+	t.Helper()
+	s := &Server{}
 	_, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -45,6 +71,9 @@ func Start(t testing.TB, user, password string, handle func(command string) ([]b
 	}
 	config := &ssh.ServerConfig{
 		PasswordCallback: func(c ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
+			s.mutex.Lock()
+			s.passwords++
+			s.mutex.Unlock()
 			if c.User() == user && string(pass) == password {
 				return nil, nil
 			}
@@ -52,6 +81,19 @@ func Start(t testing.TB, user, password string, handle func(command string) ([]b
 		},
 	}
 	config.AddHostKey(signer)
+	s.HostKey = ssh.FingerprintSHA256(signer.PublicKey())
+	if twoKeys {
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		signer, err := ssh.NewSignerFromKey(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		config.AddHostKey(signer)
+		s.ECDSAHostKey = ssh.FingerprintSHA256(signer.PublicKey())
+	}
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -59,7 +101,7 @@ func Start(t testing.TB, user, password string, handle func(command string) ([]b
 	}
 	t.Cleanup(func() { listener.Close() })
 
-	s := &Server{Address: listener.Addr().String(), HostKey: ssh.FingerprintSHA256(signer.PublicKey())}
+	s.Address = listener.Addr().String()
 	go func() {
 		for {
 			conn, err := listener.Accept()

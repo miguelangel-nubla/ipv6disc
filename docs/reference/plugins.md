@@ -15,7 +15,7 @@ A FreeBSD host, as pfSense or OPNsense, over SSH: `ndp -an` for IPv6, `arp -an` 
 | `username` | **Required.** The SSH user. |
 | `password` | Its password. Or an identity_file, or both. |
 | `identity_file` | The SSH private key file. |
-| `host_key` | The fingerprint of the host's SSH key, SHA256:..., as ssh-keygen -l shows it. Recommended: without it, any key is accepted, and the log warns with the fingerprint seen. |
+| `host_key` | The fingerprint of the host's SSH key, any of them when it has several, SHA256:..., as ssh-keygen -l shows it. Recommended: without it, any key is accepted, and the log warns with the fingerprint seen. |
 
 ## linux
 
@@ -28,7 +28,7 @@ A Linux host, as OpenWrt, over SSH: `ip neigh`.
 | `username` | **Required.** The SSH user. |
 | `password` | Its password. Or an identity_file, or both. |
 | `identity_file` | The SSH private key file. |
-| `host_key` | The fingerprint of the host's SSH key, SHA256:..., as ssh-keygen -l shows it. Recommended: without it, any key is accepted, and the log warns with the fingerprint seen. |
+| `host_key` | The fingerprint of the host's SSH key, any of them when it has several, SHA256:..., as ssh-keygen -l shows it. Recommended: without it, any key is accepted, and the log warns with the fingerprint seen. |
 
 ## mikrotik
 
@@ -40,5 +40,5 @@ A Mikrotik router, over its API: `/ipv6/neighbor` for IPv6, `/ip/arp` for IPv4.
 | `address` | **Required.** The router, with its port unless the default: 8728, or 8729 with TLS. |
 | `username` | **Required.** An API user: the read and api policies are enough. |
 | `password` | Its password. |
-| `use_tls` | true: the API over TLS, the api-ssl service. |
-| `tls_fingerprint` | The SHA-256 fingerprint of the router's certificate, in hex, when it can't be verified otherwise. |
+| `use_tls` | true or false: the API over TLS, the api-ssl service. Without it, the password crosses the network in the clear. |
+| `tls_fingerprint` | The SHA-256 fingerprint of the router's certificate, 64 hex digits, colons allowed, when the system's CAs can't verify it, as the self-signed one RouterOS makes. It needs use_tls. |

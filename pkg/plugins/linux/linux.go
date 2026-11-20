@@ -38,7 +38,8 @@ type LinuxPlugin struct {
 	name     string
 	config   Config
 	lifetime time.Duration
-	// Whether the unverified host key was reported.
+	// Whether the unverified host key was reported: once, after the first poll that succeeds.
+	// Without a lock: only the polls touch it, one at a time, so Start is called once.
 	warned bool
 }
 
@@ -86,7 +87,9 @@ func (p *LinuxPlugin) discover(ctx context.Context, state *ipv6disc.State, onErr
 }
 
 // parseNDPOutput registers the neighbors in `ip -6 neigh` output, and returns how many are new.
-// A line is: fe80::21a:2bff:fe3c:4d5e dev eth0 lladdr 00:1a:2b:3c:4d:5e [router] STALE
+// A line is: fe80::21a:2bff:fe3c:4d5e dev eth0 lladdr 00:1a:2b:3c:4d:5e [router] [extern_learn] STALE [proto zebra]
+//
+// The lines that are not of a neighbor, as a warning of the command, are skipped.
 func (p *LinuxPlugin) parseNDPOutput(output string, state *ipv6disc.State) int {
 	scanner := bufio.NewScanner(strings.NewReader(output))
 	count := 0
@@ -104,9 +107,11 @@ func (p *LinuxPlugin) parseNDPOutput(output string, state *ipv6disc.State) int {
 
 		// A stale entry can stay long after its host is gone, and registering it would refresh
 		// the address at every poll, so it would never expire: as for Mikrotik, only the
-		// entries confirmed recently count.
-		switch fields[len(fields)-1] {
-		case "FAILED", "INCOMPLETE", "STALE":
+		// entries confirmed recently count. The state is not always the last field: an entry
+		// installed by a routing daemon has its protocol after it.
+		if slices.ContainsFunc(fields[macIndex+1:], func(field string) bool {
+			return field == "FAILED" || field == "INCOMPLETE" || field == "STALE"
+		}) {
 			continue
 		}
 

@@ -84,3 +84,49 @@ func TestDiscoverIPv4OverSSH(t *testing.T) {
 		t.Errorf("the IPv4 neighbor: %v", got)
 	}
 }
+
+func TestDiscoverIPv4Only(t *testing.T) {
+	server := sshtest.Start(t, "root", "secret", func(command string) ([]byte, error) {
+		if command != "echo "+arpMarker+"; arp -an" {
+			return nil, errors.New("unexpected command " + command)
+		}
+		// With a line of stderr, which comes with the output: not a neighbor.
+		return []byte(arpMarker + "\narp: a warning\n? (192.168.1.10) at 00:11:22:33:44:10 on em0 expires in 1189 seconds [ethernet]\n"), nil
+	})
+	state := ipv6disc.NewState()
+	state.SetFamilies(false, true)
+	plugin := NewFreeBSDPlugin("firewall", Config{Interval: time.Minute, Address: server.Address, Username: "root", Password: "secret", HostKey: server.HostKey}, time.Hour)
+	if found, err := plugin.discover(context.Background(), state, nil); err != nil || found != 1 {
+		t.Errorf("IPv4 only: found %d, %v", found, err)
+	}
+
+	// No family on: nothing to read, no connection.
+	state.SetFamilies(false, false)
+	if found, err := plugin.discover(context.Background(), state, nil); err != nil || found != 0 {
+		t.Errorf("no family: found %d, %v", found, err)
+	}
+	if got := server.Commands(); len(got) != 1 {
+		t.Errorf("commands: %v", got)
+	}
+}
+
+// What is not a line of the table, as a warning on stderr or the error of an ndp that failed
+// before arp ran, is skipped.
+func TestDiscoverSkipsOtherLines(t *testing.T) {
+	server := sshtest.Start(t, "root", "secret", func(string) ([]byte, error) {
+		return []byte("ndp: ioctl(SIOCGNBRINFO_IN6): Operation not permitted\n" + arpMarker + "\n? (192.168.1.10) at 00:11:22:33:44:10 on em0 expires in 1189 seconds [ethernet]\n"), nil
+	})
+	state := ipv6disc.NewState()
+	state.SetFamilies(true, true)
+	plugin := NewFreeBSDPlugin("firewall", Config{Interval: time.Minute, Address: server.Address, Username: "root", Password: "secret", HostKey: server.HostKey}, time.Hour)
+	if found, err := plugin.discover(context.Background(), state, nil); err != nil || found != 1 || len(state.GetAll()) != 1 {
+		t.Errorf("found %d, %v, state %v", found, err, state.GetAll())
+	}
+}
+
+func TestStartNeedsAnInterval(t *testing.T) {
+	plugin := NewFreeBSDPlugin("firewall", Config{Address: "192.0.2.1", Username: "root", Password: "secret"}, time.Hour)
+	if err := plugin.Start(context.Background(), ipv6disc.NewState(), nil); err == nil {
+		t.Error("no interval: want an error")
+	}
+}

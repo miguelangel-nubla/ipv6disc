@@ -11,6 +11,7 @@ import (
 
 	"github.com/miguelangel-nubla/ipv6disc"
 	"github.com/miguelangel-nubla/ipv6disc/internal/sshtest"
+	"github.com/miguelangel-nubla/ipv6disc/pkg/plugins"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -19,6 +20,9 @@ func TestParseNDPOutput(t *testing.T) {
 2001:db8::1 dev eth0 lladdr 00:1a:2b:3c:4d:09 REACHABLE
 2001:db8::2 dev eth0  FAILED
 2001:db8::3 dev eth0 lladdr 00:1a:2b:3c:4d:0a DELAY
+2001:db8::4 dev vxlan0 lladdr 00:1a:2b:3c:4d:0b extern_learn STALE proto zebra
+2001:db8::5 dev eth0 lladdr 00:1a:2b:3c:4d:0c router FAILED proto static
+ip: a warning of the command, lladdr or not, is not a neighbor
 `
 	state := ipv6disc.NewState()
 
@@ -50,6 +54,11 @@ func TestParseNDPOutput(t *testing.T) {
 	mac3, _ := net.ParseMAC("00:1a:2b:3c:4d:0a")
 	_, existing3 := state.Register(mac3, ip3, plugin.Name(), time.Hour, nil)
 	assert.True(t, existing3, "2001:db8::3 should be registered")
+
+	// The state is not the last field of an entry with a protocol.
+	assert.NotContains(t, state.GetAll(), "00:1a:2b:3c:4d:0b", "stale, with a protocol after")
+	assert.NotContains(t, state.GetAll(), "00:1a:2b:3c:4d:0c", "failed, with a protocol after")
+	assert.Equal(t, 1, plugin.parseNDPOutput("2001:db8::6 dev vxlan0 lladdr 00:1a:2b:3c:4d:0d extern_learn REACHABLE proto zebra\n", state))
 }
 
 func TestParseConfig(t *testing.T) {
@@ -165,5 +174,50 @@ func TestDiscoverIPv4Only(t *testing.T) {
 	}
 	if got := server.Commands(); len(got) != 1 {
 		t.Errorf("commands: %v", got)
+	}
+}
+
+// The params by name, as a program with them as fields gives them, reach the parser whole: a
+// password with a comma and a backslash, and a host key without an identity file before it.
+func TestParamsByName(t *testing.T) {
+	values := map[string]string{"interval": "60s", "address": "192.0.2.1", "username": "root", "password": `p,a\\,s=s `, "host_key": "SHA256:abc"}
+	params, err := plugins.FieldParams("linux", values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := ParseConfig(params)
+	if err != nil || cfg.Password != values["password"] || cfg.IdentityFile != "" || cfg.HostKey != "SHA256:abc" || cfg.Address != "192.0.2.1" {
+		t.Errorf("%q: got %+v, %v", params, cfg, err)
+	}
+
+	// The optional ones left out: the four first only.
+	delete(values, "host_key")
+	if params, err := plugins.FieldParams("linux", values); err != nil || len(plugins.SplitParams(params)) != 4 {
+		t.Errorf("got %q, %v", params, err)
+	}
+
+	if _, err := plugins.Create("linux", "router", `interval=60s, address=192.0.2.1, username=root, password=p\,a, host_key=SHA256:abc`, time.Hour); err != nil {
+		t.Error(err)
+	}
+	// Neither a password nor an identity file: the parser's own check.
+	if _, err := plugins.Create("linux", "router", "interval=60s,address=192.0.2.1,username=root", time.Hour); err == nil {
+		t.Error("no password and no identity file: want an error")
+	}
+}
+
+// A host that refuses the login: no warning of its key, which is told once a poll succeeds.
+func TestDiscoverWrongPassword(t *testing.T) {
+	server := sshtest.Start(t, "root", "secret", func(string) ([]byte, error) { return nil, nil })
+	var warnings []error
+	plugin := NewLinuxPlugin("router", Config{Interval: time.Minute, Address: server.Address, Username: "root", Password: "wrong"}, time.Hour)
+	if _, err := plugin.discover(context.Background(), ipv6disc.NewState(), func(err error) { warnings = append(warnings, err) }); err == nil || len(warnings) != 0 {
+		t.Errorf("got %v, warnings %v, want the error only", err, warnings)
+	}
+}
+
+func TestStartNeedsAnInterval(t *testing.T) {
+	plugin := NewLinuxPlugin("router", Config{Address: "192.0.2.1", Username: "root", Password: "secret"}, time.Hour)
+	if err := plugin.Start(context.Background(), ipv6disc.NewState(), nil); err == nil {
+		t.Error("no interval: want an error")
 	}
 }

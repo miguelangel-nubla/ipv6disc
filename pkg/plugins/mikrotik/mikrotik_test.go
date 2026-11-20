@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/miguelangel-nubla/ipv6disc"
+	"github.com/miguelangel-nubla/ipv6disc/pkg/plugins"
 )
 
 func TestNeighborInUse(t *testing.T) {
@@ -27,16 +29,64 @@ func TestNeighborInUse(t *testing.T) {
 	}
 }
 
+// A certificate fingerprint, as RouterOS and openssl show it.
+const testFingerprint = "AB:cd:01:23:45:67:89:ab:cd:ef:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:ab:cd:ef:01:23:45:67:89:ab"
+
 func TestParseConfig(t *testing.T) {
-	cfg, err := ParseConfig("60s,192.0.2.1,admin,secret,TRUE,AB:cd:01")
-	if err != nil || !cfg.UseTLS || cfg.TLSFingerprint != "abcd01" || cfg.Address != "192.0.2.1" || cfg.Password != "secret" {
+	normalized := strings.ToLower(strings.ReplaceAll(testFingerprint, ":", ""))
+	cfg, err := ParseConfig("60s,192.0.2.1,admin,secret,TRUE," + testFingerprint)
+	if err != nil || !cfg.UseTLS || cfg.TLSFingerprint != normalized || len(normalized) != 64 || cfg.Address != "192.0.2.1" || cfg.Username != "admin" || cfg.Password != "secret" {
 		t.Errorf("got %+v, %v", cfg, err)
 	}
-	if cfg, err := ParseConfig("60s,192.0.2.1,admin,secret"); err != nil || cfg.UseTLS {
-		t.Errorf("without TLS: got %+v, %v", cfg, err)
+	// The spaces after the commas are not of the values, but of the password.
+	cfg, err = ParseConfig("60s, 192.0.2.1, admin, secret, true , " + normalized + " ")
+	if err != nil || !cfg.UseTLS || cfg.TLSFingerprint != normalized || cfg.Address != "192.0.2.1" || cfg.Username != "admin" || cfg.Password != " secret" {
+		t.Errorf("with spaces: got %+v, %v", cfg, err)
 	}
-	for _, bad := range []string{"60s,192.0.2.1,admin", "never,192.0.2.1,admin,secret", "0s,192.0.2.1,admin,secret"} {
+	for config, useTLS := range map[string]bool{
+		"60s,192.0.2.1,admin,secret":        false,
+		"60s,192.0.2.1,admin,secret,":       false,
+		"60s,192.0.2.1,admin,secret,false":  false,
+		"60s,192.0.2.1,admin,secret,false,": false,
+		"60s,192.0.2.1,admin,secret,0":      false,
+		"60s,192.0.2.1,admin,secret,true":   true,
+		"60s,192.0.2.1,admin,secret,True,":  true,
+		"60s,192.0.2.1,admin,secret,1":      true,
+		"60s,192.0.2.1,admin,":              false, // no password
+	} {
+		if cfg, err := ParseConfig(config); err != nil || cfg.UseTLS != useTLS || cfg.TLSFingerprint != "" {
+			t.Errorf("%q: got %+v, %v, want TLS %v", config, cfg, err, useTLS)
+		}
+	}
+	for _, bad := range []string{
+		"60s,192.0.2.1,admin", "never,192.0.2.1,admin,secret", "0s,192.0.2.1,admin,secret",
+		// No address would be this machine.
+		"60s,,admin,secret", "60s, ,admin,secret", "60s,192.0.2.1,,secret",
+		// Not true: it must not pass for false, the password in the clear.
+		"60s,192.0.2.1,admin,secret,yes", "60s,192.0.2.1,admin,secret,on", "60s,192.0.2.1,admin,secret,ture",
+		// A fingerprint that no certificate can have.
+		"60s,192.0.2.1,admin,secret,true,abcd01", "60s,192.0.2.1,admin,secret,true,SHA256:abc", "60s,192.0.2.1,admin,secret,true," + normalized + "00",
+		// A fingerprint that would not be checked.
+		"60s,192.0.2.1,admin,secret,," + normalized, "60s,192.0.2.1,admin,secret,false," + normalized,
+		"60s,192.0.2.1,admin,secret,true," + normalized + ",extra",
+	} {
 		if _, err := ParseConfig(bad); err == nil {
+			t.Errorf("%q: want an error", bad)
+		}
+	}
+}
+
+func TestCreateByName(t *testing.T) {
+	normalized := strings.ToLower(strings.ReplaceAll(testFingerprint, ":", ""))
+	if _, err := plugins.Create("mikrotik", "router", "interval=60s, address=192.0.2.1, username=admin, password=secret, use_tls=true, tls_fingerprint="+testFingerprint, time.Hour); err != nil {
+		t.Error(err)
+	}
+	// As a program with the params as fields gives them: the fingerprint without use_tls.
+	for _, bad := range []string{
+		"interval=60s,address=192.0.2.1,username=admin,password=secret,tls_fingerprint=" + normalized,
+		"interval=60s,address=192.0.2.1,username=admin,password=secret,use_tls=yes",
+	} {
+		if _, err := plugins.Create("mikrotik", "router", bad, time.Hour); err == nil {
 			t.Errorf("%q: want an error", bad)
 		}
 	}
@@ -126,6 +176,90 @@ func TestDiscoverTLS(t *testing.T) {
 	}
 }
 
+// RouterOS lists the multicast groups the router joined among its neighbors: they are not hosts.
+func TestDiscoverSkipsGroups(t *testing.T) {
+	address := serveRouterOS(t, nil, func(command string) []map[string]string {
+		if command == "/ip/arp/print" {
+			return []map[string]string{
+				{"address": "224.0.0.251", "mac-address": "01:00:5e:00:00:fb", "status": "noarp"},
+				{"address": "192.168.88.255", "mac-address": "ff:ff:ff:ff:ff:ff", "status": "noarp"},
+				{"address": "192.168.88.20", "mac-address": "00:11:22:33:44:20", "status": "noarp"},
+			}
+		}
+		return []map[string]string{
+			{"address": "ff02::1", "mac-address": "33:33:00:00:00:01", "status": "noarp"},
+			{"address": "ff02::1:ff00:1", "mac-address": "33:33:ff:00:00:01", "status": "noarp"},
+			{"address": "2001:db8::1", "mac-address": "00:11:22:33:44:01", "status": "reachable"},
+			{"address": "2001:db8::2", "mac-address": "00:11:22:33:44:02", "status": "noarp"},
+		}
+	})
+	state := ipv6disc.NewState()
+	state.SetFamilies(true, true)
+	found, err := NewMikrotikPlugin("router", Config{Interval: time.Minute, Address: address, Username: "admin"}, time.Hour).discover(context.Background(), state)
+	if err != nil || found != 3 {
+		t.Errorf("found %d, %v, want the 3 hosts", found, err)
+	}
+	var got []string
+	for mac := range state.GetAll() {
+		got = append(got, mac)
+	}
+	slices.Sort(got)
+	if want := []string{"00:11:22:33:44:01", "00:11:22:33:44:02", "00:11:22:33:44:20"}; !slices.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+// A router that accepts the connection and says nothing, or stops answering once logged in, must
+// not hold the poll past its context: neither the next polls nor the shutdown would come.
+func TestDiscoverStopsWithItsContext(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+		}
+	}()
+	release := make(chan struct{})
+	defer close(release)
+	loggedIn := serveRouterOS(t, nil, func(string) []map[string]string {
+		<-release // a table that never comes
+		return nil
+	})
+
+	for name, address := range map[string]string{"silent": listener.Addr().String(), "silent once logged in": loggedIn} {
+		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		plugin := NewMikrotikPlugin("router", Config{Interval: time.Minute, Address: address, Username: "admin"}, time.Hour)
+		done := make(chan error, 1)
+		go func() {
+			_, err := plugin.discover(ctx, ipv6disc.NewState())
+			done <- err
+		}()
+		select {
+		case err := <-done:
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Errorf("%s: got %v, want the deadline of the context", name, err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Errorf("%s: the poll goes on after its context is done", name)
+		}
+		cancel()
+	}
+}
+
+func TestStartNeedsAnInterval(t *testing.T) {
+	plugin := NewMikrotikPlugin("router", Config{Address: "192.0.2.1", Username: "admin"}, time.Hour)
+	if err := plugin.Start(context.Background(), ipv6disc.NewState(), nil); err == nil {
+		t.Error("no interval: want an error")
+	}
+}
+
 func TestDiscoverUnreachable(t *testing.T) {
 	listener, _ := net.Listen("tcp", "127.0.0.1:0")
 	address := listener.Addr().String()
@@ -137,7 +271,8 @@ func TestDiscoverUnreachable(t *testing.T) {
 }
 
 func FuzzParseConfig(f *testing.F) {
-	f.Add("60s,192.0.2.1,admin,secret,true,AB:CD")
+	f.Add("60s,192.0.2.1,admin,secret,true," + testFingerprint)
+	f.Add("60s, 192.0.2.1, admin, secret, yes")
 	f.Add("-1s,,,")
 	f.Fuzz(func(t *testing.T, config string) {
 		cfg, err := ParseConfig(config)
@@ -147,8 +282,11 @@ func FuzzParseConfig(f *testing.F) {
 		if cfg.Interval <= 0 {
 			t.Errorf("%q: interval %s accepted", config, cfg.Interval)
 		}
-		if strings.ContainsAny(cfg.TLSFingerprint, ":ABCDEF") {
-			t.Errorf("%q: fingerprint %q not normalized", config, cfg.TLSFingerprint)
+		if cfg.Address == "" || cfg.Username == "" {
+			t.Errorf("%q: address %q and username %q accepted", config, cfg.Address, cfg.Username)
+		}
+		if cfg.TLSFingerprint != "" && (!cfg.UseTLS || len(cfg.TLSFingerprint) != 64 || strings.Trim(cfg.TLSFingerprint, "0123456789abcdef") != "") {
+			t.Errorf("%q: fingerprint %q accepted, TLS %v", config, cfg.TLSFingerprint, cfg.UseTLS)
 		}
 	})
 }

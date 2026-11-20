@@ -2,7 +2,6 @@ package plugins
 
 import (
 	"fmt"
-	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -40,7 +39,8 @@ func Register(name string, factory Factory, fields ...Field) {
 	registry[name] = registered{factory: factory, fields: fields, description: registry[name].description}
 }
 
-// Describe says what a plugin type reads, and how, for the documentation.
+// Describe says what a plugin type reads, and how, for the documentation. It doesn't register the
+// type: one only described is not in Types, and Create doesn't find it.
 func Describe(typeName, description string) {
 	mu.Lock()
 	defer mu.Unlock()
@@ -56,11 +56,18 @@ func Description(typeName string) string {
 	return registry[typeName].description
 }
 
-// Types returns the plugin types registered.
+// Types returns the plugin types registered. A type that is only described is not one.
 func Types() []string {
 	mu.RLock()
 	defer mu.RUnlock()
-	return slices.Sorted(maps.Keys(registry))
+	var types []string
+	for name, r := range registry {
+		if r.factory != nil {
+			types = append(types, name)
+		}
+	}
+	slices.Sort(types)
+	return types
 }
 
 // Fields returns the params of a plugin type, in their order.
@@ -68,7 +75,7 @@ func Fields(typeName string) ([]Field, error) {
 	mu.RLock()
 	defer mu.RUnlock()
 	r, ok := registry[typeName]
-	if !ok {
+	if !ok || r.factory == nil {
 		return nil, fmt.Errorf("plugin %s not found", typeName)
 	}
 	return slices.Clone(r.fields), nil
@@ -115,18 +122,21 @@ func FieldParams(typeName string, values map[string]string) (string, error) {
 
 // byName tells whether params are given by name: their first is a name, as "interval", and "=".
 // A positional first param, an interval, never has one. A name the type doesn't have is then told,
-// rather than taken for an interval.
+// rather than taken for an interval. The name can have spaces around it and capitals, as in Create.
 func byName(params string) bool {
 	first, _, found := strings.Cut(SplitParams(params)[0], "=")
+	first = strings.ToLower(strings.TrimSpace(first))
 	return found && first != "" && strings.Trim(first, "abcdefghijklmnopqrstuvwxyz_") == ""
 }
 
-// Create makes a plugin of the type, with its params in order, or by name.
+// Create makes a plugin of the type, with its params in order, or by name. By name, the spaces
+// around a name, and around any value but the password, are dropped, and names are
+// case-insensitive: "interval=60s, Address=192.0.2.1". A type that is not registered is an error.
 func Create(typeName string, name string, config string, lifetime time.Duration) (ipv6disc.Plugin, error) {
 	mu.RLock()
 	r, ok := registry[typeName]
 	mu.RUnlock()
-	if !ok {
+	if !ok || r.factory == nil {
 		return nil, fmt.Errorf("plugin %s not found", typeName)
 	}
 	if byName(config) {
@@ -136,6 +146,11 @@ func Create(typeName string, name string, config string, lifetime time.Duration)
 			if !found {
 				// Not the part itself: it can be a piece of a password.
 				return nil, fmt.Errorf("plugin %s: param %d isn't name=value, as the first is (a comma in a value is \\,)", name, i+1)
+			}
+			key = strings.ToLower(strings.TrimSpace(key))
+			// Never the password: its spaces are its own.
+			if key != "password" {
+				value = strings.TrimSpace(value)
 			}
 			if _, twice := values[key]; twice {
 				return nil, fmt.Errorf("plugin %s: %s given twice", name, key)
