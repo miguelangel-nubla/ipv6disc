@@ -4,7 +4,7 @@ package ipv6disc
 
 // The discovery over a real link, between two network namespaces. It needs root and iproute2:
 //
-//	go test -c -tags integration -o integration.test . && sudo ./integration.test -test.v
+//	go test -c -tags integration -o integration.test . && go build -o ipv6disc ./cmd/ipv6disc && sudo ./integration.test -test.v
 //
 // The test makes the namespaces and a veth pair between them, then runs itself again inside the
 // worker's namespace: the discovery sees that link only, not the machine's network.
@@ -275,6 +275,12 @@ func mustMAC(s string) net.HardwareAddr {
 
 // runInNamespace makes the namespaces and their link, and runs the test inside the worker's.
 func runInNamespace(t *testing.T, name string) {
+	makeLink(t)
+	runInside(t, workerNamespace, name)
+}
+
+// makeLink makes the worker's namespace and the peer's, and the link between them.
+func makeLink(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("needs root, to make network namespaces")
 	}
@@ -300,11 +306,14 @@ func runInNamespace(t *testing.T, name string) {
 	ip(t, "-n", peerNamespace, "addr", "add", peerAddr.String()+"/64", "dev", "veth-peer", "nodad")
 	ip(t, "-n", workerNamespace, "addr", "add", workerIPv4.String()+"/24", "dev", "veth-worker")
 	ip(t, "-n", peerNamespace, "addr", "add", peerIPv4.String()+"/24", "dev", "veth-peer")
+}
 
-	cmd := exec.Command("ip", "netns", "exec", workerNamespace, os.Args[0], "-test.run=^"+name+"$", "-test.v", "-test.timeout=3m")
+// runInside runs the test again inside a namespace.
+func runInside(t *testing.T, namespace, name string) {
+	cmd := exec.Command("ip", "netns", "exec", namespace, os.Args[0], "-test.run=^"+name+"$", "-test.v", "-test.timeout=5m")
 	cmd.Env = append(os.Environ(), insideEnv+"=1")
 	out, err := cmd.CombinedOutput()
-	t.Logf("inside %s:\n%s", workerNamespace, out)
+	t.Logf("inside %s:\n%s", namespace, out)
 	if err != nil {
 		t.Fatalf("the test inside the namespace failed: %v", err)
 	}
@@ -411,11 +420,5 @@ func runInTwoNetworks(t *testing.T, name string) {
 	ip(t, "-n", peerNamespace, "addr", "add", wireIPv6Peer.String()+"/64", "dev", "br0", "nodad")
 	ip(t, "-n", peerNamespace, "addr", "add", wireIPv4Peer.String()+"/24", "dev", "br0")
 
-	cmd := exec.Command("ip", "netns", "exec", workerNamespace, os.Args[0], "-test.run=^"+name+"$", "-test.v", "-test.timeout=3m")
-	cmd.Env = append(os.Environ(), insideEnv+"=1")
-	out, err := cmd.CombinedOutput()
-	t.Logf("inside %s:\n%s", workerNamespace, out)
-	if err != nil {
-		t.Fatalf("the test inside the namespace failed: %v", err)
-	}
+	runInside(t, workerNamespace, name)
 }

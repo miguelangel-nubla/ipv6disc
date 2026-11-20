@@ -11,5 +11,6 @@ exec docker run --rm --privileged \
 		apt-get install -yqq --no-install-recommends iproute2 iputils-ping procps >/dev/null
 		go test -race -count=1 ./...
 		go test -c -race -tags integration -o /tmp/integration.test .
-		cd /tmp && exec ./integration.test -test.v -test.timeout 8m "${@:--test.run=^TestLive}"
+		go build -race -o /tmp/ipv6disc ./cmd/ipv6disc
+		cd /tmp && exec ./integration.test -test.v -test.timeout 12m "${@:--test.run=^TestLive}"
 	' sh "$@"

@@ -72,7 +72,8 @@ jobs:
         name: Test
         run: GOARCH=386 go test ./...
 
-  # Discovery over a real link, between two network namespaces: it needs root.
+  # Discovery over real links, between network namespaces, of one instance and of several at once:
+  # it needs root.
   live-discovery:
     runs-on: ubuntu-latest
     steps:
@@ -89,10 +90,13 @@ jobs:
           check-latest: true
       -
         name: Build
-        run: go test -c -tags integration -o integration.test .
+        # The command too, beside the test: two of it run at once.
+        run: |
+          go test -c -tags integration -o integration.test .
+          go build -o ipv6disc ./cmd/ipv6disc
       -
         name: Test
-        run: sudo ./integration.test -test.run '^TestLive' -test.v -test.timeout 4m
+        run: sudo ./integration.test -test.run '^TestLive' -test.v -test.timeout 10m
 
   lint:
     runs-on: ubuntu-latest

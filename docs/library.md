@@ -41,7 +41,7 @@ for {
 }
 ```
 
-A worker starts once, and its plugins are registered before `Start`. Import the plugins with `_ "github.com/miguelangel-nubla/ipv6disc/pkg/plugins/all"`, or one by one.
+A worker starts once, and its plugins are registered before `Start`. A program can run several, each with its own `Config` and its own `State`, as several commands can run on one machine: see [several instances](discovery.md#several-instances). Import the plugins with `_ "github.com/miguelangel-nubla/ipv6disc/pkg/plugins/all"`, or one by one.
 
 ## Config
 

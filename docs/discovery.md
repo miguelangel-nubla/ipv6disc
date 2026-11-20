@@ -24,7 +24,7 @@ An NDP message whose hop limit isn't 255 is ignored, as RFC 4861 requires: a rou
 
 ### IPv4
 
-Every minute, it reads the kernel's neighbor table: on Linux, the entries confirmed recently, as a stale one may be a host that left; elsewhere, those not expired. The table's entries of the broadcast addresses and of the multicast groups, which macOS lists as any neighbor, are no hosts. The sweep, every `-rediscover`, has the kernel resolve every address of the subnets, so the hosts that sent nothing are in the table too. On Linux an entry counts as confirmed for 15 to 45 seconds only, the kernel's `base_reachable_time`, so the table is read right after each sweep as well.
+Every minute, it reads the kernel's neighbor table: on Linux, the entries confirmed recently, as a stale one may be a host that left; elsewhere, those not expired. The table's entries of the broadcast addresses and of the multicast groups, which macOS lists as any neighbor, are no hosts. The sweep, before a reading of the table when `-rediscover` has passed since the last, so once a minute at most, has the kernel resolve every address of the subnets, so the hosts that sent nothing are in the table too. On Linux an entry counts as confirmed for 15 to 45 seconds only, the kernel's `base_reachable_time`, so the table is read right after each sweep as well.
 
 ### This machine's own addresses
 
@@ -44,6 +44,14 @@ An address that answers is registered as any other.
 The local discovery runs on every interface that is up, not a loopback and has a MAC, with multicast for IPv6, with broadcast for IPv4, unless `-interfaces` names those it runs on, and `-exclude_interfaces` those it doesn't: names, or patterns as `docker*,veth*`. On a host running containers, leaving their bridges out keeps the containers out of the state, and the probes off their networks. The plugins aren't concerned. The interfaces without a MAC, as PPP links and tunnels, are left out, and their own addresses not registered: a host is its MAC, and NDP tells none there.
 
 The interfaces and their addresses are looked at every minute. An address that moved to another interface, or whose interface was made again, is listened on anew there.
+
+## Several instances
+
+Any number of instances run at once, on one machine or on several of one link, each with its own flags, and each finds what it would alone. None listens on a port of its own choosing, so there is none to tell apart, and none takes a packet from another.
+
+On one machine, every socket is the instance's own. Those of NDP and the ping are raw ICMPv6 sockets, and the system gives each of them its copy of every message; the SSDP and WS-Discovery searches leave from a port the system picks, where their answers come back; an ARP solicitation has its own socket too, and takes the answers of the host it asked. The interfaces, the families and the lifetimes are each instance's: one that leaves an interface out, or doesn't take IPv4, has nothing of them, whatever another does. Only the kernel's IPv4 neighbor table is shared: what the sweep of one resolved, another that listens for IPv4 reads too. And the answers to the multicast ping of one come to the machine's address, where the others hear them as well, as they hear the answers to any ping from the machine: each asks the MAC of those hosts, so a host is solicited once by each instance for each ping of any. It ends there, as the answer to a solicitation asks nothing more. Stopping one leaves the others as they were.
+
+On several machines of one link, each hears some of what the others send: their neighbor solicitations, and their machine's answers. A solicitation tells the address and MAC of its sender only, never of the address it asks for, so another instance's machine is a host as any other, with its real addresses at its MAC, and is never marked as this machine's. Nothing heard from another instance makes one probe: the probes go by `-rediscover` alone, and a solicitation follows only an answer that came to this machine, which those to another's probes don't, so two instances send on the link what each sends alone. A host that leaves expires on each after its own lifetime: the probes of one don't keep it on another.
 
 ## Privileges
 
