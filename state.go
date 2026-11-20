@@ -14,10 +14,11 @@ import (
 	"go.uber.org/zap"
 )
 
-// State is the addresses discovered, by MAC.
+// State is the addresses discovered, by MAC, and the names of the hosts, by MAC too.
 //
 // Its locks are taken in this order, never the other way: macsMutex, then an AddrCollection's
-// addressesMutex, then an Addr's mutex. subscribersMutex is taken alone. An address seen again as
+// addressesMutex, then an Addr's mutex; and macsMutex, then namesMutex. subscribersMutex is taken
+// alone. An address seen again as
 // it expires is safe for it: seen and remove both hold macsMutex, and remove only takes out the very
 // address that expired, if it is still not valid.
 type State struct {
@@ -29,6 +30,18 @@ type State struct {
 	ipv4   atomic.Bool
 	// The families' lifetimes, in nanoseconds, when they have their own.
 	lifetimeIPv6, lifetimeIPv4 atomic.Int64
+
+	// The names of the hosts, by MAC and by name, when it takes them: not by default. They have
+	// one timer among them all, for the first to expire, and their lifetime, in nanoseconds, when
+	// they have their own.
+	takesNames    atomic.Bool
+	lifetimeNames atomic.Int64
+	names         map[string]map[string]*HostName
+	namesMutex    sync.Mutex
+	namesTimer    *time.Timer
+	// When the timer fires, zero when it doesn't; and whether Close stopped it.
+	namesTimerAt time.Time
+	namesStopped bool
 
 	// The channels Subscribe gave, which hear of every change.
 	subscribers      map[chan struct{}]struct{}
@@ -43,9 +56,10 @@ func (s *State) SetLifetimes(ipv6, ipv4 time.Duration) {
 }
 
 // Subscribe returns a channel that receives a value after the addresses change: one is added, one
-// expires, or one is seen by a new source. Changes coming faster than they are received are told
-// once. cancel stops it, and doesn't close the channel: a reader that waits on it waits on what
-// ends itself too, as its context.
+// expires, or one is seen by a new source; and after the names of a host do: one is added, expires,
+// goes with its host, or is said by a new source. Changes coming faster than they are received
+// are told once. cancel stops it, and doesn't close the channel: a reader that waits on it waits
+// on what ends itself too, as its context.
 func (s *State) Subscribe() (changes <-chan struct{}, cancel func()) {
 	ch := make(chan struct{}, 1)
 	s.subscribersMutex.Lock()
@@ -278,6 +292,8 @@ func (s *State) remove(addr *Addr) bool {
 	removed, empty := collection.removeExpired(addr)
 	if empty {
 		delete(s.macs, mac)
+		// A host is its addresses: without any, it is gone, and its names with it.
+		s.dropNames(mac)
 	}
 	return removed
 }
@@ -296,6 +312,7 @@ func (s *State) removeSelf(mac string, ip netip.Addr, iface string) bool {
 	addr, removed, empty := collection.removeSelf(ip, iface)
 	if empty {
 		delete(s.macs, mac)
+		s.dropNames(mac)
 	}
 	s.macsMutex.Unlock()
 	if addr == nil {
@@ -316,8 +333,11 @@ func (s *State) removeSelf(mac string, ip netip.Addr, iface string) bool {
 // Close stops the expiration events of every address, each with its goroutine and timers: none
 // is removed nor logged after it, but one whose event is under way, and Valid still tells by time. It is for a state whose worker
 // stopped, after Worker.Wait, and can be called more than once. An address registered after it is
-// watched again.
+// watched again. The names' one timer stops too, and none is taken out after it: NamesOf still
+// leaves out those whose lifetime passed, and a name registered after it starts the timer again.
 func (s *State) Close() {
+	s.stopNames()
+
 	s.macsMutex.RLock()
 	defer s.macsMutex.RUnlock()
 
@@ -351,8 +371,8 @@ func (s *State) FilterMACs(hws []net.HardwareAddr) *AddrCollection {
 	return results
 }
 
-// PrettyPrint lists the addresses of each MAC. hideSensible is there for symmetry with the other
-// PrettyPrint methods: nothing here is sensible.
+// PrettyPrint lists the addresses of each MAC, after its names. hideSensible is there for symmetry
+// with the other PrettyPrint methods: nothing here is sensible.
 func (s *State) PrettyPrint(prefix string, hideSensible bool) string {
 	var result strings.Builder
 
@@ -361,8 +381,9 @@ func (s *State) PrettyPrint(prefix string, hideSensible bool) string {
 
 	fmt.Fprintf(&result, "%sDiscovery:\n", prefix)
 
+	names := s.AllNames()
 	for _, mac := range slices.Sorted(maps.Keys(s.macs)) {
-		fmt.Fprintf(&result, "%s    %s\n", prefix, mac)
+		fmt.Fprintf(&result, "%s    %s%s\n", prefix, mac, prettyNames(names[mac]))
 		fmt.Fprint(&result, s.macs[mac].PrettyPrint(prefix+"        "))
 	}
 
@@ -373,4 +394,17 @@ func NewState() *State {
 	return &State{
 		macs: make(map[string]*AddrCollection),
 	}
+}
+
+// prettyNames is the names of a host after its MAC, each with what said it:
+// " printer (mdns,router), laserjet (router)".
+func prettyNames(names []HostName) string {
+	var result strings.Builder
+	for i, n := range names {
+		if i > 0 {
+			result.WriteString(",")
+		}
+		fmt.Fprintf(&result, " %s (%s)", n.Name, strings.Join(n.Sources, ","))
+	}
+	return result.String()
 }

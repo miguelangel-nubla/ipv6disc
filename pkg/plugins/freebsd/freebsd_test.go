@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -128,5 +130,73 @@ func TestStartNeedsAnInterval(t *testing.T) {
 	plugin := NewFreeBSDPlugin("firewall", Config{Address: "192.0.2.1", Username: "root", Password: "secret"}, time.Hour)
 	if err := plugin.Start(context.Background(), ipv6disc.NewState(), nil); err == nil {
 		t.Error("no interval: want an error")
+	}
+}
+
+// With names, the leases of the DHCP servers the host may run are read in the same session: those
+// of ISC dhcpd, of Kea and of dnsmasq, each registered at its MAC, or at the MAC the tables have
+// its address at. Without, the command is the tables' alone.
+func TestDiscoverNames(t *testing.T) {
+	const tables = "Neighbor Linklayer Address Netif Expire S Flags\nfd00::1c3 00:11:22:33:44:60 em0 23s R\nfe80::1%em0 00:11:22:33:44:61 em0 permanent R\n" + arpMarker + "\n? (192.168.1.50) at 00:11:22:33:44:50 on em0 expires in 1189 seconds [ethernet]\n"
+	const isc = "lease 192.168.1.50 {\n  binding state active;\n  hardware ethernet 00:11:22:33:44:50;\n  client-hostname \"Laptop\";\n}\n"
+	const kea = "address,duid,valid_lifetime,expire,subnet_id,pref_lifetime,lease_type,iaid,prefix_len,fqdn_fwd,fqdn_rev,hostname,hwaddr,state\nfd00::1c3,00:01,7200,1700003600,1,3600,0,1052436,128,0,0,phone.lan.,,0\n"
+	const dnsmasq = "1700003600 00:11:22:33:44:52 192.168.1.52 ESP_1A2B3C *\n"
+	server := sshtest.Start(t, "root", "secret", func(command string) ([]byte, error) {
+		switch command {
+		case "ndp -an; echo " + arpMarker + "; arp -an" + leasesCommand:
+			return []byte(tables + leasesMarker + "\n" + isc + keaMarker + "\n" + kea + dnsmasqMarker + "\n" + dnsmasq), nil
+		case "ndp -an" + leasesCommand:
+			// A host that runs none of them: the markers alone.
+			return []byte("Neighbor Linklayer Address Netif Expire S Flags\nfd00::1c3 00:11:22:33:44:60 em0 23s R\n" + leasesMarker + "\n" + keaMarker + "\n" + dnsmasqMarker + "\n"), nil
+		case "ndp -an; echo " + arpMarker + "; arp -an":
+			return []byte(tables), nil
+		}
+		return nil, errors.New("unexpected command " + command)
+	})
+	cfg := Config{Interval: time.Minute, Address: server.Address, Username: "root", Password: "secret", HostKey: server.HostKey}
+
+	state := ipv6disc.NewState()
+	defer state.Close()
+	state.SetFamilies(true, true)
+	state.SetNames(true, 0)
+	found, err := NewFreeBSDPlugin("firewall", cfg, time.Hour).discover(context.Background(), state, nil)
+	if err != nil || found != 3 {
+		t.Errorf("found %d, %v, want the three neighbors", found, err)
+	}
+	var got []string
+	for mac, names := range state.AllNames() {
+		for _, n := range names {
+			got = append(got, mac+" "+n.Name+" "+strings.Join(n.Sources, ","))
+		}
+	}
+	slices.Sort(got)
+	want := []string{
+		"00:11:22:33:44:50 laptop firewall",
+		"00:11:22:33:44:52 esp-1a2b3c firewall",
+		// A DHCPv6 lease, which has no MAC: the neighbor table's, of its address.
+		"00:11:22:33:44:60 phone firewall",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("names %q\nwant %q", got, want)
+	}
+	if got := state.GetAll(); len(got) != 3 {
+		t.Errorf("the leases registered addresses: %v", got)
+	}
+
+	ipv6Only := ipv6disc.NewState()
+	defer ipv6Only.Close()
+	ipv6Only.SetNames(true, 0)
+	if found, err := NewFreeBSDPlugin("firewall", cfg, time.Hour).discover(context.Background(), ipv6Only, nil); err != nil || found != 1 || len(ipv6Only.AllNames()) != 0 {
+		t.Errorf("without lease files: found %d, %v, names %v", found, err, ipv6Only.AllNames())
+	}
+
+	without := ipv6disc.NewState()
+	defer without.Close()
+	without.SetFamilies(true, true)
+	if found, err := NewFreeBSDPlugin("firewall", cfg, time.Hour).discover(context.Background(), without, nil); err != nil || found != 3 || len(without.AllNames()) != 0 {
+		t.Errorf("without names: found %d, %v, names %v", found, err, without.AllNames())
+	}
+	if !strings.HasSuffix(leasesCommand, "; true") || strings.Count(leasesCommand, "2>/dev/null") != 3 {
+		t.Errorf("the command: %s", leasesCommand)
 	}
 }

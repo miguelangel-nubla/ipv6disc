@@ -45,8 +45,23 @@ const (
 type report struct {
 	// The addresses of each MAC.
 	Hosts map[string][]reportAddr
-	// The packets each protocol sent and took, over the interfaces: ndp, ping, ssdp, wsd.
+	// The packets each protocol sent and took, over the interfaces: ndp, ping, ssdp, wsd, and
+	// mdns of the naming layer.
 	Sent, Received map[string]uint64
+	// The names of each MAC.
+	Names map[string][]reportName
+}
+
+type reportName struct {
+	Name    string
+	Sources []string
+	// How long it stays yet.
+	Remaining time.Duration
+}
+
+// named tells whether mac has that name.
+func (r report) named(mac, name string) bool {
+	return slices.ContainsFunc(r.Names[mac], func(n reportName) bool { return n.Name == name })
 }
 
 type reportAddr struct {
@@ -56,7 +71,12 @@ type reportAddr struct {
 }
 
 func snapshot(w *Worker) report {
-	r := report{Hosts: make(map[string][]reportAddr), Sent: make(map[string]uint64), Received: make(map[string]uint64)}
+	r := report{Hosts: make(map[string][]reportAddr), Sent: make(map[string]uint64), Received: make(map[string]uint64), Names: make(map[string][]reportName)}
+	for mac, names := range w.AllNames() {
+		for _, n := range names {
+			r.Names[mac] = append(r.Names[mac], reportName{n.Name, n.Sources, time.Until(n.Expiration)})
+		}
+	}
 	for mac, collection := range w.GetAll() {
 		for _, a := range collection.Get() {
 			r.Hosts[mac] = append(r.Hosts[mac], reportAddr{IP: a.WithZone(""), Self: a.Self(), Interfaces: a.Interfaces()})
@@ -65,6 +85,13 @@ func snapshot(w *Worker) report {
 	w.pcMutex.RLock()
 	defer w.pcMutex.RUnlock()
 	for _, processes := range w.protocolConns {
+		for _, protocol := range processes.Protocols {
+			stats := protocol.Worker.Stats()
+			r.Sent[protocol.Name] += stats["sent"].(uint64)
+			r.Received[protocol.Name] += stats["recv"].(uint64)
+		}
+	}
+	for _, processes := range w.nameConns {
 		for _, protocol := range processes.Protocols {
 			stats := protocol.Worker.Stats()
 			r.Sent[protocol.Name] += stats["sent"].(uint64)
@@ -1034,6 +1061,16 @@ func linkLocal(mac net.HardwareAddr) netip.Addr {
 type capture struct {
 	mutex  sync.Mutex
 	counts map[string]map[string]int
+	// The port each MAC last sent a query to the group of mDNS from, of each family.
+	mdnsPorts map[string]map[bool]uint16
+}
+
+// mdnsPort returns the port mac last sent a query to the group of mDNS from, over IPv4 or IPv6:
+// zero if it sent none. Not reset.
+func (c *capture) mdnsPort(mac string, ipv4 bool) uint16 {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	return c.mdnsPorts[mac][ipv4]
 }
 
 func (c *capture) reset() {
@@ -1070,7 +1107,7 @@ func startCapture(t *testing.T, ports ...string) *capture {
 	if err := unix.SetsockoptTimeval(fd, unix.SOL_SOCKET, unix.SO_RCVTIMEO, &unix.Timeval{Usec: 100_000}); err != nil {
 		t.Fatal(err)
 	}
-	c := &capture{counts: make(map[string]map[string]int)}
+	c := &capture{counts: make(map[string]map[string]int), mdnsPorts: make(map[string]map[bool]uint16)}
 	stop, done := make(chan struct{}), make(chan struct{})
 	t.Cleanup(func() { close(stop); <-done; unix.Close(fd) })
 	go func() {
@@ -1097,6 +1134,18 @@ func startCapture(t *testing.T, ports ...string) *capture {
 					c.counts[mac] = make(map[string]int)
 				}
 				c.counts[mac][kind]++
+				if kind == "mdns" {
+					// Where the UDP header is: after an IPv4 header without options, or an IPv6 one.
+					ipv4 := binary.BigEndian.Uint16(buf[12:14]) == unix.ETH_P_IP
+					source := buf[54:56]
+					if ipv4 {
+						source = buf[34:36]
+					}
+					if c.mdnsPorts[mac] == nil {
+						c.mdnsPorts[mac] = make(map[bool]uint16)
+					}
+					c.mdnsPorts[mac][ipv4] = binary.BigEndian.Uint16(source)
+				}
 				c.mutex.Unlock()
 			}
 		}
@@ -1106,7 +1155,8 @@ func startCapture(t *testing.T, ports ...string) *capture {
 
 // probeOf tells the MAC an Ethernet frame is from, and the kind of probe it is, if any: a
 // broadcast ARP request, an echo request, to a group or to a host, a neighbor solicitation to a
-// group, as the worker's and the kernel's first are, or an SSDP or WS-Discovery search.
+// group, as the worker's and the kernel's first are, an SSDP or WS-Discovery search, or a packet
+// to the port of mDNS, of either family: to the group, "mdns", or to a host, "mdns lookup".
 func probeOf(frame []byte) (mac, kind string) {
 	if len(frame) < 14 {
 		return "", ""
@@ -1116,6 +1166,14 @@ func probeOf(frame []byte) (mac, kind string) {
 	case unix.ETH_P_ARP:
 		if len(frame) >= 22 && binary.BigEndian.Uint16(frame[20:22]) == 1 && frame[0]&1 == 1 {
 			return mac, "arp"
+		}
+	case unix.ETH_P_IP:
+		// A header without options, as all here.
+		if len(frame) >= 42 && frame[14] == 0x45 && frame[23] == unix.IPPROTO_UDP && binary.BigEndian.Uint16(frame[36:38]) == 5353 {
+			if frame[30]&0xf0 == 0xe0 {
+				return mac, "mdns"
+			}
+			return mac, "mdns lookup"
 		}
 	case unix.ETH_P_IPV6:
 		if len(frame) < 58 {
@@ -1138,6 +1196,11 @@ func probeOf(frame []byte) (mac, kind string) {
 				return mac, "ssdp"
 			case 3702:
 				return mac, "wsd"
+			case 5353:
+				if multicast {
+					return mac, "mdns"
+				}
+				return mac, "mdns lookup"
 			}
 		}
 	}

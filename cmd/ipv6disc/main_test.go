@@ -63,6 +63,9 @@ func TestCommandRejects(t *testing.T) {
 		{"-lifetime 0", 1, "they must be positive"},
 		{"-rediscover=-1s", 1, "they must be positive"},
 		{"-ipv4_lifetime=-1s", 1, "invalid family lifetime"},
+		// The names' flags reach the config: off unless given.
+		{"-hostnames -hostnames_lifetime=-1s", 1, "invalid names' lifetime"},
+		{"-hostnames=maybe", 2, "invalid boolean value"},
 		{"-interfaces=[", 1, "invalid interface pattern"},
 		{"-log_level=loud", 1, "invalid log level"},
 	} {

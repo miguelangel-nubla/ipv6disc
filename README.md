@@ -6,6 +6,8 @@
 
 `ipv6disc` finds the hosts of the local network and their addresses, each with its MAC: IPv6, and IPv4 too. It listens to the network, probes it, and reads the neighbor tables of routers. The name is from when it was IPv6 only.
 
+With `-hostnames` it learns the names of the hosts too: those they announce over mDNS, and those of the routers' DHCP leases.
+
 It is a command, and a Go library: [ipv6ddns](https://github.com/miguelangel-nubla/ipv6ddns) uses it to keep DNS records of the devices of a network.
 
 ## Installation
@@ -36,7 +38,7 @@ docker run -it --rm --network host ghcr.io/miguelangel-nubla/ipv6disc \
 
 IPv6 local discovery needs root or `CAP_NET_RAW`, and in Docker the host's network: see [privileges](docs/discovery.md#privileges). The image has the binary alone: files a plugin reads, as an `identity_file`, are mounted in, and it has no CA certificates, so a mikrotik plugin with `use_tls=true` needs its [`tls_fingerprint`](docs/plugins.md#a-mikrotik-user) there.
 
-The log has an event per change: `host identified` when an address is found, `host expired` when it goes, `host removed` when it is an address of this machine's that its interface no longer has, with its `ip`, `mac` and `source`; `-log_level debug` adds each refresh. `-live` shows the state instead of the log, errors too, as those of a plugin that can't reach its router: run without it to see why hosts are missing. It needs a terminal, in Docker `-it`, and ends with `q`, or when the process is told to stop.
+The log has an event per change: `host identified` when an address is found, `host expired` when it goes, `host removed` when it is an address of this machine's that its interface no longer has, with its `ip`, `mac` and `source`; `-log_level debug` adds each refresh. With `-hostnames`, `host named` and `host name expired` tell the [names](docs/discovery.md#names) of a host as they come and go, with the `name`, `mac` and `source`. `-live` shows the state instead of the log, errors too, as those of a plugin that can't reach its router: run without it to see why hosts are missing. It needs a terminal, in Docker `-it`, and ends with `q`, or when the process is told to stop.
 
 In `-live`, to select and copy, run it in `screen`, and press `Ctrl+a` then `Esc` for copy mode; `Esc` again goes on updating.
 
@@ -44,8 +46,8 @@ In `-live`, to select and copy, run it in `screen`, and press `Ctrl+a` then `Esc
 
 | | |
 |---|---|
-| [Discovery](docs/discovery.md) | How hosts are found: each family's ways, interfaces, lifetimes, solicitation |
-| [Plugins](docs/plugins.md) | Reading routers' neighbor tables |
+| [Discovery](docs/discovery.md) | How hosts are found: each family's ways, interfaces, lifetimes, solicitation, names |
+| [Plugins](docs/plugins.md) | Reading routers' neighbor tables, and the names of their DHCP leases |
 | [The library](docs/library.md) | Using it from Go |
 | [Flags reference](docs/reference/cli.md) | Every flag, generated from the code |
 | [Plugins reference](docs/reference/plugins.md) | Every plugin's params, generated from the code |

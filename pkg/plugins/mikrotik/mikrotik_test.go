@@ -329,3 +329,56 @@ func TestDiscoverIPv4Only(t *testing.T) {
 		t.Errorf("found %d, %v, asked %v", found, err, asked)
 	}
 }
+
+// With names, the leases of the router's DHCP server are read too, and the host names of those
+// bound now registered at their MAC, whatever the families read. Without, the table isn't asked.
+func TestDiscoverNames(t *testing.T) {
+	leases := []map[string]string{
+		{"address": "192.168.88.10", "mac-address": "00:11:22:33:44:10", "host-name": "Laptop", "status": "bound"},
+		// A static lease whose host isn't there, one without a name, and one of a client that
+		// gave a name that is none.
+		{"address": "192.168.88.11", "mac-address": "00:11:22:33:44:11", "host-name": "left", "status": "waiting"},
+		{"address": "192.168.88.12", "mac-address": "00:11:22:33:44:12", "status": "bound"},
+		{"address": "192.168.88.13", "mac-address": "00:11:22:33:44:13", "host-name": "*", "status": "bound"},
+		// The MAC the lease is bound to now.
+		{"address": "192.168.88.14", "mac-address": "00:11:22:33:44:14", "active-mac-address": "00:11:22:33:44:15", "host-name": "ESP_1A2B3C", "status": "bound"},
+		{"address": "192.168.88.16", "mac-address": "not-a-mac", "host-name": "broken", "status": "bound"},
+	}
+	var asked []string
+	address := serveRouterOS(t, nil, func(command string) []map[string]string {
+		asked = append(asked, command)
+		if command == "/ip/dhcp-server/lease/print" {
+			return leases
+		}
+		return neighborTable(command)
+	})
+	plugin := NewMikrotikPlugin("router", Config{Interval: time.Minute, Address: address, Username: "admin"}, time.Hour)
+
+	state := ipv6disc.NewState()
+	defer state.Close()
+	state.SetNames(true, 0)
+	found, err := plugin.discover(context.Background(), state)
+	if err != nil || found != 3 {
+		t.Errorf("found %d, %v, want the 3 IPv6 neighbors: a lease is no address", found, err)
+	}
+	var got []string
+	for mac, names := range state.AllNames() {
+		for _, n := range names {
+			got = append(got, mac+" "+n.Name+" "+strings.Join(n.Sources, ","))
+		}
+	}
+	slices.Sort(got)
+	if want := []string{"00:11:22:33:44:10 laptop router", "00:11:22:33:44:15 esp-1a2b3c router"}; !slices.Equal(got, want) {
+		t.Errorf("names %q\nwant %q", got, want)
+	}
+	if want := []string{"/ipv6/neighbor/print", "/ip/dhcp-server/lease/print"}; !slices.Equal(asked, want) {
+		t.Errorf("asked %v, want %v", asked, want)
+	}
+
+	asked = nil
+	without := ipv6disc.NewState()
+	defer without.Close()
+	if _, err := plugin.discover(context.Background(), without); err != nil || len(without.AllNames()) != 0 || !slices.Equal(asked, []string{"/ipv6/neighbor/print"}) {
+		t.Errorf("without names: %v, names %v, asked %v", err, without.AllNames(), asked)
+	}
+}

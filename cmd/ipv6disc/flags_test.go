@@ -167,3 +167,14 @@ func TestPluginsFlag(t *testing.T) {
 		t.Errorf("two plugins: %v", p)
 	}
 }
+
+// The names are off unless asked for, and their lifetime the discovery's unless given.
+func TestHostnamesFlags(t *testing.T) {
+	resetFlags(t)
+	if err := flag.CommandLine.Parse(nil); err != nil || hostnames || hostnamesLifetime != 0 {
+		t.Errorf("without the flags: hostnames %v, lifetime %s, %v", hostnames, hostnamesLifetime, err)
+	}
+	if err := flag.CommandLine.Parse([]string{"-hostnames", "-hostnames_lifetime=30m"}); err != nil || !hostnames || hostnamesLifetime != 30*time.Minute {
+		t.Errorf("with the flags: hostnames %v, lifetime %s, %v", hostnames, hostnamesLifetime, err)
+	}
+}

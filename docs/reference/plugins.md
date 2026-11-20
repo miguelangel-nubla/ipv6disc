@@ -6,7 +6,7 @@
 
 ## freebsd
 
-A FreeBSD host, as pfSense or OPNsense, over SSH: `ndp -an` for IPv6, `arp -an` for IPv4.
+A FreeBSD host, as pfSense or OPNsense, over SSH: `ndp -an` for IPv6, `arp -an` for IPv4, and with `-hostnames` the names of the DHCP leases of ISC dhcpd, Kea and dnsmasq.
 
 | Param | |
 |---|---|
@@ -19,7 +19,7 @@ A FreeBSD host, as pfSense or OPNsense, over SSH: `ndp -an` for IPv6, `arp -an` 
 
 ## linux
 
-A Linux host, as OpenWrt, over SSH: `ip neigh`.
+A Linux host, as OpenWrt, over SSH: `ip neigh`, and with `-hostnames` the names of the DHCP leases of dnsmasq and odhcpd.
 
 | Param | |
 |---|---|
@@ -32,7 +32,7 @@ A Linux host, as OpenWrt, over SSH: `ip neigh`.
 
 ## mikrotik
 
-A Mikrotik router, over its API: `/ipv6/neighbor` for IPv6, `/ip/arp` for IPv4.
+A Mikrotik router, over its API: `/ipv6/neighbor` for IPv6, `/ip/arp` for IPv4, and with `-hostnames` the names of `/ip/dhcp-server/lease`.
 
 | Param | |
 |---|---|

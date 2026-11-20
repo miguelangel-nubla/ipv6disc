@@ -5,6 +5,7 @@ import (
 	"context"
 	"net"
 	"net/netip"
+	"slices"
 	"strings"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 )
 
 func init() {
-	plugins.Describe("freebsd", "A FreeBSD host, as pfSense or OPNsense, over SSH: `ndp -an` for IPv6, `arp -an` for IPv4.")
+	plugins.Describe("freebsd", "A FreeBSD host, as pfSense or OPNsense, over SSH: `ndp -an` for IPv6, `arp -an` for IPv4, and with `-hostnames` the names of the DHCP leases of ISC dhcpd, Kea and dnsmasq.")
 	plugins.Register("freebsd", func(name string, config string, lifetime time.Duration) (ipv6disc.Plugin, error) {
 		cfg, err := ParseConfig(config)
 		if err != nil {
@@ -75,6 +76,9 @@ func (p *FreeBSDPlugin) discover(ctx context.Context, state *ipv6disc.State, onE
 	default:
 		return 0, nil
 	}
+	if state.Names() {
+		command += leasesCommand
+	}
 	output, hostKey, err := plugins.RunSSH(ctx, p.config, command)
 	if err != nil {
 		return 0, err
@@ -87,15 +91,35 @@ func (p *FreeBSDPlugin) discover(ctx context.Context, state *ipv6disc.State, onE
 	// Without the marker, IPv6 only, all of it is of ndp. The output has the stderr of the commands
 	// too, and the exit status is that of the last one: the lines that are not of a table, as a
 	// warning or the error of an ndp that failed, are skipped by the parsers.
-	ndpOutput, arpOutput, _ := strings.Cut(string(output), arpMarker+"\n")
-	found := p.parseNDPOutput(ndpOutput, state)
+	tables, leases, _ := strings.Cut(string(output), leasesMarker+"\n")
+	ndpOutput, arpOutput, _ := strings.Cut(tables, arpMarker+"\n")
+	found, neighbors := p.parseNeighbors(ndpOutput, state)
 	for _, n := range arp.ParseBSD(arpOutput) {
+		neighbors[n.IP] = n.MAC
 		if _, existing := state.Register(n.MAC, n.IP, p.Name(), p.lifetime, nil); !existing {
 			found++
 		}
 	}
+
+	isc, rest, _ := strings.Cut(leases, keaMarker+"\n")
+	kea, dnsmasq, _ := strings.Cut(rest, dnsmasqMarker+"\n")
+	plugins.RegisterLeases(state, slices.Concat(plugins.ParseISCLeases(isc), plugins.ParseKeaLeases(kea), plugins.ParseDnsmasqLeases(dnsmasq)), neighbors, p.Name(), p.lifetime)
 	return found, nil
 }
+
+// The markers separate the tables from the leases, and those of each DHCP server; and
+// leasesCommand follows the tables' command to read them, where pfSense and OPNsense keep them:
+// those of ISC dhcpd, of Kea, of DHCPv4 and DHCPv6, and of dnsmasq. A file that isn't there, as
+// those of the servers the host doesn't run, says nothing, and the last command succeeds, as the
+// exit status is its own.
+const (
+	leasesMarker  = "--- ipv6disc leases ---"
+	keaMarker     = "--- ipv6disc kea ---"
+	dnsmasqMarker = "--- ipv6disc dnsmasq ---"
+	leasesCommand = "; echo '" + leasesMarker + "'; cat /var/dhcpd/var/db/dhcpd.leases 2>/dev/null" +
+		"; echo '" + keaMarker + "'; cat /var/lib/kea/dhcp4.leases /var/lib/kea/dhcp6.leases /var/db/kea/kea-leases4.csv /var/db/kea/kea-leases6.csv 2>/dev/null" +
+		"; echo '" + dnsmasqMarker + "'; cat /var/db/dnsmasq.leases 2>/dev/null; true"
+)
 
 // arpMarker separates the outputs of ndp and arp.
 const arpMarker = "--- ipv6disc arp ---"
@@ -106,8 +130,16 @@ const arpMarker = "--- ipv6disc arp ---"
 //	2001:db8::1                          00:11:22:33:44:55   em0 permanent R
 //	fe80::211:22ff:fe33:4455%em0         00:11:22:33:44:55   em0 permanent R
 func (p *FreeBSDPlugin) parseNDPOutput(output string, state *ipv6disc.State) int {
+	count, _ := p.parseNeighbors(output, state)
+	return count
+}
+
+// parseNeighbors is parseNDPOutput, which returns the neighbors too, registered or known already:
+// the MAC of each address, for the leases that only have an address.
+func (p *FreeBSDPlugin) parseNeighbors(output string, state *ipv6disc.State) (int, map[netip.Addr]net.HardwareAddr) {
 	scanner := bufio.NewScanner(strings.NewReader(output))
 	count := 0
+	neighbors := make(map[netip.Addr]net.HardwareAddr)
 
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
@@ -136,9 +168,10 @@ func (p *FreeBSDPlugin) parseNDPOutput(output string, state *ipv6disc.State) int
 			continue
 		}
 
+		neighbors[ip.WithZone("")] = hw
 		if _, existing := state.Register(hw, ip, p.Name(), p.lifetime, nil); !existing {
 			count++
 		}
 	}
-	return count
+	return count, neighbors
 }

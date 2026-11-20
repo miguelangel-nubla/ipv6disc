@@ -8,9 +8,9 @@ exec docker run --rm --privileged \
 	-v "$PWD":/src:ro -v ipv6disc-go-cache:/go/pkg/mod -v ipv6disc-go-build:/root/.cache/go-build \
 	-w /src -e GOFLAGS=-buildvcs=false "golang:${GO_VERSION:-1.26}" sh -euc '
 		apt-get update -qq >/dev/null
-		apt-get install -yqq --no-install-recommends iproute2 iputils-ping procps >/dev/null
+		apt-get install -yqq --no-install-recommends iproute2 iputils-ping procps avahi-daemon >/dev/null
 		go test -race -count=1 ./...
 		go test -c -race -tags integration -o /tmp/integration.test .
 		go build -race -o /tmp/ipv6disc ./cmd/ipv6disc
-		cd /tmp && exec ./integration.test -test.v -test.timeout 15m "${@:--test.run=^TestLive}"
+		cd /tmp && exec ./integration.test -test.v -test.timeout 20m "${@:--test.run=^TestLive}"
 	' sh "$@"

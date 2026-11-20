@@ -39,6 +39,13 @@ type Worker struct {
 	// Of both maps. Taken before the State's locks, as when an address that went is removed, never
 	// after: the expiration events, which ping, run with none of the State's held.
 	pcMutex sync.RWMutex
+	// The naming protocols of each interface, as the discovery's above, with the same lock; the
+	// naming layer, which asks them; and what wakes the IPv4 discovery to read the neighbor
+	// table, for an address heard of.
+	nameConns   map[nameKey]*nameProcesses
+	nameCancels map[nameKey]context.CancelFunc
+	naming      *namer
+	ipv4Wake    chan struct{}
 	// The goroutines Start starts, for Wait.
 	running sync.WaitGroup
 	started atomic.Bool
@@ -108,16 +115,24 @@ func NewWorker(logger *zap.SugaredLogger, config Config) *Worker {
 	s.SetFamilies(config.IPv6.Enabled, config.IPv4.Enabled)
 	// The families' own lifetimes, as given: without, each registration's.
 	s.SetLifetimes(config.IPv6.Lifetime, config.IPv4.Lifetime)
+	// And the names', the same.
+	s.SetNames(config.Hostnames.Enabled, config.Hostnames.Lifetime)
 	config = config.withDefaults()
 
-	return &Worker{
+	w := &Worker{
 		State:         s,
 		logger:        logger,
 		config:        config,
 		plugins:       make([]Plugin, 0),
 		protocolConns: make(map[workerKey]*InterfaceProcesses),
 		workerCancels: make(map[workerKey]context.CancelFunc),
+		nameConns:     make(map[nameKey]*nameProcesses),
+		nameCancels:   make(map[nameKey]context.CancelFunc),
+		ipv4Wake:      make(chan struct{}, 1),
 	}
+	w.naming = newNamer(s, logger, config)
+	w.naming.askers = w.nameAskers
+	return w
 }
 
 // RegisterPlugin adds a plugin for Start to run. It is for before Start, and not for concurrent
@@ -137,6 +152,15 @@ func (w *Worker) PrettyPrintStats(prefix string) string {
 	for _, ip := range w.protocolConns {
 		ifaceMap[ip.InterfaceName] = append(ifaceMap[ip.InterfaceName], ip)
 	}
+	// The naming protocols are of the interface, not of an address of it.
+	names := make(map[string][]*NameProtocol)
+	for _, key := range slices.SortedFunc(maps.Keys(w.nameConns), nameKey.compare) {
+		processes := w.nameConns[key]
+		names[processes.InterfaceName] = append(names[processes.InterfaceName], processes.Protocols...)
+		if _, ok := ifaceMap[processes.InterfaceName]; !ok {
+			ifaceMap[processes.InterfaceName] = nil
+		}
+	}
 	w.pcMutex.RUnlock()
 
 	// Sort interface names
@@ -145,6 +169,20 @@ func (w *Worker) PrettyPrintStats(prefix string) string {
 		ifaceNames = append(ifaceNames, name)
 	}
 	sort.Strings(ifaceNames)
+
+	printStats := func(name string, stats map[string]any) {
+		fmt.Fprintf(&result, "%s            %-5s:", prefix, name)
+		// Sort keys for consistent output
+		sKeys := make([]string, 0, len(stats))
+		for sk := range stats {
+			sKeys = append(sKeys, sk)
+		}
+		sort.Strings(sKeys)
+		for _, sk := range sKeys {
+			fmt.Fprintf(&result, " %s=%v", sk, stats[sk])
+		}
+		result.WriteString("\n")
+	}
 
 	for _, name := range ifaceNames {
 		fmt.Fprintf(&result, "%s    %s:\n", prefix, name)
@@ -158,18 +196,13 @@ func (w *Worker) PrettyPrintStats(prefix string) string {
 			fmt.Fprintf(&result, "%s        %s:\n", prefix, ip.Address.String())
 
 			for _, p := range ip.Protocols {
-				stats := p.Worker.Stats()
-				fmt.Fprintf(&result, "%s            %-5s:", prefix, p.Name)
-				// Sort keys for consistent output
-				sKeys := make([]string, 0, len(stats))
-				for sk := range stats {
-					sKeys = append(sKeys, sk)
-				}
-				sort.Strings(sKeys)
-				for _, sk := range sKeys {
-					fmt.Fprintf(&result, " %s=%v", sk, stats[sk])
-				}
-				result.WriteString("\n")
+				printStats(p.Name, p.Worker.Stats())
+			}
+		}
+		if len(names[name]) > 0 {
+			fmt.Fprintf(&result, "%s        names:\n", prefix)
+			for _, p := range names[name] {
+				printStats(p.Name, p.Worker.Stats())
 			}
 		}
 	}
@@ -252,6 +285,31 @@ func (w *Worker) Start(ctx context.Context) error {
 		go func() {
 			defer w.running.Done()
 			w.discoverIPv4(ctx)
+		}()
+	}
+
+	// The names, after the discovery they need: of the interfaces it runs on, for the families
+	// it listens over.
+	if w.config.namesLocally() {
+		w.naming.discover = func(iface string, addr netip.Addr) bool { return w.discoverAddr(ctx, iface, addr) }
+		w.running.Add(2)
+		go func() {
+			defer w.running.Done()
+			ticker := time.NewTicker(interfaceCheckInterval)
+			defer ticker.Stop()
+
+			for {
+				w.checkNameInterfaces(ctx)
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+				}
+			}
+		}()
+		go func() {
+			defer w.running.Done()
+			w.naming.run(ctx)
 		}()
 	}
 

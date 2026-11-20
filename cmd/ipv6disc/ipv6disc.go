@@ -30,6 +30,8 @@ var (
 	ipv4, ipv4Listen, ipv4Active bool
 
 	ipv6Lifetime, ipv4Lifetime    time.Duration
+	hostnames                     bool
+	hostnamesLifetime             time.Duration
 	interfaces, excludeInterfaces listFlag
 
 	pluginsFlags pluginsFlag
@@ -107,6 +109,8 @@ func defineFlags() {
 	flag.BoolVar(&ipv4Listen, "ipv4_listen", true, "IPv4: read the kernel's neighbor table")
 	flag.BoolVar(&ipv4Active, "ipv4_active", true, "IPv4: sweep the local subnets, which broadcasts an ARP request for each address")
 	flag.DurationVar(&ipv4Lifetime, "ipv4_lifetime", 0, "IPv4: how long an address stays after it was last seen, in place of -lifetime")
+	flag.BoolVar(&hostnames, "hostnames", false, "Learn the names of the hosts: listen for mDNS and ask each host its name, where the families listen, and the plugins read the names of their routers' DHCP leases")
+	flag.DurationVar(&hostnamesLifetime, "hostnames_lifetime", 0, "How long a name stays after it was last said, in place of -lifetime")
 	flag.Var(&interfaces, "interfaces", "The local discovery only on these interfaces, comma separated: names, or patterns as en*. Without it: all")
 	flag.Var(&excludeInterfaces, "exclude_interfaces", "No local discovery on these interfaces, comma separated: names, or patterns as docker*,veth*")
 
@@ -213,6 +217,7 @@ func startUpdater() {
 		Rediscover: rediscover,
 		IPv6:       ipv6disc.Family{Enabled: ipv6, Listen: ipv6Listen, Active: ipv6Active, Lifetime: ipv6Lifetime},
 		IPv4:       ipv6disc.Family{Enabled: ipv4, Listen: ipv4Listen, Active: ipv4Active, Lifetime: ipv4Lifetime},
+		Hostnames:  ipv6disc.Hostnames{Enabled: hostnames, Lifetime: hostnamesLifetime},
 
 		Interfaces:        interfaces,
 		ExcludeInterfaces: excludeInterfaces,

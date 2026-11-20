@@ -1,6 +1,6 @@
 # Plugins
 
-A plugin reads the neighbor table of another host, a router usually, every `interval`, and registers its entries: it finds the hosts of networks the local discovery doesn't reach, as other VLANs, or all of them where the local discovery can't run.
+A plugin reads the neighbor table of another host, a router usually, every `interval`, and registers its entries, and with `-hostnames` the [names](#names) of its DHCP leases: it finds the hosts of networks the local discovery doesn't reach, as other VLANs, or all of them where the local discovery can't run.
 
 ```
 ipv6disc -plugin "router=linux:interval=60s,address=192.168.1.1,username=root,identity_file=/key,host_key=SHA256:..."
@@ -15,6 +15,20 @@ The tables of the families on: IPv6 neighbors, and with `-ipv4` the ARP tables t
 Only hosts: the multicast groups a Mikrotik router lists among its neighbors are left out. A link-local address comes from the other host with that host's interface as its zone, `fe80::1%em0`: the zone is dropped, never taken for an interface of this machine.
 
 A poll takes 30 seconds at most, connecting included: a host that doesn't answer is an error of that poll, and the next one runs at its time. Stopping the program stops the poll under way, which is not reported as an error.
+
+## Names
+
+With `-hostnames`, a plugin also reads the host names of its router's DHCP leases, in the same poll, and registers each as a [name](discovery.md#names) of the lease's MAC, with the plugin's name as its source. A name is the host's whatever the family of the lease: one of a DHCPv4 lease names the host for its IPv6 addresses too. A lease registers no address, only the name.
+
+| | |
+|---|---|
+| `mikrotik` | `/ip/dhcp-server/lease`: the `host-name` of the leases that are `bound`. The bindings of the DHCPv6 server have no name to read |
+| `linux` | The leases of dnsmasq, `/tmp/dhcp.leases` as OpenWrt has it, or `/var/lib/misc/dnsmasq.leases`; and the hosts file odhcpd writes of its DHCPv6 leases, `/tmp/hosts/odhcpd` |
+| `freebsd` | The leases of ISC dhcpd, `/var/dhcpd/var/db/dhcpd.leases`, those in the state `active`; of Kea, `/var/lib/kea/dhcp4.leases` and `dhcp6.leases` as pfSense has them, or `/var/db/kea/kea-leases4.csv` and `kea-leases6.csv` as OPNsense does, those assigned; and of dnsmasq, `/var/db/dnsmasq.leases` |
+
+A DHCPv6 lease knows its client by a DUID, not by a MAC: its name goes to the MAC the neighbor table, read at the same time, has the leased address at, if it is in use. A file that isn't there, as those of the servers the host doesn't run, says nothing, and the user of the plugin needs to be let read those that are. The names are as the clients gave them, cleaned as [any name](discovery.md#what-a-name-is): one that is none, as the `*` of a lease without a name, is left out.
+
+A name stays for its lifetime after the last poll that read it: the lease of a host that left stops naming it when the router drops it.
 
 ## SSH host keys
 

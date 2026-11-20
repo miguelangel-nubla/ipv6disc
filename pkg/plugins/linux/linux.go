@@ -14,7 +14,7 @@ import (
 )
 
 func init() {
-	plugins.Describe("linux", "A Linux host, as OpenWrt, over SSH: `ip neigh`.")
+	plugins.Describe("linux", "A Linux host, as OpenWrt, over SSH: `ip neigh`, and with `-hostnames` the names of the DHCP leases of dnsmasq and odhcpd.")
 	plugins.Register("linux", func(name string, config string, lifetime time.Duration) (ipv6disc.Plugin, error) {
 		cfg, err := ParseConfig(config)
 		if err != nil {
@@ -31,7 +31,7 @@ func ParseConfig(config string) (Config, error) {
 }
 
 // LinuxPlugin reads the neighbor table of a Linux host over SSH, `ip neigh`, of the families the
-// state takes.
+// state takes; and, when it takes names, those of the host's DHCP leases.
 type LinuxPlugin struct {
 	plugins.Poller
 
@@ -75,6 +75,9 @@ func (p *LinuxPlugin) discover(ctx context.Context, state *ipv6disc.State, onErr
 	default:
 		return 0, nil
 	}
+	if state.Names() {
+		command += leasesCommand
+	}
 	output, hostKey, err := plugins.RunSSH(ctx, p.config, command)
 	if err != nil {
 		return 0, err
@@ -83,16 +86,42 @@ func (p *LinuxPlugin) discover(ctx context.Context, state *ipv6disc.State, onErr
 		p.warned = true
 		onError(plugins.HostKeyWarning(p.config.Address, hostKey))
 	}
-	return p.parseNDPOutput(string(output), state), nil
+
+	// Without the markers, no names asked, all of it is the table.
+	table, rest, _ := strings.Cut(string(output), leasesMarker+"\n")
+	dnsmasq, hosts, _ := strings.Cut(rest, hostsMarker+"\n")
+	found, neighbors := p.parseNeighbors(table, state)
+	plugins.RegisterLeases(state, slices.Concat(plugins.ParseDnsmasqLeases(dnsmasq), plugins.ParseHosts(hosts)), neighbors, p.Name(), p.lifetime)
+	return found, nil
 }
+
+// The markers separate the table, the leases of dnsmasq and the hosts file of odhcpd; and
+// leasesCommand follows the table's command to read them: the leases file of dnsmasq where OpenWrt
+// has it, and where other systems do, and the hosts file odhcpd writes of its DHCPv6 leases,
+// which have no MAC: the table tells whose address each is. A file that isn't there says nothing,
+// and the last command succeeds, as the exit status is its own.
+const (
+	leasesMarker  = "--- ipv6disc leases ---"
+	hostsMarker   = "--- ipv6disc hosts ---"
+	leasesCommand = "; echo '" + leasesMarker + "'; cat /tmp/dhcp.leases /var/lib/misc/dnsmasq.leases 2>/dev/null" +
+		"; echo '" + hostsMarker + "'; cat /tmp/hosts/odhcpd 2>/dev/null; true"
+)
 
 // parseNDPOutput registers the neighbors in `ip -6 neigh` output, and returns how many are new.
 // A line is: fe80::21a:2bff:fe3c:4d5e dev eth0 lladdr 00:1a:2b:3c:4d:5e [router] [extern_learn] STALE [proto zebra]
 //
 // The lines that are not of a neighbor, as a warning of the command, are skipped.
 func (p *LinuxPlugin) parseNDPOutput(output string, state *ipv6disc.State) int {
+	count, _ := p.parseNeighbors(output, state)
+	return count
+}
+
+// parseNeighbors is parseNDPOutput, which returns the neighbors too, registered or known already:
+// the MAC of each address, for the leases that only have an address.
+func (p *LinuxPlugin) parseNeighbors(output string, state *ipv6disc.State) (int, map[netip.Addr]net.HardwareAddr) {
 	scanner := bufio.NewScanner(strings.NewReader(output))
 	count := 0
+	neighbors := make(map[netip.Addr]net.HardwareAddr)
 
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
@@ -125,9 +154,10 @@ func (p *LinuxPlugin) parseNDPOutput(output string, state *ipv6disc.State) int {
 			continue
 		}
 
+		neighbors[ip.Unmap().WithZone("")] = hw
 		if _, existing := state.Register(hw, ip, p.Name(), p.lifetime, nil); !existing {
 			count++
 		}
 	}
-	return count
+	return count, neighbors
 }

@@ -20,6 +20,9 @@ type Config struct {
 	IPv6 Family
 	IPv4 Family
 
+	// The names of the hosts: off unless asked for.
+	Hostnames Hostnames
+
 	// Interfaces limits the local discovery, of both families, to the interfaces whose name
 	// matches one of these patterns, as path.Match takes them: "eth0", "en*". None means every
 	// interface. ExcludeInterfaces then leaves out those matching one of its own: "docker*",
@@ -47,6 +50,18 @@ type Family struct {
 	Lifetime time.Duration
 }
 
+// Hostnames is how the names of the hosts are learned, whatever the family they are heard over.
+type Hostnames struct {
+	// Whether the state takes names, the plugins read those of their router's leases, and the
+	// local discovery listens for mDNS, on the interfaces and for the families it listens on,
+	// and asks the hosts their name. Without it nothing is joined, nor sent, for a name.
+	Enabled bool
+	// How long a name stays after it was last said, whatever said it, the plugins too. Zero:
+	// the lifetime of each registration, Config.Lifetime for the local discovery, and for a
+	// plugin the one it was made with.
+	Lifetime time.Duration
+}
+
 // DefaultConfig discovers IPv6 addresses by every means, and no IPv4 ones. Rediscover is left zero,
 // a third of the lifetime, so that it follows a Lifetime changed afterwards.
 func DefaultConfig() Config {
@@ -67,6 +82,9 @@ func (c Config) warnings() []string {
 		if f.probes && f.lifetime <= c.Rediscover {
 			warnings = append(warnings, fmt.Sprintf("the %s lifetime, %s, is not longer than the rediscovery interval, %s: the hosts that stay quiet expire between probes", f.name, f.lifetime, c.Rediscover))
 		}
+	}
+	if c.namesLocally() && c.Hostnames.Lifetime <= c.Rediscover {
+		warnings = append(warnings, fmt.Sprintf("the names' lifetime, %s, is not longer than the rediscovery interval, %s: a host is asked its name once in each, so the names expire between", c.Hostnames.Lifetime, c.Rediscover))
 	}
 	if c.listensIPv4() && c.IPv4.Lifetime <= interfaceCheckInterval {
 		warnings = append(warnings, fmt.Sprintf("the IPv4 lifetime, %s, is not longer than the %s between readings of the neighbor table: the IPv4 addresses expire between them", c.IPv4.Lifetime, interfaceCheckInterval))
@@ -89,6 +107,9 @@ func (c Config) validate() error {
 	if c.IPv6.Lifetime < 0 || c.IPv4.Lifetime < 0 {
 		errs = append(errs, fmt.Errorf("invalid family lifetime: IPv6 %s, IPv4 %s", c.IPv6.Lifetime, c.IPv4.Lifetime))
 	}
+	if c.Hostnames.Lifetime < 0 {
+		errs = append(errs, fmt.Errorf("invalid names' lifetime: %s", c.Hostnames.Lifetime))
+	}
 	for _, pattern := range slices.Concat(c.Interfaces, c.ExcludeInterfaces) {
 		if _, err := path.Match(pattern, ""); err != nil {
 			errs = append(errs, fmt.Errorf("invalid interface pattern %q: %w", pattern, err))
@@ -97,8 +118,8 @@ func (c Config) validate() error {
 	return errors.Join(errs...)
 }
 
-// withDefaults fills in what is left zero: the families' lifetimes, and the rediscovery interval,
-// from the families that probe.
+// withDefaults fills in what is left zero: the families' lifetimes and the names', and the
+// rediscovery interval, from the families that probe.
 func (c Config) withDefaults() Config {
 	shortest := time.Duration(0)
 	for _, f := range []*Family{&c.IPv6, &c.IPv4} {
@@ -115,6 +136,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.Rediscover == 0 {
 		c.Rediscover = shortest / 3
+	}
+	if c.Hostnames.Lifetime == 0 {
+		c.Hostnames.Lifetime = c.Lifetime
 	}
 	return c
 }
@@ -137,3 +161,8 @@ func (c Config) listensIPv6() bool { return c.IPv6.Enabled && c.IPv6.Listen }
 func (c Config) probesIPv6() bool  { return c.IPv6.Enabled && c.IPv6.Listen && c.IPv6.Active }
 func (c Config) listensIPv4() bool { return c.IPv4.Enabled && c.IPv4.Listen }
 func (c Config) probesIPv4() bool  { return c.IPv4.Enabled && c.IPv4.Listen && c.IPv4.Active }
+
+// namesLocally tells whether the local discovery learns names: asked for, and a family listens.
+func (c Config) namesLocally() bool {
+	return c.Hostnames.Enabled && (c.listensIPv6() || c.listensIPv4())
+}

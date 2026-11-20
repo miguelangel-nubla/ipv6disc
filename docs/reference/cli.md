@@ -5,6 +5,8 @@
 | Flag | Default | |
 |---|---|---|
 | `-exclude_interfaces` | - | No local discovery on these interfaces, comma separated: names, or patterns as docker*,veth* |
+| `-hostnames` | `false` | Learn the names of the hosts: listen for mDNS and ask each host its name, where the families listen, and the plugins read the names of their routers' DHCP leases |
+| `-hostnames_lifetime` | - | How long a name stays after it was last said, in place of -lifetime |
 | `-interfaces` | - | The local discovery only on these interfaces, comma separated: names, or patterns as en*. Without it: all |
 | `-ipv4` | `false` | Discover IPv4 addresses: the plugins read their routers' ARP tables too |
 | `-ipv4_active` | `true` | IPv4: sweep the local subnets, which broadcasts an ARP request for each address |

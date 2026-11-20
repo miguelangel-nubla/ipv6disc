@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -219,5 +220,85 @@ func TestStartNeedsAnInterval(t *testing.T) {
 	plugin := NewLinuxPlugin("router", Config{Address: "192.0.2.1", Username: "root", Password: "secret"}, time.Hour)
 	if err := plugin.Start(context.Background(), ipv6disc.NewState(), nil); err == nil {
 		t.Error("no interval: want an error")
+	}
+}
+
+// With names, the leases of dnsmasq and the hosts of odhcpd are read in the same session, and
+// their names registered: a DHCPv4 lease's at its MAC, a DHCPv6 one's at the MAC the table has its
+// address at, when it is in use. Without, the command is the table's alone.
+func TestDiscoverNames(t *testing.T) {
+	const table = "192.168.1.50 dev br-lan lladdr 00:1a:2b:3c:4d:50 REACHABLE\nfd00::1c3 dev br-lan lladdr 00:1a:2b:3c:4d:60 REACHABLE\nfd00::1c4 dev br-lan lladdr 00:1a:2b:3c:4d:61 STALE\n"
+	const leases = "1700003600 00:1a:2b:3c:4d:50 192.168.1.50 Laptop 01:00:1a:2b:3c:4d:50\n1700003600 00:1a:2b:3c:4d:51 192.168.1.51 * *\n1700003600 00:1a:2b:3c:4d:52 192.168.1.52 ESP_1A2B3C *\n"
+	const hosts = "# br-lan 0001 1052436 phone 1700003600 1c3 128 fd00::1c3/128\nfd00::1c3\tphone.lan\tphone\nfd00::1c4\tleft.lan\n"
+	server := sshtest.Start(t, "root", "secret", func(command string) ([]byte, error) {
+		switch command {
+		case "ip neigh" + leasesCommand:
+			return []byte(table + leasesMarker + "\n" + leases + hostsMarker + "\n" + hosts), nil
+		case "ip -6 neigh" + leasesCommand:
+			// A host with neither file: the markers alone.
+			return []byte("fd00::1c3 dev br-lan lladdr 00:1a:2b:3c:4d:60 REACHABLE\n" + leasesMarker + "\n" + hostsMarker + "\n"), nil
+		case "ip neigh":
+			return []byte(table), nil
+		}
+		return nil, errors.New("unexpected command " + command)
+	})
+	cfg := Config{Interval: time.Minute, Address: server.Address, Username: "root", Password: "secret", HostKey: server.HostKey}
+	names := func(state *ipv6disc.State) []string {
+		var got []string
+		for mac, names := range state.AllNames() {
+			for _, n := range names {
+				got = append(got, mac+" "+n.Name+" "+strings.Join(n.Sources, ","))
+			}
+		}
+		slices.Sort(got)
+		return got
+	}
+
+	state := ipv6disc.NewState()
+	defer state.Close()
+	state.SetFamilies(true, true)
+	state.SetNames(true, 0)
+	found, err := NewLinuxPlugin("router", cfg, time.Hour).discover(context.Background(), state, nil)
+	if err != nil || found != 2 {
+		t.Errorf("found %d, %v, want the two neighbors in use", found, err)
+	}
+	want := []string{
+		"00:1a:2b:3c:4d:50 laptop router",
+		// A lease of a host the table doesn't have: its name waits for its address.
+		"00:1a:2b:3c:4d:52 esp-1a2b3c router",
+		"00:1a:2b:3c:4d:60 phone router",
+	}
+	if got := names(state); !slices.Equal(got, want) {
+		t.Errorf("names %q\nwant %q", got, want)
+	}
+	if got := state.GetAll(); len(got) != 2 {
+		t.Errorf("the leases registered addresses: %v", got)
+	}
+
+	// No lease file there: the neighbors all the same.
+	ipv6Only := ipv6disc.NewState()
+	defer ipv6Only.Close()
+	ipv6Only.SetNames(true, 0)
+	if found, err := NewLinuxPlugin("router", cfg, time.Hour).discover(context.Background(), ipv6Only, nil); err != nil || found != 1 || len(ipv6Only.AllNames()) != 0 {
+		t.Errorf("without lease files: found %d, %v, names %v", found, err, ipv6Only.AllNames())
+	}
+
+	// Without names, nothing more is asked of the host.
+	without := ipv6disc.NewState()
+	defer without.Close()
+	without.SetFamilies(true, true)
+	if found, err := NewLinuxPlugin("router", cfg, time.Hour).discover(context.Background(), without, nil); err != nil || found != 2 || len(without.AllNames()) != 0 {
+		t.Errorf("without names: found %d, %v, names %v", found, err, without.AllNames())
+	}
+	if got := server.Commands(); len(got) != 3 || got[2] != "ip neigh" {
+		t.Errorf("commands: %q", got)
+	}
+}
+
+// The command that reads the leases says nothing of a file that isn't there, and succeeds
+// whatever the last file: its exit status would otherwise fail the poll.
+func TestLeasesCommand(t *testing.T) {
+	if !strings.HasSuffix(leasesCommand, "; true") || strings.Count(leasesCommand, "2>/dev/null") != 2 || !strings.Contains(leasesCommand, "/tmp/dhcp.leases") || !strings.Contains(leasesCommand, "/tmp/hosts/odhcpd") {
+		t.Errorf("the command: %s", leasesCommand)
 	}
 }

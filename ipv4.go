@@ -25,7 +25,8 @@ var (
 // discovery, sweeps the local subnets at every rediscovery first, so that the hosts there that
 // stay quiet are in it too. Each time it registers the interfaces' own addresses, and takes out
 // those they no longer have, which is all it does where the system has no table to read: nothing
-// is swept there. It returns when ctx is done.
+// is swept there. The naming layer has it read the table sooner, for an address it heard of. It
+// returns when ctx is done.
 func (w *Worker) discoverIPv4(ctx context.Context) {
 	ticker := time.NewTicker(interfaceCheckInterval)
 	defer ticker.Stop()
@@ -64,6 +65,14 @@ func (w *Worker) discoverIPv4(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+		case <-w.ipv4Wake:
+			// An address heard of, by the naming layer, which had the kernel resolve it: read
+			// once it has, and those heard of meanwhile with it.
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(ipv4WakeSettle):
+			}
 		}
 	}
 }
