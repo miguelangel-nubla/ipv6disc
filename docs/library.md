@@ -26,6 +26,7 @@ defer cancel()
 if err := worker.Start(ctx); err != nil { // until ctx is done
 	return err
 }
+defer worker.State.Close() // after Wait: the addresses stop expiring
 defer worker.Wait()
 
 for {
@@ -40,7 +41,7 @@ for {
 }
 ```
 
-Import the plugins with `_ "github.com/miguelangel-nubla/ipv6disc/pkg/plugins/all"`, or one by one.
+A worker starts once, and its plugins are registered before `Start`. Import the plugins with `_ "github.com/miguelangel-nubla/ipv6disc/pkg/plugins/all"`, or one by one.
 
 ## Config
 
@@ -51,8 +52,9 @@ Import the plugins with `_ "github.com/miguelangel-nubla/ipv6disc/pkg/plugins/al
 The worker's `State` holds the addresses, by MAC:
 
 - `GetAll`, `FilterMACs`: the addresses, as `AddrCollection`s, which filter by family, subnet and validity. An `Addr` has its MAC, its sources, the interfaces and plugins that saw it, its `Interfaces`, the local ones of them, and its expiration. `Self` tells an address of this machine's own, which `State.RegisterSelf` registers, and `Temporary`, on Linux, one of them the kernel made as a privacy address, which changes every day or so.
-- `Subscribe`: a channel that receives a value after each change, an address added, expired, or seen by a new source. Changes coming faster than they are received are told once.
-- `Register`: adds an address, as the plugins do.
+- `Subscribe`: a channel that receives a value after each change, an address added, expired, or seen by a new source. Changes coming faster than they are received are told once. Its `cancel` doesn't close the channel: wait on the context too.
+- `Register`: adds an address, as the plugins do. It returns nil, and true, for an address the state leaves out: one of a family it doesn't take, one that is invalid, unspecified or multicast, or one with no MAC. `Seen` takes an `Addr` as it is, without those checks nor the families' lifetimes: one it adds is valid for its lifetime from then on.
+- `Close`: stops the expiration of every address, each of which has a goroutine and its timers until it expires. For after `Worker.Wait`, which leaves the state as it is, still expiring: a program that makes workers again and again would otherwise keep those of each for a lifetime. Nothing is removed, and `Valid` still tells by time.
 
 ## Solicitation
 

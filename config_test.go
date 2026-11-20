@@ -1,6 +1,7 @@
 package ipv6disc
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/miguelangel-nubla/ipv6disc/pkg/arp"
 	"go.uber.org/zap"
 )
 
@@ -36,12 +38,25 @@ func TestConfigInterfaces(t *testing.T) {
 		}
 	}
 
-	bad := DefaultConfig()
-	bad.ExcludeInterfaces = []string{"docker["}
-	if err := bad.validate(); err == nil {
-		t.Error("a bad pattern: want an error")
+	// A bad pattern is refused wherever its fault is, also past what could match no name.
+	for _, pattern := range []string{"docker[", "*[", "eth*[", `eth\`, "[]", "[a-]"} {
+		bad := DefaultConfig().withDefaults()
+		bad.ExcludeInterfaces = []string{pattern}
+		if err := bad.validate(); err == nil {
+			t.Errorf("the bad pattern %q excluded: want an error", pattern)
+		}
+		bad.Interfaces, bad.ExcludeInterfaces = bad.ExcludeInterfaces, nil
+		if err := bad.validate(); err == nil {
+			t.Errorf("the bad pattern %q: want an error", pattern)
+		}
 	}
-	bad = DefaultConfig()
+	// An empty pattern is valid, and matches no interface: alone, the local discovery runs on none.
+	empty := DefaultConfig().withDefaults()
+	empty.Interfaces = []string{""}
+	if err := empty.validate(); err != nil || empty.usesInterface("eth0") {
+		t.Errorf("an empty pattern: %v, eth0 used %v", err, empty.usesInterface("eth0"))
+	}
+	bad := DefaultConfig().withDefaults()
 	bad.IPv4.Lifetime = -time.Second
 	if err := bad.validate(); err == nil {
 		t.Error("a negative family lifetime: want an error")
@@ -154,6 +169,141 @@ func TestConfigDefaults(t *testing.T) {
 	}
 }
 
+// The default rediscovery interval follows a lifetime changed after DefaultConfig.
+func TestDefaultConfigRediscoverFollowsTheLifetime(t *testing.T) {
+	if c := DefaultConfig().withDefaults(); c.Rediscover != 80*time.Minute {
+		t.Errorf("the default: %s, want 1h20m", c.Rediscover)
+	}
+	c := DefaultConfig()
+	c.Lifetime = time.Hour
+	c = c.withDefaults()
+	if c.Rediscover != 20*time.Minute || len(c.warnings()) != 0 {
+		t.Errorf("a lifetime of an hour: rediscover %s, warnings %q", c.Rediscover, c.warnings())
+	}
+}
+
+// This machine's own IPv6 addresses are registered again within their lifetime, whatever the
+// interval of the probes: nothing else refreshes them.
+func TestSelfRefreshIsWithinTheLifetime(t *testing.T) {
+	for _, tt := range []struct {
+		what string
+		c    Config
+		want time.Duration
+	}{
+		{"the default", DefaultConfig(), 80 * time.Minute},
+		// Listening only, the rediscovery interval comes from the global lifetime.
+		{"a short IPv6 lifetime, listening only", Config{Lifetime: 4 * time.Hour, IPv6: Family{Enabled: true, Listen: true, Lifetime: 10 * time.Minute}}, 10 * time.Minute / 3},
+		{"a rediscovery interval longer than the lifetime", Config{Lifetime: time.Hour, Rediscover: 80 * time.Minute, IPv6: Family{Enabled: true, Listen: true, Active: true}}, 20 * time.Minute},
+		{"a short rediscovery interval", Config{Lifetime: time.Hour, Rediscover: time.Minute, IPv6: Family{Enabled: true, Listen: true, Active: true}}, time.Minute},
+		{"a lifetime of a second", Config{Lifetime: time.Second, IPv6: Family{Enabled: true, Listen: true}}, time.Second},
+	} {
+		c := tt.c.withDefaults()
+		if err := c.validate(); err != nil {
+			t.Errorf("%s: %v", tt.what, err)
+		}
+		if got := c.selfRefresh(); got != tt.want {
+			t.Errorf("%s: every %s, want %s", tt.what, got, tt.want)
+		}
+	}
+}
+
+// A configuration that loses hosts that are there is valid, and warned of.
+func TestConfigWarnings(t *testing.T) {
+	probing := Family{Enabled: true, Listen: true, Active: true}
+	for _, tt := range []struct {
+		what string
+		c    Config
+		want int
+	}{
+		{"the default", DefaultConfig(), 0},
+		{"rediscovering less often than the lifetime", Config{Lifetime: time.Hour, Rediscover: 80 * time.Minute, IPv6: probing}, 1},
+		{"the same, of both families", Config{Lifetime: time.Hour, Rediscover: time.Hour, IPv6: probing, IPv4: probing}, 2},
+		{"the same, listening only: nothing is probed", Config{Lifetime: time.Hour, Rediscover: 80 * time.Minute, IPv6: Family{Enabled: true, Listen: true}}, 0},
+		{"an IPv4 lifetime of the interval of the table", Config{Lifetime: time.Hour, IPv6: probing, IPv4: Family{Enabled: true, Listen: true, Lifetime: time.Minute}}, 1},
+		{"the same, IPv4 not listening", Config{Lifetime: time.Hour, IPv6: probing, IPv4: Family{Enabled: true, Lifetime: time.Minute}}, 0},
+		{"an IPv4 lifetime of two minutes", Config{Lifetime: time.Hour, IPv6: probing, IPv4: Family{Enabled: true, Listen: true, Lifetime: 2 * time.Minute}}, 0},
+	} {
+		c := tt.c.withDefaults()
+		if err := c.validate(); err != nil {
+			t.Errorf("%s: %v", tt.what, err)
+		}
+		if got := c.warnings(); len(got) != tt.want {
+			t.Errorf("%s: %d warnings, want %d: %q", tt.what, len(got), tt.want, got)
+		}
+	}
+}
+
+// Where the system has no neighbor table, as on Windows, the interfaces' own IPv4 addresses are
+// still registered, and refreshed: they don't expire while the family listens.
+func TestIPv4SelfAddressesWithoutANeighborTable(t *testing.T) {
+	table := arpTable
+	defer func() { arpTable = table }()
+	arpTable = func() ([]arp.Neighbor, error) {
+		return nil, fmt.Errorf("reading the neighbor table: %w", errors.ErrUnsupported)
+	}
+
+	w := NewWorker(zap.NewNop().Sugar(), Config{Lifetime: time.Hour, IPv4: Family{Enabled: true, Listen: true, Active: true}})
+	mac, _ := net.ParseMAC("00:1a:2b:3c:4d:13")
+	interfaces := map[string]ipv4Interface{"eth0": {
+		iface:    net.Interface{Index: 2, Name: "eth0", HardwareAddr: mac},
+		prefixes: []netip.Prefix{netip.MustParsePrefix("192.0.2.5/24")},
+	}}
+
+	err := w.readIPv4Table(interfaces)
+	if !errors.Is(err, errors.ErrUnsupported) || !w.tableUnsupported(err) {
+		t.Errorf("reading the table: %v, want unsupported", err)
+	}
+	if w.tableUnsupported(errors.New("another")) || w.tableUnsupported(nil) {
+		t.Error("another error, or none, taken as unsupported")
+	}
+
+	w.registerSelfIPv4(interfaces)
+	own := w.State.FilterMACs([]net.HardwareAddr{mac}).Get()
+	if len(own) != 1 || own[0].Addr != netip.MustParseAddr("192.0.2.5") || !own[0].Self() {
+		t.Fatalf("this machine's addresses: %v", own)
+	}
+	defer own[0].Unwatch()
+	before := own[0].GetExpiration()
+	time.Sleep(5 * time.Millisecond)
+	w.registerSelfIPv4(interfaces)
+	if again := w.State.FilterMACs([]net.HardwareAddr{mac}).Get(); len(again) != 1 || again[0] != own[0] || !again[0].GetExpiration().After(before) {
+		t.Errorf("registered again: %v, expiring %s after", again, again[0].GetExpiration().Sub(before))
+	}
+}
+
+// An IPv4 address an interface no longer has leaves the state when the interfaces are next read,
+// not a lifetime later: unless they couldn't all be read, when what is missing isn't known gone.
+func TestIPv4SelfAddressesGone(t *testing.T) {
+	w := NewWorker(zap.NewNop().Sugar(), Config{Lifetime: time.Hour, IPv4: Family{Enabled: true, Listen: true}})
+	defer w.State.Close()
+	mac, _ := net.ParseMAC("00:1a:2b:3c:4d:1f")
+	eth0 := func(prefixes ...string) map[string]ipv4Interface {
+		i := ipv4Interface{iface: net.Interface{Index: 2, Name: "eth0", HardwareAddr: mac}}
+		for _, p := range prefixes {
+			i.prefixes = append(i.prefixes, netip.MustParsePrefix(p))
+		}
+		return map[string]ipv4Interface{"eth0": i}
+	}
+	addrs := func() []string { return w.State.FilterMACs([]net.HardwareAddr{mac}).Strings() }
+
+	own := w.syncSelfIPv4(nil, eth0("192.0.2.5/24", "198.51.100.5/24"), true)
+	if len(own) != 2 || len(addrs()) != 2 {
+		t.Fatalf("registered %v, in the state %v", own, addrs())
+	}
+	own = w.syncSelfIPv4(own, map[string]ipv4Interface{}, false)
+	if len(own) != 2 || len(addrs()) != 2 {
+		t.Errorf("the interfaces not all read: registered %v, in the state %v, want both kept", own, addrs())
+	}
+	own = w.syncSelfIPv4(own, eth0("192.0.2.5/24"), true)
+	if got := addrs(); len(own) != 1 || !slices.Equal(got, []string{"192.0.2.5"}) {
+		t.Errorf("an address gone: registered %v, in the state %v", own, got)
+	}
+	own = w.syncSelfIPv4(own, map[string]ipv4Interface{}, true)
+	if got := addrs(); len(own) != 0 || len(got) != 0 {
+		t.Errorf("the interface gone: registered %v, in the state %v", own, got)
+	}
+}
+
 // The latest registration says how long an address stays.
 func TestAddressTakesTheLatestLifetime(t *testing.T) {
 	mac, _ := net.ParseMAC("00:1a:2b:3c:4d:0b")
@@ -218,11 +368,13 @@ func TestSeenAddressesExpire(t *testing.T) {
 }
 
 // Seen of an address already there changes nothing of it, nor races with its watch; one that
-// expired, given again, is watched again and expires again.
+// expired, given again, is seen then, valid for its lifetime again, watched again, and expires
+// again.
 func TestSeenAgain(t *testing.T) {
 	mac, _ := net.ParseMAC("00:1a:2b:3c:4d:0f")
 	state := NewState()
-	a, _ := state.Register(mac, netip.MustParseAddr("2001:db8::f"), "test", 30*time.Millisecond, nil)
+	lifetime := 300 * time.Millisecond
+	a, _ := state.Register(mac, netip.MustParseAddr("2001:db8::f"), "test", lifetime, nil)
 	for range 20 {
 		state.Seen(a, "test")
 		time.Sleep(2 * time.Millisecond)
@@ -234,8 +386,18 @@ func TestSeenAgain(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	// Expired and unwatched: given again, it goes again.
+	// Expired and unwatched: given again, it is there, valid, not with its expiration time past.
+	if a.Valid() {
+		t.Fatal("out of the state, and valid")
+	}
 	state.Seen(a, "test")
+	if got := state.FilterMACs([]net.HardwareAddr{mac}).FilterValid().Get(); !a.Valid() || len(got) != 1 || got[0] != a {
+		t.Errorf("seen again after it expired: valid %v, the valid addresses of the state %v", a.Valid(), got)
+	}
+	if until := time.Until(a.GetExpiration()); until > lifetime || until < lifetime/2 {
+		t.Errorf("seen again after it expired: expires in %s, want its lifetime, %s", until, lifetime)
+	}
+	// And it goes again, once.
 	for len(state.GetAll()) > 0 {
 		if time.Now().After(deadline.Add(3 * time.Second)) {
 			t.Fatal("seen again after it expired, it stays")

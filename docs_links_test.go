@@ -1,11 +1,14 @@
 package ipv6disc_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/miguelangel-nubla/ipv6disc/pkg/arp"
 )
 
 var (
@@ -55,6 +58,22 @@ func TestDocLinks(t *testing.T) {
 			if fragment != "" && strings.HasSuffix(target, ".md") && !anchors[target][fragment] {
 				t.Errorf("%s: %s: no such heading", f, link)
 			}
+		}
+	}
+}
+
+// The bounds the discovery page gives are the code's.
+func TestDiscoveryPageBounds(t *testing.T) {
+	page, err := os.ReadFile(filepath.Join("docs", "discovery.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		fmt.Sprintf("a /%d at most", 32-arp.MaxSweepBits),
+		fmt.Sprintf("up to %d nearest the local address", arp.MaxProbeAddrs),
+	} {
+		if !strings.Contains(string(page), want) {
+			t.Errorf("docs/discovery.md doesn't say %q: the code does", want)
 		}
 	}
 }

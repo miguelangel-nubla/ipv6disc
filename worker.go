@@ -1,11 +1,14 @@
 package ipv6disc
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"net/netip"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -31,13 +34,56 @@ type Worker struct {
 	*State
 	logger        *zap.SugaredLogger
 	plugins       []Plugin
-	protocolConns map[string]*InterfaceProcesses
-	workerCancels map[string]context.CancelFunc
-	pcMutex       sync.RWMutex
+	protocolConns map[workerKey]*InterfaceProcesses
+	workerCancels map[workerKey]context.CancelFunc
+	// Of both maps. Taken before the State's locks, as when an address that went is removed, never
+	// after: the expiration events, which ping, run with none of the State's held.
+	pcMutex sync.RWMutex
 	// The goroutines Start starts, for Wait.
 	running sync.WaitGroup
+	started atomic.Bool
 
 	config Config
+}
+
+// workerKey is what a discovery worker runs on: an address of an interface. The interface's index,
+// name and MAC are part of it, not the address alone: an address can move to another interface, an
+// interface made again has a new index, and its MAC can be changed, while the sockets of a worker,
+// its multicast groups and the packets it takes are of the interface it started on, and the MAC it
+// registers the address with, and solicits from, is the one it started with. Such a worker is
+// stopped, and another started. The same address on two interfaces has a worker on each.
+type workerKey struct {
+	index int
+	name  string
+	addr  netip.Addr
+	// The interface's MAC, as net.HardwareAddr.String: the state's key of it.
+	hw string
+}
+
+func keyOf(iface *net.Interface, addr netip.Addr) workerKey {
+	return workerKey{iface.Index, iface.Name, addr, iface.HardwareAddr.String()}
+}
+
+func (k workerKey) compare(other workerKey) int {
+	return cmp.Or(cmp.Compare(k.index, other.index), cmp.Compare(k.name, other.name), k.addr.Compare(other.addr), cmp.Compare(k.hw, other.hw))
+}
+
+// diffWorkers tells the workers to start, those found that aren't running, and to stop, those
+// running that weren't found, both sorted.
+func diffWorkers[R, F any](running map[workerKey]R, found map[workerKey]F) (start, stop []workerKey) {
+	for key := range found {
+		if _, ok := running[key]; !ok {
+			start = append(start, key)
+		}
+	}
+	for key := range running {
+		if _, ok := found[key]; !ok {
+			stop = append(stop, key)
+		}
+	}
+	slices.SortFunc(start, workerKey.compare)
+	slices.SortFunc(stop, workerKey.compare)
+	return start, stop
 }
 
 type worker interface {
@@ -69,11 +115,13 @@ func NewWorker(logger *zap.SugaredLogger, config Config) *Worker {
 		logger:        logger,
 		config:        config,
 		plugins:       make([]Plugin, 0),
-		protocolConns: make(map[string]*InterfaceProcesses),
-		workerCancels: make(map[string]context.CancelFunc),
+		protocolConns: make(map[workerKey]*InterfaceProcesses),
+		workerCancels: make(map[workerKey]context.CancelFunc),
 	}
 }
 
+// RegisterPlugin adds a plugin for Start to run. It is for before Start, and not for concurrent
+// use: a plugin added later is never started.
 func (w *Worker) RegisterPlugin(p Plugin) {
 	w.logger.Infof("registering plugin: %s", p.Name())
 	w.plugins = append(w.plugins, p)
@@ -152,13 +200,20 @@ func (w *Worker) PrettyPrintStats(prefix string) string {
 
 // Start runs the plugins and, when listening is enabled, the discovery on every interface address,
 // which it keeps in step with the addresses the system has.
-// The discovery stops when ctx is done: Wait waits for it to.
+// The discovery stops when ctx is done: Wait waits for it to. A worker starts once: a second
+// Start is an error, also after the first stopped.
 func (w *Worker) Start(ctx context.Context) error {
 	if err := w.config.validate(); err != nil {
 		return err
 	}
 	if len(w.plugins) == 0 && !w.config.listensIPv6() && !w.config.listensIPv4() {
 		return fmt.Errorf("no plugins configured and no local discovery: nothing to do")
+	}
+	if w.started.Swap(true) {
+		return errors.New("worker already started")
+	}
+	for _, warning := range w.config.warnings() {
+		w.logger.Warn(warning)
 	}
 
 	for _, p := range w.plugins {
@@ -204,7 +259,8 @@ func (w *Worker) Start(ctx context.Context) error {
 }
 
 // Wait returns once the discovery stopped, after the context of Start is done: the listeners are
-// closed, and the plugins returned.
+// closed, and the plugins returned. The addresses of the State stay, and keep expiring, each with
+// its goroutine, until State.Close.
 func (w *Worker) Wait() {
 	w.running.Wait()
 }
@@ -212,7 +268,8 @@ func (w *Worker) Wait() {
 // interfaceCheckInterval is how often the worker looks for interface addresses that came or went.
 const interfaceCheckInterval = time.Minute
 
-// Prefixes returns the /64 networks of the addresses being listened on.
+// Prefixes returns the /64 networks of the addresses being listened on, whatever the length of
+// their prefix on the interface.
 func (w *Worker) Prefixes() []netip.Prefix {
 	w.pcMutex.RLock()
 	defer w.pcMutex.RUnlock()
@@ -231,7 +288,9 @@ func (w *Worker) Prefixes() []netip.Prefix {
 
 // Solicit sends a neighbor solicitation for target on the links that have its /64. If the address
 // is there, its answer registers it as any other discovered address. It returns how many links it
-// was sent on: an address that stays quiet is otherwise never found.
+// was sent on, one solicitation each, whatever addresses of the interface share the /64: an address
+// that stays quiet is otherwise never found. A listener that fails is told in the error, also when
+// another of the interface sent it.
 func (w *Worker) Solicit(target netip.Addr) (int, error) {
 	w.pcMutex.RLock()
 	defer w.pcMutex.RUnlock()
@@ -244,7 +303,7 @@ func (w *Worker) Solicit(target netip.Addr) (int, error) {
 			continue
 		}
 		for _, protocol := range processes.Protocols {
-			conn, ok := protocol.Worker.(*ndp.Conn)
+			conn, ok := protocol.Worker.(solicitor)
 			if !ok {
 				continue
 			}
@@ -259,6 +318,72 @@ func (w *Worker) Solicit(target netip.Addr) (int, error) {
 	return sent, errors.Join(errs...)
 }
 
+// solicitor and pinger are what Solicit and the ping before an expiration need of a listener: the
+// NDP and the ping connections.
+type solicitor interface {
+	SendNeighborSolicitation(target *netip.Addr) error
+}
+
+type pinger interface {
+	SendPing(target *netip.Addr) error
+}
+
+// pingerFor returns the listener to ping target from, of those running on the interfaces that saw
+// it, and what it listens on: one whose address shares the /64 of target if there is, the first in
+// order otherwise. The listener is found when the ping is due, not kept from the registration:
+// the worker that first saw an address can be gone, as when its own address was a temporary one,
+// while others of the interface listen.
+func pingerFor(conns map[workerKey]*InterfaceProcesses, interfaces []string, target netip.Addr) (pinger, *InterfaceProcesses) {
+	var best *InterfaceProcesses
+	var bestPinger pinger
+	sameNet := func(p *InterfaceProcesses) bool {
+		return netip.PrefixFrom(p.Address, 64).Masked().Contains(target.WithZone(""))
+	}
+	for _, key := range slices.SortedFunc(maps.Keys(conns), workerKey.compare) {
+		processes := conns[key]
+		if !slices.Contains(interfaces, processes.InterfaceName) {
+			continue
+		}
+		for _, protocol := range processes.Protocols {
+			if conn, ok := protocol.Worker.(pinger); ok && (best == nil || sameNet(processes) && !sameNet(best)) {
+				best, bestPinger = processes, conn
+			}
+		}
+	}
+	return bestPinger, best
+}
+
+// pingBeforeExpiration pings an address before it expires: its answer keeps it. The state logs the
+// expiration.
+func (w *Worker) pingBeforeExpiration(expired *Addr, remainingEvents AddrExpirationRemainingEvents) {
+	if remainingEvents == 0 || !expired.Is6() {
+		return
+	}
+	target := expired.WithZone("")
+	fields := []any{
+		zap.String("ipv6", target.String()),
+		zap.String("mac", expired.Hw.String()),
+		zap.Int("remainingEvents", int(remainingEvents)),
+	}
+
+	w.pcMutex.RLock()
+	conn, processes := pingerFor(w.protocolConns, expired.Interfaces(), target)
+	w.pcMutex.RUnlock()
+	if conn == nil {
+		w.logger.Debugw("host not seen for a while, no listener on its interfaces to ping it from", fields...)
+		return
+	}
+	fields = append(fields, zap.String("iface", processes.InterfaceName))
+	w.logger.Debugw("host not seen for a while, pinging", fields...)
+
+	if err := conn.SendPing(&target); errors.Is(err, net.ErrClosed) {
+		// The listener stopped meanwhile: the next event finds another, if there is.
+		w.logger.Debugw("ping not sent, the listener stopped", append(fields, zap.Error(err))...)
+	} else if err != nil {
+		w.logger.Errorw("ping failed", append(fields, zap.Error(err))...)
+	}
+}
+
 func (w *Worker) checkInterfaces(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
@@ -270,8 +395,8 @@ func (w *Worker) checkInterfaces(ctx context.Context) {
 		return
 	}
 
-	// The addresses still there: the workers of the others are stopped.
-	seenAddrs := make(map[string]bool)
+	// The addresses there now, each with its interface.
+	found := make(map[workerKey]net.Interface)
 
 	for _, iface := range ifaces {
 		if err := isValidInterface(&iface); err != nil || !w.config.usesInterface(iface.Name) {
@@ -291,46 +416,55 @@ func (w *Worker) checkInterfaces(ctx context.Context) {
 			}
 			addr, ok := netip.AddrFromSlice(ipNet.IP)
 			addr = addr.Unmap()
+			// An interface with a link-local address only is not listened on.
 			if !ok || addr.Is4() || addr.IsLinkLocalUnicast() {
 				continue
 			}
+			found[keyOf(&iface, addr)] = iface
+		}
+	}
 
-			addrStr := addr.String()
-			seenAddrs[addrStr] = true
+	w.syncWorkers(ctx, found, w.StartInterfaceAddr)
+}
 
+// syncWorkers starts a worker, run, on each address found that has none, and stops the workers of
+// the others: of the addresses that went, and of those now on another interface, on one made
+// again, or on one whose MAC changed. Those stop before the others start. An address its interface
+// no longer has with that MAC leaves the state at once, not after its lifetime: it is not this
+// machine's there any more. When only the index changed, it stays for the worker that follows.
+func (w *Worker) syncWorkers(ctx context.Context, found map[workerKey]net.Interface, run func(context.Context, net.Interface, netip.Addr)) {
+	w.pcMutex.Lock()
+	defer w.pcMutex.Unlock()
+
+	start, stop := diffWorkers(w.workerCancels, found)
+	for _, key := range stop {
+		w.logger.Infof("stopping discovery on %s %s", key.name, key.addr)
+		w.workerCancels[key]()
+		delete(w.workerCancels, key)
+		// With the lock registerSelf takes: the worker stopped doesn't register it again.
+		if !slices.ContainsFunc(start, func(s workerKey) bool { return s.name == key.name && s.addr == key.addr && s.hw == key.hw }) {
+			w.State.removeSelf(key.hw, key.addr, key.name)
+		}
+	}
+	for _, key := range start {
+		ctx, cancel := context.WithCancel(ctx)
+		w.workerCancels[key] = cancel
+		w.logger.Debugf("starting discovery on %s %s", key.name, key.addr)
+		// Wait is safe with it: the goroutine that checks the interfaces is itself counted.
+		w.running.Add(1)
+		go func() {
+			defer w.running.Done()
+			run(ctx, found[key], key.addr)
+			// It also ends on a failure to listen: let the next check try again. Stopped, its
+			// entry is gone, or is of the worker that took its place.
 			w.pcMutex.Lock()
-			_, running := w.workerCancels[addrStr]
-			if !running {
-				ctx, cancel := context.WithCancel(ctx)
-				w.workerCancels[addrStr] = cancel
-				w.logger.Debugf("starting discovery on %s %s", iface.Name, addrStr)
-				w.running.Add(1)
-				go func() {
-					defer w.running.Done()
-					w.StartInterfaceAddr(ctx, iface, addr)
-					// It also ends on a failure to listen: let the next check try again, unless a
-					// new worker took its place already.
-					w.pcMutex.Lock()
-					if ctx.Err() == nil {
-						delete(w.workerCancels, addrStr)
-					}
-					w.pcMutex.Unlock()
-					cancel()
-				}()
+			if ctx.Err() == nil {
+				delete(w.workerCancels, key)
 			}
 			w.pcMutex.Unlock()
-		}
-	}
-
-	w.pcMutex.Lock()
-	for addrStr, cancel := range w.workerCancels {
-		if !seenAddrs[addrStr] {
-			w.logger.Infof("stopping discovery on %s", addrStr)
 			cancel()
-			delete(w.workerCancels, addrStr)
-		}
+		}()
 	}
-	w.pcMutex.Unlock()
 }
 
 func (w *Worker) StartInterfaceAddr(ctx context.Context, iface net.Interface, addr netip.Addr) {
@@ -339,37 +473,9 @@ func (w *Worker) StartInterfaceAddr(ctx context.Context, iface net.Interface, ad
 	var pingConn *ping.Conn
 	var ssdpConn *ssdp.Conn
 	var wsdConn *wsd.Conn
-	// For the expiration events, which can come before it listens and after it stops.
-	var pinger atomic.Pointer[ping.Conn]
-
-	// Ping an address before it expires: its answer keeps it. The state logs the expiration.
-	addrOnExpiration := func(expiredAddr *Addr, remainingEvents AddrExpirationRemainingEvents) {
-		if remainingEvents == 0 {
-			return
-		}
-
-		w.logger.Debugw("host not seen for a while, pinging",
-			zap.String("ipv6", netip.AddrFrom16(expiredAddr.As16()).String()),
-			zap.String("mac", expiredAddr.Hw.String()),
-			zap.String("iface", iface.Name),
-			zap.Int("remainingEvents", int(remainingEvents)),
-		)
-
-		if pingConn := pinger.Load(); pingConn != nil {
-			err := pingConn.SendPing(&expiredAddr.Addr)
-			if err != nil {
-				w.logger.Errorw("ping failed",
-					zap.String("ipv6", netip.AddrFrom16(expiredAddr.As16()).String()),
-					zap.String("mac", expiredAddr.Hw.String()),
-					zap.String("iface", iface.Name),
-					zap.Error(err),
-				)
-			}
-		}
-	}
 
 	processNDP := func(receivedAddr netip.Addr, receivedNetHardwareAddr net.HardwareAddr) bool {
-		_, existing := w.State.registerLocal(receivedNetHardwareAddr, receivedAddr, iface.Name, w.config.Lifetime, addrOnExpiration)
+		_, existing := w.State.registerLocal(receivedNetHardwareAddr, receivedAddr, iface.Name, w.config.Lifetime, w.pingBeforeExpiration)
 		return !existing
 	}
 
@@ -405,8 +511,6 @@ func (w *Worker) StartInterfaceAddr(ctx context.Context, iface net.Interface, ad
 		return
 	}
 	defer pingConn.Close()
-	pinger.Store(pingConn)
-	defer pinger.Store(nil)
 
 	ssdpConn, err = ssdp.ListenForSSDP(&iface, addr, onFoundAddrFunc(ndpConn, &iface, w.logger, "SSDP announcement"), onError("SSDP"))
 	if err != nil {
@@ -432,21 +536,37 @@ func (w *Worker) StartInterfaceAddr(ctx context.Context, iface net.Interface, ad
 			{Name: "wsd", Worker: wsdConn},
 		},
 	}
+	key := keyOf(&iface, addr)
 	w.pcMutex.Lock()
-	w.protocolConns[addr.String()] = processes
+	w.protocolConns[key] = processes
 	w.pcMutex.Unlock()
 	defer func() {
 		w.pcMutex.Lock()
 		// Unless a new worker for the same address replaced it already.
-		if w.protocolConns[addr.String()] == processes {
-			delete(w.protocolConns, addr.String())
+		if w.protocolConns[key] == processes {
+			delete(w.protocolConns, key)
 		}
 		w.pcMutex.Unlock()
 	}()
 
-	discover := func() {
-		w.State.RegisterSelf(iface.HardwareAddr, addr, iface.Name, temporaryAddrs()[addr], w.config.Lifetime, addrOnExpiration)
+	// Stopped while it started: nothing to register, nor to probe.
+	if ctx.Err() != nil {
+		return
+	}
 
+	// The address is this machine's for as long as the worker runs: it is registered again well
+	// within its lifetime, whatever the interval of the probes, as nothing else refreshes it.
+	// Not once stopped, which syncWorkers does with the lock, before it takes out of the state the
+	// address that went.
+	registerSelf := func() {
+		w.pcMutex.RLock()
+		defer w.pcMutex.RUnlock()
+		if ctx.Err() != nil {
+			return
+		}
+		w.State.RegisterSelf(iface.HardwareAddr, addr, iface.Name, temporaryAddrs()[addr], w.config.Lifetime, w.pingBeforeExpiration)
+	}
+	probe := func() {
 		if !w.config.probesIPv6() {
 			return
 		}
@@ -458,26 +578,35 @@ func (w *Worker) StartInterfaceAddr(ctx context.Context, iface net.Interface, ad
 	}
 
 	// Bootstrap discovery
-	discover()
+	registerSelf()
+	probe()
 
 	// Periodic re-discovery
 	ticker := time.NewTicker(w.config.Rediscover)
 	defer ticker.Stop()
+	selfTicker := time.NewTicker(w.config.selfRefresh())
+	defer selfTicker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-selfTicker.C:
+			registerSelf()
 		case <-ticker.C:
-			discover()
+			probe()
 		}
 	}
 }
 
+// isValidInterface tells whether the IPv6 discovery can run on the interface: up, multicast, not a
+// loopback, and with a MAC. Without one, as PPP and the tunnels, NDP tells no MAC and a
+// solicitation can't be sent, and the interface's own addresses would be of no host.
 func isValidInterface(iface *net.Interface) error {
 	if iface.Flags&net.FlagUp != 0 &&
 		iface.Flags&net.FlagMulticast != 0 &&
-		iface.Flags&net.FlagLoopback == 0 {
+		iface.Flags&net.FlagLoopback == 0 &&
+		len(iface.HardwareAddr) > 0 {
 		return nil
 	}
 	return &InvalidInterfaceError{iface}

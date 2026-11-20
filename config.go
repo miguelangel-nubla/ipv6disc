@@ -13,7 +13,8 @@ type Config struct {
 	// How long an address stays after it was last seen, unless its family says.
 	Lifetime time.Duration
 	// How often the active discovery runs. Zero: a third of the shortest lifetime of the families
-	// that probe, so that a quiet host is probed before it expires.
+	// that probe, so that a quiet host is probed before it expires. Longer than a family's
+	// lifetime, the hosts that stay quiet expire between probes.
 	Rediscover time.Duration
 
 	IPv6 Family
@@ -46,13 +47,38 @@ type Family struct {
 	Lifetime time.Duration
 }
 
-// DefaultConfig discovers IPv6 addresses by every means, and no IPv4 ones.
+// DefaultConfig discovers IPv6 addresses by every means, and no IPv4 ones. Rediscover is left zero,
+// a third of the lifetime, so that it follows a Lifetime changed afterwards.
 func DefaultConfig() Config {
 	return Config{
-		Lifetime:   4 * time.Hour,
-		Rediscover: 4 * time.Hour / 3,
-		IPv6:       Family{Enabled: true, Listen: true, Active: true},
+		Lifetime: 4 * time.Hour,
+		IPv6:     Family{Enabled: true, Listen: true, Active: true},
 	}
+}
+
+// warnings tells what of a valid configuration, its defaults filled in, loses hosts that are there.
+func (c Config) warnings() []string {
+	var warnings []string
+	for _, f := range []struct {
+		name     string
+		probes   bool
+		lifetime time.Duration
+	}{{"IPv6", c.probesIPv6(), c.IPv6.Lifetime}, {"IPv4", c.probesIPv4(), c.IPv4.Lifetime}} {
+		if f.probes && f.lifetime <= c.Rediscover {
+			warnings = append(warnings, fmt.Sprintf("the %s lifetime, %s, is not longer than the rediscovery interval, %s: the hosts that stay quiet expire between probes", f.name, f.lifetime, c.Rediscover))
+		}
+	}
+	if c.listensIPv4() && c.IPv4.Lifetime <= interfaceCheckInterval {
+		warnings = append(warnings, fmt.Sprintf("the IPv4 lifetime, %s, is not longer than the %s between readings of the neighbor table: the IPv4 addresses expire between them", c.IPv4.Lifetime, interfaceCheckInterval))
+	}
+	return warnings
+}
+
+// selfRefresh is how often the IPv6 discovery registers again the interfaces' own addresses, its
+// defaults filled in: well within their lifetime, whatever the rediscovery interval, which is of
+// the probes. Nothing else refreshes them.
+func (c Config) selfRefresh() time.Duration {
+	return max(min(c.Rediscover, c.IPv6.Lifetime/3), time.Second)
 }
 
 func (c Config) validate() error {

@@ -17,16 +17,26 @@ import (
 // sweepSettle is how long after a sweep its answers take to land in the neighbor table.
 const sweepSettle = 3 * time.Second
 
+// arpTable reads the kernel's IPv4 neighbor table: a variable for the tests.
+var arpTable = arp.Table
+
 // discoverIPv4 reads the kernel's IPv4 neighbor table every interfaceCheckInterval and, with active
 // discovery, sweeps the local subnets at every rediscovery first, so that the hosts there that
-// stay quiet are in it too. It returns when ctx is done, or the system has no table to read.
+// stay quiet are in it too. Each time it registers the interfaces' own addresses, and takes out
+// those they no longer have, which is all it does where the system has no table to read: nothing
+// is swept there. It returns when ctx is done.
 func (w *Worker) discoverIPv4(ctx context.Context) {
 	ticker := time.NewTicker(interfaceCheckInterval)
 	defer ticker.Stop()
 
+	// Asked before the first sweep, which is for the table.
+	_, err := arpTable()
+	neighbors := !w.tableUnsupported(err)
+
 	var lastSweep time.Time
+	own := make(map[workerKey]bool)
 	for {
-		if w.config.probesIPv4() && time.Since(lastSweep) >= w.config.Rediscover {
+		if neighbors && w.config.probesIPv4() && time.Since(lastSweep) >= w.config.Rediscover {
 			lastSweep = time.Now()
 			w.sweepIPv4(ctx)
 			select {
@@ -36,11 +46,14 @@ func (w *Worker) discoverIPv4(ctx context.Context) {
 			}
 		}
 
-		if err := w.readIPv4Table(); errors.Is(err, errors.ErrUnsupported) {
-			w.logger.Warnf("no local IPv4 discovery: %s", err)
-			return
-		} else if err != nil {
-			w.logger.Errorf("IPv4 discovery: %s", err)
+		interfaces, err := w.listIPv4Interfaces()
+		own = w.syncSelfIPv4(own, interfaces, err == nil)
+		if neighbors {
+			if err := w.readIPv4Table(interfaces); w.tableUnsupported(err) {
+				neighbors = false
+			} else if err != nil {
+				w.logger.Errorf("IPv4 discovery: %s", err)
+			}
 		}
 
 		select {
@@ -49,6 +62,15 @@ func (w *Worker) discoverIPv4(ctx context.Context) {
 		case <-ticker.C:
 		}
 	}
+}
+
+// tableUnsupported tells whether err says the system has no neighbor table to read, and logs it.
+func (w *Worker) tableUnsupported(err error) bool {
+	if !errors.Is(err, errors.ErrUnsupported) {
+		return false
+	}
+	w.logger.Warnf("no local IPv4 neighbor discovery, this machine's own addresses only: %s", err)
+	return true
 }
 
 // IPv4Target is a host SolicitIPv4 asks for its IPv4 addresses: its MAC, and the prefixes its
@@ -168,17 +190,26 @@ type ipv4Interface struct {
 // ipv4Interfaces returns the interfaces IPv4 discovery runs on: those the configuration takes
 // which can have IPv4 neighbors, up, broadcast, not loopback, with an IPv4 address.
 func (w *Worker) ipv4Interfaces() map[string]ipv4Interface {
+	result, _ := w.listIPv4Interfaces()
+	return result
+}
+
+// listIPv4Interfaces is ipv4Interfaces, with the error that left interfaces out, if any: what is
+// missing then is not known to be gone.
+func (w *Worker) listIPv4Interfaces() (map[string]ipv4Interface, error) {
 	result := make(map[string]ipv4Interface)
 	ifaces, err := net.Interfaces()
 	if err != nil {
-		return result
+		return result, err
 	}
+	var errs []error
 	for _, iface := range ifaces {
 		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagBroadcast == 0 || iface.Flags&net.FlagLoopback != 0 || len(iface.HardwareAddr) == 0 || !w.config.usesInterface(iface.Name) {
 			continue
 		}
 		addrs, err := iface.Addrs()
 		if err != nil {
+			errs = append(errs, err)
 			continue
 		}
 		var prefixes []netip.Prefix
@@ -197,7 +228,7 @@ func (w *Worker) ipv4Interfaces() map[string]ipv4Interface {
 			result[iface.Name] = ipv4Interface{iface: iface, prefixes: prefixes}
 		}
 	}
-	return result
+	return result, errors.Join(errs...)
 }
 
 func (w *Worker) sweepIPv4(ctx context.Context) {
@@ -216,17 +247,44 @@ func (w *Worker) sweepIPv4(ctx context.Context) {
 	}
 }
 
-// readIPv4Table registers the neighbors of the kernel's table on the interfaces discovery runs
-// on, and the interfaces' own addresses.
-func (w *Worker) readIPv4Table() error {
-	interfaces := w.ipv4Interfaces()
+// registerSelfIPv4 registers the own addresses of the interfaces discovery runs on, or refreshes
+// them: every time the table is read, and as often where there is none. It returns them, by
+// interface name, MAC and address.
+func (w *Worker) registerSelfIPv4(interfaces map[string]ipv4Interface) map[workerKey]bool {
+	own := make(map[workerKey]bool)
 	for name, i := range interfaces {
 		for _, prefix := range i.prefixes {
 			w.State.RegisterSelf(i.iface.HardwareAddr, prefix.Addr(), name, false, w.config.Lifetime, nil)
+			own[workerKey{name: name, addr: prefix.Addr(), hw: i.iface.HardwareAddr.String()}] = true
 		}
 	}
+	return own
+}
 
-	neighbors, err := arp.Table()
+// syncSelfIPv4 is registerSelfIPv4, which also takes out of the state the addresses registered
+// before, previous, that the interfaces no longer have: at once, not after their lifetime, as they
+// are not this machine's any more. Not when the interfaces aren't all known, complete: those
+// missing stay, and are looked for again the next time. It returns the addresses registered so
+// far.
+func (w *Worker) syncSelfIPv4(previous map[workerKey]bool, interfaces map[string]ipv4Interface, complete bool) map[workerKey]bool {
+	own := w.registerSelfIPv4(interfaces)
+	for key := range previous {
+		if own[key] {
+			continue
+		}
+		if complete {
+			w.State.removeSelf(key.hw, key.addr, key.name)
+		} else {
+			own[key] = true
+		}
+	}
+	return own
+}
+
+// readIPv4Table registers the neighbors of the kernel's table on the interfaces discovery runs
+// on.
+func (w *Worker) readIPv4Table(interfaces map[string]ipv4Interface) error {
+	neighbors, err := arpTable()
 	if err != nil {
 		return err
 	}

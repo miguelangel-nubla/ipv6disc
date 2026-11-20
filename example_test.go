@@ -37,6 +37,7 @@ func Example() {
 		if err := worker.Start(ctx); err != nil { // until ctx is done
 			return err
 		}
+		defer worker.State.Close() // after Wait: the addresses stop expiring
 		defer worker.Wait()
 
 		for {

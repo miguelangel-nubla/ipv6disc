@@ -14,6 +14,12 @@ import (
 	"go.uber.org/zap"
 )
 
+// State is the addresses discovered, by MAC.
+//
+// Its locks are taken in this order, never the other way: macsMutex, then an AddrCollection's
+// addressesMutex, then an Addr's mutex. subscribersMutex is taken alone. An address seen again as
+// it expires is safe for it: seen and remove both hold macsMutex, and remove only takes out the very
+// address that expired, if it is still not valid.
 type State struct {
 	macs      map[string]*AddrCollection
 	macsMutex sync.RWMutex
@@ -38,7 +44,8 @@ func (s *State) SetLifetimes(ipv6, ipv4 time.Duration) {
 
 // Subscribe returns a channel that receives a value after the addresses change: one is added, one
 // expires, or one is seen by a new source. Changes coming faster than they are received are told
-// once. cancel stops it.
+// once. cancel stops it, and doesn't close the channel: a reader that waits on it waits on what
+// ends itself too, as its context.
 func (s *State) Subscribe() (changes <-chan struct{}, cancel func()) {
 	ch := make(chan struct{}, 1)
 	s.subscribersMutex.Lock()
@@ -87,10 +94,12 @@ func (s *State) SetLogger(l *zap.SugaredLogger) {
 }
 
 // Register adds a discovered address to the state, or refreshes the one already there. An address
-// of a family the state doesn't take is left out: it returns nil and true, as if known. The
-// family's lifetime, if SetLifetimes gave it one, replaces lifetime.
-// onExpiration, which can be nil, is called on each expiration event of a new address. When the
-// address expires it is logged and taken out of the state, unless it was seen again meanwhile.
+// of a family the state doesn't take is left out: it returns nil and true, as if known. One that is
+// invalid, unspecified or multicast, or has no MAC, is left out the same way: a host is its MAC.
+// The family's lifetime, if SetLifetimes gave it one, replaces lifetime.
+// onExpiration, which can be nil, is called on each expiration event of the address: the first one
+// given stays, also when the address was first registered without. When the address expires it is
+// logged and taken out of the state, unless it was seen again meanwhile.
 func (s *State) Register(hw net.HardwareAddr, ip netip.Addr, source string, lifetime time.Duration, onExpiration func(*Addr, AddrExpirationRemainingEvents)) (*Addr, bool) {
 	return s.register(hw, ip, source, kind{}, lifetime, onExpiration)
 }
@@ -115,6 +124,9 @@ func (s *State) register(hw net.HardwareAddr, ip netip.Addr, source string, k ki
 	if ip.Is4() && !s.IPv4() || ip.Is6() && !s.IPv6() {
 		return nil, true
 	}
+	if !ip.IsValid() || ip.IsUnspecified() || ip.IsMulticast() || len(hw) == 0 {
+		return nil, true
+	}
 	familyLifetime := &s.lifetimeIPv6
 	if ip.Is4() {
 		familyLifetime = &s.lifetimeIPv4
@@ -123,9 +135,13 @@ func (s *State) register(hw net.HardwareAddr, ip netip.Addr, source string, k ki
 		lifetime = l
 	}
 
+	// The callback is the address's, not this registration's: a later one can have given it.
 	expire := func(expiredAddr *Addr, remainingEvents AddrExpirationRemainingEvents) {
-		if onExpiration != nil {
-			onExpiration(expiredAddr, remainingEvents)
+		expiredAddr.mutex.RLock()
+		notify := expiredAddr.notify
+		expiredAddr.mutex.RUnlock()
+		if notify != nil {
+			notify(expiredAddr, remainingEvents)
 		}
 		if remainingEvents != 0 || !s.remove(expiredAddr) {
 			return
@@ -145,6 +161,8 @@ func (s *State) register(hw net.HardwareAddr, ip netip.Addr, source string, k ki
 		newAddr.interfaces = []string{source}
 	}
 	newAddr.self, newAddr.temporary = k.self, k.temporary
+	newAddr.notify = onExpiration
+	newAddr.removedBy = s
 	addr, existing, newSource := s.seen(newAddr, source)
 	if !existing || newSource {
 		defer s.changed()
@@ -159,12 +177,16 @@ func (s *State) register(hw net.HardwareAddr, ip netip.Addr, source string, k ki
 				zap.String("source", source),
 			)
 		}
-	} else if s.logger != nil {
-		s.logger.Debugw("ttl refreshed",
-			zap.String("ip", ip.String()),
-			zap.String("mac", hw.String()),
-			zap.String("source", source),
-		)
+	} else {
+		// After Close, which stopped its events.
+		addr.watch(true)
+		if s.logger != nil {
+			s.logger.Debugw("ttl refreshed",
+				zap.String("ip", ip.String()),
+				zap.String("mac", hw.String()),
+				zap.String("source", source),
+			)
+		}
 	}
 
 	return addr, existing
@@ -172,23 +194,34 @@ func (s *State) register(hw net.HardwareAddr, ip netip.Addr, source string, k ki
 
 // Seen adds the address to the collection of its MAC, or marks the one there as seen.
 // The address is taken as it is: unlike Register, Seen applies neither SetFamilies nor
-// SetLifetimes, and logs nothing. One it adds is watched, its onExpiration called on each event,
-// and it leaves the state when it expires.
+// SetLifetimes, and logs nothing. One it adds is seen now, valid for its lifetime from then on,
+// whenever it was made, and also if it had expired: it is watched, its onExpiration called on each
+// event, and it leaves the state when it expires. The onExpiration of one given for an address
+// already there is not called.
 func (s *State) Seen(addr *Addr, source ...string) (*Addr, bool) {
 	addr, existing, newSource := s.seen(addr, source...)
 	if !existing {
 		addr.mutex.Lock()
-		given := addr.onExpiration
-		addr.onExpiration = func(expired *Addr, remaining AddrExpirationRemainingEvents) {
-			if given != nil {
-				given(expired, remaining)
+		// Once: an address that expired and is given again has it already.
+		if addr.removedBy != s {
+			given := addr.onExpiration
+			addr.onExpiration = func(expired *Addr, remaining AddrExpirationRemainingEvents) {
+				if given != nil {
+					given(expired, remaining)
+				}
+				if remaining == 0 && s.remove(expired) {
+					s.changed()
+				}
 			}
-			if remaining == 0 && s.remove(expired) {
-				s.changed()
-			}
+			addr.removedBy = s
 		}
 		addr.mutex.Unlock()
 		addr.Watch()
+		// Its expiration time with its timers: Watch leaves it as it was, already past for one
+		// that expired.
+		addr.resetTimers(true)
+	} else {
+		addr.watch(true)
 	}
 	if !existing || newSource {
 		s.changed()
@@ -227,6 +260,52 @@ func (s *State) remove(addr *Addr) bool {
 		delete(s.macs, mac)
 	}
 	return removed
+}
+
+// removeSelf takes out of the state an address of this machine's that the interface iface no longer
+// has, valid as it is: the worker knows it gone, which no neighbor's address ever is. One that
+// another interface has too stays, without iface among its interfaces and sources. It returns
+// whether the address was this machine's on iface: a neighbor's with the same MAC and IP is left.
+func (s *State) removeSelf(mac string, ip netip.Addr, iface string) bool {
+	s.macsMutex.Lock()
+	collection, ok := s.macs[mac]
+	if !ok {
+		s.macsMutex.Unlock()
+		return false
+	}
+	addr, removed, empty := collection.removeSelf(ip, iface)
+	if empty {
+		delete(s.macs, mac)
+	}
+	s.macsMutex.Unlock()
+	if addr == nil {
+		return false
+	}
+
+	s.changed()
+	if removed && s.logger != nil {
+		s.logger.Infow("host removed",
+			zap.String("ip", addr.WithZone("").String()),
+			zap.String("mac", mac),
+			zap.String("source", iface),
+		)
+	}
+	return true
+}
+
+// Close stops the expiration events of every address, each with its goroutine and timers: none
+// is removed nor logged after it, but one whose event is under way, and Valid still tells by time. It is for a state whose worker
+// stopped, after Worker.Wait, and can be called more than once. An address registered after it is
+// watched again.
+func (s *State) Close() {
+	s.macsMutex.RLock()
+	defer s.macsMutex.RUnlock()
+
+	for _, collection := range s.macs {
+		for _, addr := range collection.Get() {
+			addr.Unwatch()
+		}
+	}
 }
 
 // GetAll returns the addresses of each MAC.

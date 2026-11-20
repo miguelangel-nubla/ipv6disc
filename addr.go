@@ -14,6 +14,12 @@ type Addr struct {
 
 	lifetime     time.Duration
 	onExpiration func(*Addr, AddrExpirationRemainingEvents)
+	// What State.Register was given to call on the expiration events, read when one fires: a later
+	// registration gives it to an address that has none.
+	notify func(*Addr, AddrExpirationRemainingEvents)
+	// The state whose onExpiration this one has, which takes it out when it expires: State.Seen
+	// wraps it once, however many times the address is given.
+	removedBy *State
 
 	expiration3    *time.Timer
 	expiration2    *time.Timer
@@ -116,6 +122,9 @@ func (a *Addr) seenBy(by *Addr, source ...string) bool {
 	if by.self {
 		a.self, a.temporary = true, by.temporary
 	}
+	if a.notify == nil {
+		a.notify = by.notify
+	}
 	a.mutex.Unlock()
 	a.resetTimers(true)
 	if len(source) == 0 {
@@ -135,8 +144,20 @@ func (a *Addr) seenBy(by *Addr, source ...string) bool {
 
 // Watch calls onExpiration on each of the expiration events, until Unwatch is called. An address
 // seen again after it expired has its events again.
+// It reads the timers' channels after they are reset, which needs the timers of Go 1.23: a reset
+// timer has no stale value left in its channel.
 func (a *Addr) Watch() {
+	a.watch(false)
+}
+
+// watch is Watch. With again, of an address Unwatch stopped only: a state watches again the one
+// registered after its Close, and no address twice.
+func (a *Addr) watch(again bool) {
 	a.mutex.Lock()
+	if again && !a.unwatched {
+		a.mutex.Unlock()
+		return
+	}
 	if a.unwatched {
 		a.unwatch, a.unwatched = make(chan struct{}), false
 	}
@@ -163,6 +184,33 @@ func (a *Addr) Watch() {
 	a.resetTimers(false)
 }
 
+// leaves is for an address of this machine's that iface no longer has: it is no longer among its
+// interfaces, nor its sources. It tells whether the address was one of this machine's on iface,
+// and whether no interface has it now.
+func (a *Addr) leaves(iface string) (was, last bool) {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+	if !a.self || !slices.Contains(a.interfaces, iface) {
+		return false, false
+	}
+	differs := func(name string) bool { return name != iface }
+	a.interfaces = filterStrings(a.interfaces, differs)
+	a.sources = filterStrings(a.sources, differs)
+	return true, len(a.interfaces) == 0
+}
+
+// filterStrings returns a new slice of those keep accepts: Sources and Interfaces give copies, but
+// nothing is written in place of what a reader may hold.
+func filterStrings(values []string, keep func(string) bool) []string {
+	var result []string
+	for _, v := range values {
+		if keep(v) {
+			result = append(result, v)
+		}
+	}
+	return result
+}
+
 // Unwatch stops the expiration events. It can be called more than once.
 func (a *Addr) Unwatch() {
 	a.mutex.Lock()
@@ -178,6 +226,10 @@ func (a *Addr) Unwatch() {
 	a.unwatched = true
 }
 
+// NewAddr makes an address that expires after lifetime: Watch tells its expiration events.
+// Its timers run from now on, watched or not. State.Register makes one for every registration and
+// drops it, unstopped, when the address is already there: that leaks nothing since Go 1.23, which
+// collects a timer nothing refers to.
 func NewAddr(hw net.HardwareAddr, addr netip.Addr, source string, lifetime time.Duration, onExpiration func(*Addr, AddrExpirationRemainingEvents)) *Addr {
 	if onExpiration == nil {
 		onExpiration = func(*Addr, AddrExpirationRemainingEvents) {}

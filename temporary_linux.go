@@ -16,7 +16,9 @@ const ifaFlagTemporary = 0x01
 
 // temporaryAddrs returns this machine's IPv6 addresses the kernel says are temporary, from
 // /proc/net/if_inet6: one line per address, its 32 hex digits, the interface's index, the prefix
-// length, the scope and the flags, in hex, and the interface's name.
+// length, the scope and the flags, in hex, and the interface's name. The kernel prints the low
+// eight bits of the flags only, which has IFA_F_TEMPORARY. The keys have no zone, as the addresses
+// checkInterfaces looks up in it.
 func temporaryAddrs() map[netip.Addr]bool {
 	f, err := os.Open("/proc/net/if_inet6")
 	if err != nil {

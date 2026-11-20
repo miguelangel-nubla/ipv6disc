@@ -77,6 +77,28 @@ func (c *AddrCollection) removeExpired(addr *Addr) (removed bool, empty bool) {
 	return removed, len(c.addresses) == 0
 }
 
+// removeSelf is State.removeSelf, of the collection of the MAC. It returns the address if iface
+// had it as this machine's, whether it was taken out, and whether the collection is left empty.
+func (c *AddrCollection) removeSelf(ip netip.Addr, iface string) (addr *Addr, removed bool, empty bool) {
+	c.addressesMutex.Lock()
+	defer c.addressesMutex.Unlock()
+
+	key := ip.Unmap().WithZone("").String()
+	if existing, ok := c.addresses[key]; ok {
+		if was, last := existing.leaves(iface); was {
+			addr = existing
+			if last {
+				existing.Unwatch()
+				delete(c.addresses, key)
+				removed = true
+			}
+		}
+	}
+	return addr, removed, len(c.addresses) == 0
+}
+
+// Join adds the addresses of addrCollection to c. It locks c, then addrCollection, as Equal does:
+// two collections must not be joined, or compared, both ways at once.
 func (c *AddrCollection) Join(addrCollection *AddrCollection) {
 	if c == addrCollection {
 		return
