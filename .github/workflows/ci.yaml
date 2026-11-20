@@ -32,6 +32,16 @@ jobs:
         name: Vet
         run: go vet ./...
       -
+        # The files of each system, as those of the neighbor table, the temporary addresses and
+        # the terminal: every system the release builds for, which nothing else compiles before
+        # a tag is public.
+        name: Vet for the other systems
+        run: |
+          for os in darwin freebsd netbsd openbsd solaris windows; do
+            echo "== $os"
+            GOOS=$os GOARCH=amd64 go vet ./...
+          done
+      -
         name: Test
         run: go test -race ./...
       -

@@ -21,7 +21,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mdlayher/ndp"
 	"go.uber.org/zap/zaptest"
+	"golang.org/x/net/ipv6"
 )
 
 const (
@@ -29,6 +31,7 @@ const (
 	peerNamespace   = "ipv6disc-test-peer"
 	peerMAC         = "02:00:00:00:00:02"
 	insideEnv       = "IPV6DISC_TEST_INSIDE"
+	advertiseEnv    = "IPV6DISC_TEST_ADVERTISE"
 )
 
 var (
@@ -191,6 +194,75 @@ func TestLiveIPv4Solicit(t *testing.T) {
 	}
 	cancel()
 	w.Wait()
+}
+
+// A neighbor advertisement that was forwarded, its hop limit below 255, tells no host: one sent to
+// the worker's address from anywhere would otherwise give any address to any MAC. The same
+// message from the link does.
+func TestLiveNDPHopLimit(t *testing.T) {
+	if os.Getenv(insideEnv) == "" {
+		runInNamespace(t, "TestLiveNDPHopLimit")
+		return
+	}
+
+	w := NewWorker(zaptest.NewLogger(t).Sugar(), Config{Lifetime: time.Minute, Rediscover: 2 * time.Second,
+		IPv6: Family{Enabled: true, Listen: true, Active: true}})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := w.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// The listener hears the link.
+	waitFor(t, 30*time.Second, "the peer's address", func() bool { return has(w, peerMAC, peerAddr) })
+
+	const forwardedMAC, onLinkMAC = "02:00:00:00:00:64", "02:00:00:00:00:ff"
+	forwarded, onLink := netip.MustParseAddr("fd00:6:1::64"), netip.MustParseAddr("fd00:6:1::ff")
+	for _, hopLimit := range []int{64, 254, 1} {
+		advertise(t, hopLimit, forwarded, forwardedMAC)
+	}
+	// The socket read them before this one: once it is known, they were left out, not late.
+	advertise(t, 255, onLink, onLinkMAC)
+	waitFor(t, 15*time.Second, "the address advertised on the link", func() bool { return has(w, onLinkMAC, onLink) })
+	if _, found := w.GetAll()[forwardedMAC]; found {
+		t.Errorf("%s found at %s, by an advertisement with a hop limit below 255", forwarded, forwardedMAC)
+	}
+	cancel()
+	w.Wait()
+}
+
+// advertise has the peer send the worker's address a neighbor advertisement of target at mac, with
+// that hop limit, as a host anywhere could with one that isn't 255: the test binary again, in the
+// peer's namespace.
+func advertise(t *testing.T, hopLimit int, target netip.Addr, mac string) {
+	t.Helper()
+	cmd := exec.Command("ip", "netns", "exec", peerNamespace, os.Args[0], "-test.run=^TestAdvertise$")
+	cmd.Env = append(os.Environ(), fmt.Sprintf("%s=%d %s %s", advertiseEnv, hopLimit, target, mac))
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("advertising %s with hop limit %d: %v\n%s", target, hopLimit, err, out)
+	}
+}
+
+// TestAdvertise is no test, but what advertise runs in the peer's namespace.
+func TestAdvertise(t *testing.T) {
+	var hopLimit int
+	var target, mac string
+	if n, _ := fmt.Sscanf(os.Getenv(advertiseEnv), "%d %s %s", &hopLimit, &target, &mac); n != 3 {
+		t.Skip("run by advertise, in the peer's namespace")
+	}
+	iface, err := net.InterfaceByName("veth-peer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, _, err := ndp.Listen(iface, ndp.Addr(peerAddr.String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	message := &ndp.NeighborAdvertisement{Override: true, TargetAddress: netip.MustParseAddr(target),
+		Options: []ndp.Option{&ndp.LinkLayerAddress{Direction: ndp.Target, Addr: mustMAC(mac)}}}
+	if err := conn.WriteTo(message, &ipv6.ControlMessage{HopLimit: hopLimit}, workerAddr); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func mustMAC(s string) net.HardwareAddr {

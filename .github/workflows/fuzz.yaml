@@ -33,6 +33,10 @@ jobs:
           go-version: 'stable'
           check-latest: true
       -
+        # A line for each target of each package: go test -list prints the names, then the
+        # package's "ok". The id has the package, as two packages can name a target the same.
+        # Without any fuzz test the matrix is empty, and the fuzz job fails: remove the workflow
+        # with the last of them.
         name: List the fuzz tests
         id: list
         run: |

@@ -15,7 +15,7 @@ builds:
       - freebsd
       # - illumos
       # - ios
-      - js
+      # - js: no sockets, no interfaces: nothing it could do
       - linux
       - netbsd
       - openbsd
@@ -28,7 +28,6 @@ builds:
       - amd64
       - arm
       - arm64
-      - wasm
       - loong64
       - mips
       - mipsle
@@ -40,6 +39,10 @@ builds:
     goarm:
       - 6
       - 7
+    # Go 1.26 has no windows/arm: said here, not left to the goreleaser version to skip.
+    ignore:
+      - goos: windows
+        goarch: arm
 # One image for every platform: the build context has the binary of each at <os>/<arch>[/<variant>]/.
 dockers_v2:
   -
