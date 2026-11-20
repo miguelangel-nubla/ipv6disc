@@ -50,9 +50,11 @@ dockers_v2:
       - "ghcr.io/miguelangel-nubla/{{ .ProjectName }}"
     tags:
       - "{{ .Tag }}"
-      - "v{{ .Major }}"
-      - "v{{ .Major }}.{{ .Minor }}"
-      - latest
+      # A prerelease, as v1.0.0-rc.1, has its own tags only: these stay on the last release.
+      # Empty tags are ignored.
+      - '{{ if not .Prerelease }}v{{ .Major }}{{ end }}'
+      - '{{ if not .Prerelease }}v{{ .Major }}.{{ .Minor }}{{ end }}'
+      - '{{ if not .Prerelease }}latest{{ end }}'
     platforms:
       - linux/386
       - linux/amd64
@@ -89,6 +91,9 @@ archives:
     - goos: windows
       formats: [zip]
 
+# A tag with a prerelease part, as v1.0.0-rc.1, is a prerelease on GitHub: not the latest release.
+release:
+  prerelease: auto
 checksum:
   name_template: 'checksums.txt'
 snapshot:

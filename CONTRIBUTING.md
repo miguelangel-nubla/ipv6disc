@@ -30,3 +30,10 @@ go test ./cmd/ipv6disc -update
 ```
 
 A test fails when the pages are behind, or a param has no description.
+
+## Releases
+
+A tag makes a release: goreleaser builds it and publishes it on GitHub, with its images. Work goes to `dev`, where CI runs on every push, and reaches `main` when it is released.
+
+- **A prerelease** is a tag of `dev` with a prerelease part: `v0.23.0-rc.1`, `-rc.2`, `-beta.1`. GitHub marks it a prerelease, not the latest release, and its images have its own tags only: `latest`, `vX` and `vX.Y` stay on the last release, so nobody gets it who didn't ask for it. ipv6ddns can take one in its `go.mod` to be tested with it before the release.
+- **A release** is `dev` merged into `main`, and tagged there: `v0.23.0`.
