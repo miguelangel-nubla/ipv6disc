@@ -26,7 +26,7 @@ const (
 `
 )
 
-// The link-local scope WS-Discovery multicast address.
+// The link-local scope WS-Discovery multicast address: SSDP's too, on another port.
 var wsDiscoveryMulticastAddress = netip.MustParseAddr("ff02::c")
 
 type Conn struct {
@@ -40,7 +40,13 @@ func (conn *Conn) DiscoverMulticast() error {
 }
 
 func (conn *Conn) SendProbe(target *netip.Addr) error {
-	return conn.Send(*target, wsDiscoveryPort, fmt.Appendf(nil, wsDiscoveryMessage, uuid.New().String()))
+	return conn.Send(*target, wsDiscoveryPort, probeMessage())
+}
+
+// probeMessage is a Probe for every target service, of SOAP 1.2 and WS-Addressing 2004/08, with
+// a message ID of its own: a service ignores a probe it has seen.
+func probeMessage() []byte {
+	return fmt.Appendf(nil, wsDiscoveryMessage, uuid.New().String())
 }
 
 func ListenForWSD(iface *net.Interface, addr netip.Addr, onFoundAddr func(netip.Addr) bool, onError func(error)) (*Conn, error) {

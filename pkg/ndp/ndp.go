@@ -8,6 +8,7 @@ import (
 
 	"github.com/mdlayher/ndp"
 
+	"github.com/miguelangel-nubla/ipv6disc/internal/backoff"
 	"github.com/miguelangel-nubla/ipv6disc/internal/link"
 	"github.com/miguelangel-nubla/ipv6disc/pkg/stats"
 )
@@ -50,8 +51,11 @@ func (conn *Conn) SendNeighborSolicitation(target *netip.Addr) error {
 	return nil
 }
 
-// ListenForNDP calls processNDP with each address and MAC the messages tell. It returns whether the
-// address is a host found, for the stats.
+// ListenForNDP calls processNDP with each address and MAC the messages tell, of those that came in
+// on iface and were never forwarded. It returns whether the address is a host found, for the stats.
+// The addresses have no zone: iface is their link. Closing the connection ends the listening,
+// without a call of onError: any other error of a read is reported, and the next read tried, after
+// a wait that grows while they fail.
 func ListenForNDP(iface *net.Interface, addr netip.Addr, processNDP func(netip.Addr, net.HardwareAddr) bool, onError func(error)) (*Conn, error) {
 	conn, _, err := ndp.Listen(iface, ndp.Addr(addr.String()))
 	if err != nil {
@@ -60,6 +64,10 @@ func ListenForNDP(iface *net.Interface, addr netip.Addr, processNDP func(netip.A
 	// The socket, bound to an address that isn't link-local, hears the multicast NDP of the other
 	// interfaces too: their hosts aren't on this link.
 	link.Enable(conn)
+	// And, bound to such an address, the messages routed to it from anywhere: only a hop limit of
+	// 255 proves that one comes from the link (RFC 4861 7.1). The kernel checks it for its own
+	// neighbor cache, not for what a raw socket reads.
+	hopLimit := link.EnableHopLimit(conn)
 
 	result := &Conn{
 		Conn:       conn,
@@ -68,6 +76,7 @@ func ListenForNDP(iface *net.Interface, addr netip.Addr, processNDP func(netip.A
 	}
 
 	go func() {
+		var retry backoff.Delay
 		for {
 			msg, cm, from, err := conn.ReadFrom()
 			if err != nil {
@@ -77,9 +86,17 @@ func ListenForNDP(iface *net.Interface, addr netip.Addr, processNDP func(netip.A
 				if onError != nil {
 					onError(fmt.Errorf("error reading: %w", err))
 				}
+				// Of the socket, it is not taken as passing: one that stays must not spin the
+				// loop. A message that can't be parsed was read all the same, and the next is.
+				if isSocketError(err) {
+					retry.Wait()
+				} else {
+					retry.Reset()
+				}
 				continue
 			}
-			if !link.From(cm, iface) {
+			retry.Reset()
+			if !link.From(cm, iface) || !link.OnLink(cm, hopLimit) {
 				continue
 			}
 			result.PacketsReceived.Add(1)
@@ -94,8 +111,19 @@ func ListenForNDP(iface *net.Interface, addr netip.Addr, processNDP func(netip.A
 	return result, nil
 }
 
-// processNDPPacket reports the addresses a message tells the link-layer address of.
+// isSocketError tells an error of the read itself from one of the message read, which
+// ndp.Conn.ReadFrom returns alike: the network's errors are the socket's.
+func isSocketError(err error) bool {
+	var netErr net.Error
+	return errors.As(err, &netErr)
+}
+
+// processNDPPacket reports the addresses a message tells the link-layer address of, without a zone.
 func processNDPPacket(message ndp.Message, from netip.Addr, processNDP func(netip.Addr, net.HardwareAddr)) {
+	// ndp.Conn.ReadFrom gives every sender the zone of the interface, a global or the unspecified
+	// address too, and a message's target address has none: with it, the sender would never equal
+	// its own target, nor be the unspecified address.
+	from = from.WithZone("")
 	switch msg := message.(type) {
 	case *ndp.NeighborAdvertisement:
 		// The answer to a solicitation: the target address is the one asked for, and the sender
@@ -110,7 +138,8 @@ func processNDPPacket(message ndp.Message, from netip.Addr, processNDP func(neti
 			}
 		}
 	case *ndp.NeighborSolicitation:
-		// Duplicate address detection solicits from the unspecified address.
+		// Duplicate address detection solicits from the unspecified address, which is no host's:
+		// with a source link-layer address, which RFC 4861 forbids there, neither.
 		if hw := linkLayerAddr(msg.Options, ndp.Source); hw != nil && !from.IsUnspecified() {
 			processNDP(from, hw)
 		}

@@ -10,6 +10,7 @@ import (
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv6"
 
+	"github.com/miguelangel-nubla/ipv6disc/internal/backoff"
 	"github.com/miguelangel-nubla/ipv6disc/internal/link"
 	"github.com/miguelangel-nubla/ipv6disc/pkg/stats"
 )
@@ -36,18 +37,10 @@ func (conn *Conn) DiscoverMulticast() error {
 	return conn.SendPing(&allNodes)
 }
 
+// SendPing sends an echo request to target, out of the connection's interface.
 func (conn *Conn) SendPing(target *netip.Addr) error {
 	conn.PacketsSent.Add(1)
-	m := &icmp.Message{
-		Type: ipv6.ICMPTypeEchoRequest,
-		Code: 0,
-		Body: &icmp.Echo{
-			ID:  int(icmpIDCounter.Add(1)),
-			Seq: 1,
-		},
-	}
-
-	b, err := m.Marshal(nil)
+	b, err := echoRequest()
 	if err != nil {
 		return fmt.Errorf("error marshaling echo request: %w", err)
 	}
@@ -60,8 +53,36 @@ func (conn *Conn) SendPing(target *netip.Addr) error {
 	return nil
 }
 
-// ListenForICMP calls onFoundAddr with the sender of each echo reply. It returns whether the sender
-// is a host found, for the stats.
+// echoRequest is an echo request with the next identifier, of which the 16 low bits go out: the
+// replies aren't matched to it. Its checksum is the kernel's to fill in.
+func echoRequest() ([]byte, error) {
+	m := &icmp.Message{
+		Type: ipv6.ICMPTypeEchoRequest,
+		Code: 0,
+		Body: &icmp.Echo{
+			ID:  int(icmpIDCounter.Add(1)),
+			Seq: 1,
+		},
+	}
+	return m.Marshal(nil)
+}
+
+// isEchoReply tells whether an ICMPv6 message is an echo reply, of any identifier and sequence.
+// The socket hears every ICMPv6 message to this machine, NDP and MLD too, which aren't. A reply
+// longer than the buffer it was read in is cut short, and still one.
+func isEchoReply(b []byte) (bool, error) {
+	msg, err := icmp.ParseMessage(ipv6.ICMPTypeEchoReply.Protocol(), b)
+	if err != nil {
+		return false, fmt.Errorf("error parsing ICMPv6 message: %w", err)
+	}
+	return msg.Type == ipv6.ICMPTypeEchoReply, nil
+}
+
+// ListenForICMP calls onFoundAddr with the sender of each echo reply that comes in on iface, a
+// link-local one with its zone. It returns whether the sender is a host found, for the stats.
+// Any echo reply counts, of another process's ping too: its sender is a host all the same. Closing
+// the connection ends the listening, without a call of onError: any other error of a read is
+// reported, and the next read tried, after a wait that grows while they fail.
 func ListenForICMP(iface *net.Interface, addr netip.Addr, onFoundAddr func(netip.Addr) bool, onError func(error)) (*Conn, error) {
 	conn, err := icmp.ListenPacket("ip6:ipv6-icmp", addr.String())
 	if err != nil {
@@ -79,6 +100,7 @@ func ListenForICMP(iface *net.Interface, addr netip.Addr, onFoundAddr func(netip
 
 	go func() {
 		packet := make([]byte, 1500)
+		var retry backoff.Delay
 		for {
 			n, cm, remote, err := pc.ReadFrom(packet)
 			if err != nil {
@@ -88,21 +110,23 @@ func ListenForICMP(iface *net.Interface, addr netip.Addr, onFoundAddr func(netip
 				if onError != nil {
 					onError(fmt.Errorf("error reading packet: %w", err))
 				}
+				// Not taken as passing: one that stays must not spin the loop.
+				retry.Wait()
 				continue
 			}
+			retry.Reset()
 
 			if !link.From(cm, iface) {
 				continue
 			}
-			msg, err := icmp.ParseMessage(ipv6.ICMPTypeEchoReply.Protocol(), packet[:n])
+			reply, err := isEchoReply(packet[:n])
 			if err != nil {
 				if onError != nil {
-					onError(fmt.Errorf("error parsing ICMPv6 message: %w", err))
+					onError(err)
 				}
 				continue
 			}
-
-			if msg.Type != ipv6.ICMPTypeEchoReply {
+			if !reply {
 				continue
 			}
 			result.PacketsReceived.Add(1)

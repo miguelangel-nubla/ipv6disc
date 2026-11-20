@@ -21,7 +21,13 @@ type Neighbor struct {
 //	? (192.168.1.10) at 00:11:22:33:44:55 on em0 expires in 1189 seconds [ethernet]
 //	? (192.168.1.1) at 0:11:22:33:44:66 on en0 ifscope [ethernet]
 //
-// Incomplete entries, without a MAC, and expired ones, of hosts gone, are left out.
+// Incomplete entries, without a MAC, and expired ones, of hosts gone, are left out, and those of
+// the broadcast addresses and the multicast groups, which macOS lists as any neighbor. It reads the
+// arp -an of Linux's net-tools too, where the interface comes after the type:
+//
+//	? (192.168.1.10) at 00:11:22:33:44:55 [ether] on eth0
+//
+// A neighbor's MAC is of 6 bytes: an entry of another link layer, as Infiniband's, is left out.
 func ParseBSD(output string) []Neighbor {
 	var neighbors []Neighbor
 	scanner := bufio.NewScanner(strings.NewReader(output))
@@ -35,7 +41,7 @@ func ParseBSD(output string) []Neighbor {
 			continue
 		}
 		mac, err := ParseMAC(fields[3])
-		if err != nil {
+		if err != nil || !isHost(ip, mac) {
 			continue
 		}
 		var iface string
@@ -50,8 +56,17 @@ func ParseBSD(output string) []Neighbor {
 	return neighbors
 }
 
+// isHost tells whether a table's entry is of a host: macOS lists the broadcast addresses, at
+// ff:ff:ff:ff:ff:ff, and the multicast groups joined, at 01:00:5e:..., as any neighbor. A subnet's
+// broadcast address doesn't tell by itself, so the group bit of the MAC is enough.
+func isHost(ip netip.Addr, mac net.HardwareAddr) bool {
+	return len(mac) == 6 && mac[0]&1 == 0 &&
+		!ip.IsMulticast() && !ip.IsUnspecified() && ip != netip.AddrFrom4([4]byte{255, 255, 255, 255})
+}
+
 // ParseMAC reads a MAC as net.ParseMAC does, and also with octets of one digit, as macOS writes
-// them: 0:11:22:3:44:55.
+// them: 0:11:22:3:44:55. As net.ParseMAC, it reads the addresses of 8 and 20 bytes too, and any
+// MAC but the all-zero one, a group's as well: ParseBSD returns those of 6 bytes of a host only.
 func ParseMAC(s string) (net.HardwareAddr, error) {
 	octets := strings.Split(s, ":")
 	if len(octets) == 6 {

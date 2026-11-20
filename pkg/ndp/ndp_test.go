@@ -1,6 +1,8 @@
 package ndp
 
 import (
+	"errors"
+	"fmt"
 	"net"
 	"net/netip"
 	"testing"
@@ -24,6 +26,13 @@ func TestProcessNDPPacket(t *testing.T) {
 		{"proxy advertisement", &ndp.NeighborAdvertisement{TargetAddress: target, Options: []ndp.Option{&ndp.LinkLayerAddress{Direction: ndp.Target, Addr: hw}}}, linkLocal, []netip.Addr{linkLocal}},
 		{"solicitation", &ndp.NeighborSolicitation{TargetAddress: target, Options: []ndp.Option{&ndp.LinkLayerAddress{Direction: ndp.Source, Addr: hw}}}, linkLocal, []netip.Addr{linkLocal}},
 		{"duplicate address detection", &ndp.NeighborSolicitation{TargetAddress: target}, netip.IPv6Unspecified(), nil},
+		// As ndp.Conn.ReadFrom gives the senders: with the zone of the interface, always.
+		{"advertisement, zoned sender", &ndp.NeighborAdvertisement{Override: true, TargetAddress: target, Options: []ndp.Option{&ndp.LinkLayerAddress{Direction: ndp.Target, Addr: hw}}}, target.WithZone("eth0"), []netip.Addr{target}},
+		{"advertisement from another address, zoned sender", &ndp.NeighborAdvertisement{Override: true, TargetAddress: target, Options: []ndp.Option{&ndp.LinkLayerAddress{Direction: ndp.Target, Addr: hw}}}, linkLocal.WithZone("eth0"), []netip.Addr{target, linkLocal}},
+		{"proxy advertisement, zoned sender", &ndp.NeighborAdvertisement{TargetAddress: target, Options: []ndp.Option{&ndp.LinkLayerAddress{Direction: ndp.Target, Addr: hw}}}, linkLocal.WithZone("eth0"), []netip.Addr{linkLocal}},
+		{"solicitation, zoned sender", &ndp.NeighborSolicitation{TargetAddress: target, Options: []ndp.Option{&ndp.LinkLayerAddress{Direction: ndp.Source, Addr: hw}}}, linkLocal.WithZone("eth0"), []netip.Addr{linkLocal}},
+		{"duplicate address detection with a source link-layer address", &ndp.NeighborSolicitation{TargetAddress: target, Options: []ndp.Option{&ndp.LinkLayerAddress{Direction: ndp.Source, Addr: hw}}}, netip.IPv6Unspecified(), nil},
+		{"duplicate address detection with a source link-layer address, zoned sender", &ndp.NeighborSolicitation{TargetAddress: target, Options: []ndp.Option{&ndp.LinkLayerAddress{Direction: ndp.Source, Addr: hw}}}, netip.IPv6Unspecified().WithZone("eth0"), nil},
 		{"router solicitation", &ndp.RouterSolicitation{Options: []ndp.Option{&ndp.LinkLayerAddress{Direction: ndp.Source, Addr: hw}}}, linkLocal, nil},
 	}
 	for _, tt := range tests {
@@ -61,5 +70,17 @@ func TestConnStatisticsAreAtomicallyAccessible(t *testing.T) {
 				t.Errorf("connection %d %s = %v, want %d", i, key, got, want)
 			}
 		}
+	}
+}
+
+// Only an error of the socket makes the listener wait before its next read: a message that can't
+// be parsed, which anyone on the link can send, doesn't slow down the reading of the others.
+func TestIsSocketError(t *testing.T) {
+	if !isSocketError(fmt.Errorf("error reading: %w", &net.OpError{Op: "read", Err: errors.New("network is down")})) {
+		t.Error("an error of the read: not of the socket")
+	}
+	_, err := ndp.ParseMessage([]byte{135, 0})
+	if err == nil || isSocketError(err) {
+		t.Errorf("a message cut short: %v, taken as of the socket", err)
 	}
 }

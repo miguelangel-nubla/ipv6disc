@@ -24,8 +24,12 @@ const (
 )
 
 // parseNetlinkNeighbors reads the IPv4 neighbors of a dump of RTM_GETNEIGH. Those confirmed
-// recently or permanent count: a stale entry can stay long after its host left. interfaces names
-// the interface of an index.
+// recently or permanent count, the states REACHABLE, DELAY, PROBE and PERMANENT: a stale entry can
+// stay long after its host left, and FAILED, INCOMPLETE and NOARP ones, as the multicast groups',
+// are no host's. An entry is REACHABLE for the kernel's base_reachable_time only, 15 to 45s, after
+// it was confirmed: what a sweep resolved is to be read right after it. Those of a broadcast or
+// multicast address, or of a MAC that isn't an Ethernet host's, are left out. interfaces names the
+// interface of an index.
 func parseNetlinkNeighbors(b []byte, interfaces func(int) string) []Neighbor {
 	var neighbors []Neighbor
 	for len(b) >= nlmsgHeaderLen {
@@ -78,7 +82,7 @@ func parseNeighMessage(data []byte, interfaces func(int) string) (Neighbor, bool
 		}
 		attributes = attributes[min(align(length), len(attributes)):]
 	}
-	if !n.IP.IsValid() || n.MAC == nil {
+	if !n.IP.IsValid() || n.MAC == nil || !isHost(n.IP, n.MAC) {
 		return Neighbor{}, false
 	}
 	if interfaces != nil {

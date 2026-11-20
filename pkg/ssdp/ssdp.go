@@ -24,14 +24,17 @@ func (conn *Conn) DiscoverMulticast() error {
 	return conn.SendSSDPRequest(&ssdpMulticastAddress)
 }
 
+// SendSSDPRequest sends the search to target, out of the listener's interface whatever the zone
+// of target.
 func (conn *Conn) SendSSDPRequest(target *netip.Addr) error {
 	return conn.Send(*target, ssdpPort, searchMessage(*target))
 }
 
 // searchMessage is an M-SEARCH request for every device and service. Its Host header is the
-// address it is sent to, and as an HTTP request its lines end in CRLF, with an empty one last.
+// address it is sent to, without its zone, which is this machine's name for the link, and as an
+// HTTP request its lines end in CRLF, with an empty one last.
 func searchMessage(target netip.Addr) []byte {
-	host := net.JoinHostPort(target.String(), strconv.Itoa(ssdpPort))
+	host := net.JoinHostPort(target.WithZone("").String(), strconv.Itoa(ssdpPort))
 	return fmt.Appendf(nil, "M-SEARCH * HTTP/1.1\r\nHOST: %s\r\nMAN: \"ssdp:discover\"\r\nMX: 3\r\nST: ssdp:all\r\n\r\n", host)
 }
 

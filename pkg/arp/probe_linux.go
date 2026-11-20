@@ -22,10 +22,19 @@ const probeSettle = 500 * time.Millisecond
 // and returns those of the targets it answered for, the answers to these requests only. Nothing is
 // broadcast, but a switch that doesn't know where mac is, as for a host quiet for minutes, floods
 // the requests to every port, as any frame to it. It needs CAP_NET_RAW. On an error, it returns
-// what was found until then too.
+// what was found until then too. local must be an IPv4 address, and the targets that aren't are
+// not asked for.
+//
+// An answer is an ARP reply from mac, for one of the targets, addressed to this interface's MAC and
+// to local: a gratuitous one, or the answer to another host's request, is not. The requests
+// themselves, which the socket hears too, aren't replies.
 func Probe(ctx context.Context, iface *net.Interface, local netip.Addr, mac net.HardwareAddr, targets []netip.Addr) ([]netip.Addr, error) {
 	if len(mac) != 6 || len(iface.HardwareAddr) != 6 {
 		return nil, fmt.Errorf("probing %s on %s: not Ethernet", mac, iface.Name)
+	}
+	local, targets, err := probeAddrs(local, targets)
+	if err != nil {
+		return nil, fmt.Errorf("probing %s on %s: %w", mac, iface.Name, err)
 	}
 	protocol := htons(unix.ETH_P_ARP)
 	fd, err := unix.Socket(unix.AF_PACKET, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, int(protocol))

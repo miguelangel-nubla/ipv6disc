@@ -1,0 +1,7 @@
+? (192.168.1.1) at 00:11:22:33:44:01 on em0 permanent [ethernet]
+? (192.168.1.10) at 00:11:22:33:44:55 on em0 expires in 1189 seconds [ethernet]
+? (192.168.1.22) at a0:b1:c2:d3:e4:f5 on em0 expires in 34 seconds [ethernet]
+? (192.168.1.30) at (incomplete) on em0 expired [ethernet]
+? (192.168.1.31) at 00:11:22:33:44:88 on em0 expired [ethernet]
+? (10.10.0.1) at 00:11:22:33:44:02 on em1.10 permanent [vlan]
+? (10.10.0.5) at 0e:1f:2a:3b:4c:5d on em1.10 expires in 600 seconds [vlan]

@@ -2,6 +2,7 @@ package arp
 
 import (
 	"encoding/binary"
+	"fmt"
 	"net"
 	"net/netip"
 )
@@ -16,7 +17,25 @@ const (
 	opReply      = 2
 )
 
-// request is the ARP request of sender, at senderIP, for target.
+// probeAddrs returns what a probe from local asks for of targets: the IPv4 ones, an IPv4-mapped
+// IPv6 address as the IPv4 one it is, which is how the replies tell them. ARP has no other
+// addresses: a local one that isn't IPv4 is an error, and such targets are left out.
+func probeAddrs(local netip.Addr, targets []netip.Addr) (netip.Addr, []netip.Addr, error) {
+	local = local.Unmap()
+	if !local.Is4() {
+		return netip.Addr{}, nil, fmt.Errorf("the local address %s is not IPv4", local)
+	}
+	v4 := make([]netip.Addr, 0, len(targets))
+	for _, target := range targets {
+		if target = target.Unmap(); target.Is4() {
+			v4 = append(v4, target)
+		}
+	}
+	return local, v4, nil
+}
+
+// request is the ARP request of sender, at senderIP, for target: both IPv4, as probeAddrs gives
+// them.
 func request(sender net.HardwareAddr, senderIP, target netip.Addr) []byte {
 	b := make([]byte, packetLen)
 	binary.BigEndian.PutUint16(b[0:2], hardwareEth)
