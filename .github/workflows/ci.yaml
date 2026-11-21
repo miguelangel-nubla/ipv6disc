@@ -75,8 +75,8 @@ jobs:
         run: GOARCH=386 go test ./...
 
   # Discovery over real links, between network namespaces, of one instance and of several at once,
-  # and the names a real responder tells, avahi-daemon, which the tests run themselves in the
-  # namespaces: it needs root.
+  # and the names real services tell, which the tests run themselves in the namespaces: avahi,
+  # Samba's nmbd, systemd-resolved, dnsmasq, udhcpc, dhclient, wsdd2 and lldpd. It needs root.
   live-discovery:
     runs-on: ubuntu-latest
     steps:
@@ -92,12 +92,13 @@ jobs:
           go-version: 'stable'
           check-latest: true
       -
-        name: Install avahi-daemon
-        # Not the machine's own, which the package starts: the tests' are in their namespaces.
+        name: Install the services that tell names
+        # Not the machine's own, which the packages start: the tests' are in their namespaces.
+        # systemd-resolved is the runner's own already, and stays.
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -yqq --no-install-recommends avahi-daemon
-          sudo systemctl disable --now avahi-daemon.socket avahi-daemon.service || true
+          sudo apt-get install -yqq --no-install-recommends avahi-daemon samba dnsmasq-base udhcpc isc-dhcp-client wsdd2 lldpd
+          sudo systemctl disable --now avahi-daemon.socket avahi-daemon.service smbd nmbd samba-ad-dc wsdd2 lldpd || true
       -
         name: Build
         # The command too, beside the test: two of it run at once.
@@ -106,7 +107,7 @@ jobs:
           go build -o ipv6disc ./cmd/ipv6disc
       -
         name: Test
-        run: sudo ./integration.test -test.run '^TestLive' -test.v -test.timeout 20m
+        run: sudo ./integration.test -test.run '^TestLive' -test.v -test.timeout 30m
 
   lint:
     runs-on: ubuntu-latest

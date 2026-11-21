@@ -14,8 +14,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/miguelangel-nubla/ipv6disc/internal/fetch"
+	"github.com/miguelangel-nubla/ipv6disc/internal/questions"
 	"github.com/miguelangel-nubla/ipv6disc/pkg/arp"
+	"github.com/miguelangel-nubla/ipv6disc/pkg/llmnr"
 	"github.com/miguelangel-nubla/ipv6disc/pkg/mdns"
+	"github.com/miguelangel-nubla/ipv6disc/pkg/netbios"
 	"go.uber.org/zap"
 )
 
@@ -69,11 +73,11 @@ func newTestNamer(t *testing.T) *testNamer {
 	n := &testNamer{namer: newNamer(state, zap.NewNop().Sugar(), config), clock: time.Now(), listening: true,
 		asker: &fakeAsker{nets: []netip.Prefix{netip.MustParsePrefix("192.168.1.0/24"), netip.MustParsePrefix("2001:db8::/64"), netip.MustParsePrefix("fe80::/10")}}}
 	n.now = func() time.Time { return n.clock }
-	n.askers = func(iface string) []nameAsker {
+	n.askers = func(iface string) []*NameProtocol {
 		if iface != "eth0" {
 			return nil
 		}
-		return []nameAsker{n.asker}
+		return []*NameProtocol{{Name: NameMDNS, Worker: n.asker}}
 	}
 	n.discover = func(iface string, addr netip.Addr) bool {
 		if n.listening {
@@ -144,7 +148,7 @@ func TestNamingAsksTheHostsWithoutAName(t *testing.T) {
 		t.Errorf("a host whose name keeps being said was asked: %v", got)
 	}
 	// The hosts gone are forgotten.
-	n.asked["02:00:00:00:00:63"] = asking{at: n.clock}
+	n.asked["02:00:00:00:00:63"] = &hostAsking{round: n.clock}
 	n.lookups()
 	if len(n.asked) != 1 {
 		t.Errorf("remembers asking %d hosts, want the one there that was", len(n.asked))
@@ -499,7 +503,7 @@ func TestWorkerNaming(t *testing.T) {
 	asker := &fakeAsker{}
 	on.nameConns[nameKey{index: 2, name: "eth0"}] = &nameProcesses{InterfaceName: "eth0", Protocols: []*NameProtocol{{Name: "mdns", Worker: asker}}}
 	listen(on, 2, "eth0", "2001:db8::5")
-	if got := on.nameAskers("eth0"); len(got) != 1 || got[0] != nameAsker(asker) || len(on.nameAskers("eth1")) != 0 {
+	if got := on.nameProtocols("eth0"); len(got) != 1 || got[0].Worker != worker(asker) || len(on.nameProtocols("eth1")) != 0 || len(on.nameProtocols("")) != 0 {
 		t.Errorf("the protocols of eth0: %v", got)
 	}
 	stats := on.PrettyPrintStats("")
@@ -556,13 +560,33 @@ func TestDiscoveryPageNamesBounds(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		fmt.Sprintf("and %d hosts a second at most", namingRate),
+		fmt.Sprintf("and %d questions a second are sent at most", namingRate),
+		fmt.Sprintf("one after another, %d seconds apart", namingStep/time.Second),
 		fmt.Sprintf("on port %d", mdns.Port),
+		fmt.Sprintf("to port %d of the host", netbios.Port),
+		fmt.Sprintf("on port %d, with a hop limit of 1", llmnr.Port),
+		fmt.Sprintf("a question sent in the last %d seconds, from where it was sent", questions.Timeout/time.Second),
+		fmt.Sprintf("The request has %d seconds, the document %d KB at most", fetch.Timeout/time.Second, fetch.Limit>>10),
+		fmt.Sprintf("and %d are under way at once at most", fetch.AtOnce),
+		fmt.Sprintf("and what was said waits for it, %d seconds at most", namingPatience/time.Second),
 		"less than three rediscovery intervals left, or half its lifetime",
 		"a reading of the neighbor table a second later",
 	} {
 		if !strings.Contains(string(page), want) {
 			t.Errorf("docs/discovery.md doesn't say %q: the code does", want)
+		}
+	}
+	// The order the page gives is the one they ask in.
+	order := []string{"1. **mDNS**", "2. **The reverse DNS**", "3. **NetBIOS**", "4. **LLMNR**"}
+	for i, protocol := range []string{NameMDNS, NameDNS, NameNetBIOS, NameLLMNR} {
+		if nameOrder[i] != protocol || !strings.Contains(string(page), order[i]) {
+			t.Errorf("docs/discovery.md doesn't have %q as the protocol %d to ask: the code has %s", order[i], i+1, nameOrder[i])
+		}
+	}
+	// And every protocol is in its table, with its source.
+	for _, protocol := range NameProtocols() {
+		if !strings.Contains(string(page), "| `"+protocol+"` |") {
+			t.Errorf("docs/discovery.md has no row of the source %q", protocol)
 		}
 	}
 	if ipv4WakeSettle != time.Second {
@@ -582,7 +606,12 @@ func TestNamingManyHosts(t *testing.T) {
 	config := Config{Lifetime: time.Hour, Rediscover: 20 * time.Millisecond, Hostnames: Hostnames{Enabled: true, Lifetime: 60 * time.Millisecond}}.withDefaults()
 	n := newNamer(state, zap.NewNop().Sugar(), config)
 	asker := &fakeAsker{nets: []netip.Prefix{netip.MustParsePrefix("192.168.0.0/16"), netip.MustParsePrefix("fe80::/10")}}
-	n.askers = func(string) []nameAsker { return []nameAsker{asker} }
+	n.askers = func(iface string) []*NameProtocol {
+		if iface == "" {
+			return nil
+		}
+		return []*NameProtocol{{Name: NameMDNS, Worker: asker}}
+	}
 	n.discover = func(string, netip.Addr) bool { return true }
 
 	const hosts = 300

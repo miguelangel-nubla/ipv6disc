@@ -45,7 +45,7 @@ A worker starts once, and its plugins are registered before `Start`. A program c
 
 ## Config
 
-`Config` is what the [command's flags](reference/cli.md) set: a `Family` for each of `IPv6` and `IPv4`, with `Enabled`, `Listen`, `Active` and `Lifetime`, the `Lifetime` and `Rediscover` of all, the `Interfaces` and `ExcludeInterfaces`, and `Hostnames`, with `Enabled`, off by default, and `Lifetime`. The [discovery](discovery.md) page says what each does. A zero `Rediscover` is a third of the shortest lifetime of the families that probe. A family's zero `Lifetime` leaves each registration its own: `Config.Lifetime` for the local discovery, and for a plugin the lifetime it was made with.
+`Config` is what the [command's flags](reference/cli.md) set: a `Family` for each of `IPv6` and `IPv4`, with `Enabled`, `Listen`, `Active` and `Lifetime`, the `Lifetime` and `Rediscover` of all, the `Interfaces` and `ExcludeInterfaces`, and `Hostnames`, with `Enabled`, off by default, its `Lifetime`, the `Protocols` the local discovery learns names by, all of `NameProtocols()` when none is named, and the `DNS` servers asked the name of each address, none by default: `ParseNameServer` reads one as the flag does. The [discovery](discovery.md) page says what each does. A zero `Rediscover` is a third of the shortest lifetime of the families that probe. A family's zero `Lifetime` leaves each registration its own: `Config.Lifetime` for the local discovery, and for a plugin the lifetime it was made with.
 
 ## State
 
@@ -60,12 +60,12 @@ The worker's `State` holds the addresses, by MAC:
 
 With `Config.Hostnames.Enabled`, the state holds the [names](discovery.md#names) of the hosts too, by MAC:
 
-- `NamesOf`, `AllNames`: the names of a MAC, or of each, whose lifetime is running, as `HostName`s: the `Name`, its `Sources`, when it was last `Seen` and its `Expiration`. They are copies. A name is the host's, not an address's: use it with whichever addresses `GetAll` has at that MAC.
+- `NamesOf`, `AllNames`: the names of a MAC, or of each, whose lifetime is running, as `HostName`s: the `Name`, its `Sources`, each a protocol of the local discovery, as `mdns`, `dns`, `netbios`, `llmnr`, `wsd`, `ssdp`, `dhcp` or `lldp`, or a plugin's name, when it was last `Seen` and its `Expiration`. They are copies. A name is the host's, not an address's: use it with whichever addresses `GetAll` has at that MAC.
 - `Subscribe` tells the changes of the names as those of the addresses: a name added, expired, gone with its host, or said by a new source.
-- `RegisterName`: adds a name of a MAC, as a source said it, for a lifetime, or refreshes it, as `Register` does an address. It is the one way in, of mDNS and of the plugins: a plugin calls it when `State.Names` tells that the state takes names. The name is cleaned by `CleanName`, to one DNS label, and left out when nothing is left of it.
+- `RegisterName`: adds a name of a MAC, as a source said it, for a lifetime, or refreshes it, as `Register` does an address. It is the one way in, of the local discovery and of the plugins: a plugin calls it when `State.Names` tells that the state takes names. The name is cleaned by `CleanName`, to one DNS label, and left out when nothing is left of it.
 - `SetNames`: what the worker does with `Config.Hostnames`, for a state made by hand: without it, a state takes no names.
 
-A name is whatever a device claims: a hint of which host a MAC is, not a proof.
+A name is whatever a device claims: a hint of which host a MAC is, not a proof. The sources are not worth the same: `mdns`, `dhcp`, `netbios`, `llmnr` and `wsd` are the host's own name for itself, `dns` and a plugin's what a server of the network calls it, `lldp` what a switch or a host calls itself, and `ssdp` a label for people, that two devices of a model may share. A program that needs one name of a host picks by them.
 
 ## Solicitation
 

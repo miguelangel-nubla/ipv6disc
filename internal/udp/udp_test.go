@@ -166,3 +166,30 @@ func TestReadErrorsAreRetriedWithABackoff(t *testing.T) {
 		t.Errorf("%d errors reported of %d reads, the last one the close", errs.Load(), reads.Load())
 	}
 }
+
+// A protocol that reads what the senders say gets each packet, with its sender.
+func TestListenPackets(t *testing.T) {
+	loopback := netip.MustParseAddr("::1")
+	packets := make(chan string, 2)
+	conn, err := ListenPackets(loopbackInterface(t), loopback, func(from netip.Addr, packet []byte) bool {
+		packets <- from.String() + " " + string(packet)
+		return true
+	}, func(err error) { t.Error(err) })
+	if err != nil {
+		t.Skipf("no IPv6 loopback: %v", err)
+	}
+	defer conn.Close()
+	for _, message := range []string{"the first", "and a second"} {
+		if err := conn.Send(loopback, int(conn.GetListenAddrPort().Port()), []byte(message)); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case got := <-packets:
+			if got != "::1 "+message {
+				t.Errorf("got %q, want %q from ::1", got, message)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("no packet")
+		}
+	}
+}

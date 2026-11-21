@@ -11,8 +11,8 @@ import (
 	"go.uber.org/zap"
 )
 
-// HostName is a name of a host, as something said it: the host itself, over mDNS, or the leases of
-// a router. It is whatever the device claims, cleaned to one DNS label by CleanName: nothing
+// HostName is a name of a host, as something said it: the host itself, over mDNS or as it asked
+// for an address, a DNS server asked of it, or the leases of a router. It is whatever the device claims, cleaned to one DNS label by CleanName: nothing
 // proves it, and two hosts can claim the same.
 //
 // A name is the host's, its MAC's, not an address's: one learned over IPv4 is the host's for its
@@ -20,7 +20,8 @@ import (
 // have several at once, when its sources disagree or it was renamed.
 type HostName struct {
 	Name string
-	// What said it, in the order they first did: "mdns", or a plugin's name.
+	// What said it, in the order they first did: a protocol of the local discovery, as "mdns"
+	// or "dhcp" (NameProtocols), or a plugin's name.
 	Sources []string
 	// When it was last said, and until when it stays without being said again.
 	Seen       time.Time
@@ -270,6 +271,32 @@ func validNames(host map[string]*HostName, now time.Time) []HostName {
 	}
 	slices.SortFunc(names, func(a, b HostName) int { return strings.Compare(a.Name, b.Name) })
 	return names
+}
+
+// hasHost tells whether the state has a host at that MAC: an address of it, still valid.
+func (s *State) hasHost(hw net.HardwareAddr) bool {
+	s.macsMutex.RLock()
+	collection := s.macs[hw.String()]
+	s.macsMutex.RUnlock()
+	if collection == nil {
+		return false
+	}
+	return slices.ContainsFunc(collection.Get(), (*Addr).Valid)
+}
+
+// has tells whether the state has ip at that MAC, still valid, as the local interface iface saw
+// it.
+func (s *State) has(hw net.HardwareAddr, ip netip.Addr, iface string) bool {
+	s.macsMutex.RLock()
+	collection := s.macs[hw.String()]
+	s.macsMutex.RUnlock()
+	if collection == nil {
+		return false
+	}
+	collection.addressesMutex.RLock()
+	addr, ok := collection.addresses[ip.Unmap().WithZone("").String()]
+	collection.addressesMutex.RUnlock()
+	return ok && addr.Valid() && slices.Contains(addr.Interfaces(), iface)
 }
 
 // macOf tells the MAC the state has ip at, among its addresses still valid, for what was heard

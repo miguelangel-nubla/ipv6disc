@@ -3,9 +3,13 @@ package ipv6disc
 import (
 	"errors"
 	"fmt"
+	"net/netip"
 	"path"
 	"slices"
+	"strings"
 	"time"
+
+	"github.com/miguelangel-nubla/ipv6disc/pkg/rdns"
 )
 
 // Config is how a Worker discovers addresses: the same for each family.
@@ -38,7 +42,8 @@ type Family struct {
 	// rest is off.
 	Enabled bool
 	// Passive local discovery. IPv6: listening for NDP, and the answers of the protocols. IPv4:
-	// reading the kernel's neighbor table.
+	// reading the kernel's neighbor table, and on Linux, with CAP_NET_RAW, hearing the ARP the
+	// hosts send, which tells each at once.
 	Listen bool
 	// Probing every host of the local links, at every Rediscover. IPv6: multicast ping, SSDP
 	// and WS-Discovery. IPv4: a sweep of the subnets, which broadcasts an ARP request for each
@@ -53,9 +58,18 @@ type Family struct {
 // Hostnames is how the names of the hosts are learned, whatever the family they are heard over.
 type Hostnames struct {
 	// Whether the state takes names, the plugins read those of their router's leases, and the
-	// local discovery listens for mDNS, on the interfaces and for the families it listens on,
-	// and asks the hosts their name. Without it nothing is joined, nor sent, for a name.
+	// local discovery learns them by Protocols, on the interfaces and for the families it
+	// listens on, and asks the hosts their name. Without it nothing is joined, heard, fetched
+	// nor sent for a name.
 	Enabled bool
+	// The protocols the local discovery learns names by, of NameProtocols: "mdns", "dns",
+	// "netbios", "llmnr", "wsd", "ssdp", "dhcp", "lldp". None means all of them. The plugins
+	// aren't concerned: they read the names of their leases whatever is here.
+	Protocols []string
+	// The DNS servers asked the name of each address, the PTR record of its reverse name, by
+	// the protocol "dns": none by default, and then nothing is asked. Only these, never the
+	// system's resolver. With a port of zero, at 53.
+	DNS []netip.AddrPort
 	// How long a name stays after it was last said, whatever said it, the plugins too. Zero:
 	// the lifetime of each registration, Config.Lifetime for the local discovery, and for a
 	// plugin the one it was made with.
@@ -83,8 +97,14 @@ func (c Config) warnings() []string {
 			warnings = append(warnings, fmt.Sprintf("the %s lifetime, %s, is not longer than the rediscovery interval, %s: the hosts that stay quiet expire between probes", f.name, f.lifetime, c.Rediscover))
 		}
 	}
-	if c.namesLocally() && c.Hostnames.Lifetime <= c.Rediscover {
+	if c.asksNames() && c.Hostnames.Lifetime <= c.Rediscover {
 		warnings = append(warnings, fmt.Sprintf("the names' lifetime, %s, is not longer than the rediscovery interval, %s: a host is asked its name once in each, so the names expire between", c.Hostnames.Lifetime, c.Rediscover))
+	}
+	if c.Hostnames.Enabled && len(c.Hostnames.DNS) > 0 && !c.names(NameDNS) {
+		warnings = append(warnings, "DNS servers are given for the names, but dns is not among the protocols of the names: they are not asked")
+	}
+	if c.Hostnames.Enabled && len(c.Hostnames.DNS) == 0 && slices.Contains(c.Hostnames.Protocols, NameDNS) {
+		warnings = append(warnings, "dns is among the protocols of the names, but no DNS server is given: nothing is asked")
 	}
 	if c.listensIPv4() && c.IPv4.Lifetime <= interfaceCheckInterval {
 		warnings = append(warnings, fmt.Sprintf("the IPv4 lifetime, %s, is not longer than the %s between readings of the neighbor table: the IPv4 addresses expire between them", c.IPv4.Lifetime, interfaceCheckInterval))
@@ -109,6 +129,16 @@ func (c Config) validate() error {
 	}
 	if c.Hostnames.Lifetime < 0 {
 		errs = append(errs, fmt.Errorf("invalid names' lifetime: %s", c.Hostnames.Lifetime))
+	}
+	for _, protocol := range c.Hostnames.Protocols {
+		if !slices.Contains(NameProtocols(), protocol) {
+			errs = append(errs, fmt.Errorf("invalid protocol of the names %q: they are %s", protocol, strings.Join(NameProtocols(), ", ")))
+		}
+	}
+	for _, server := range c.Hostnames.DNS {
+		if !server.Addr().IsValid() || server.Addr().IsUnspecified() || server.Addr().IsMulticast() {
+			errs = append(errs, fmt.Errorf("invalid DNS server of the names: %s", server))
+		}
 	}
 	for _, pattern := range slices.Concat(c.Interfaces, c.ExcludeInterfaces) {
 		if _, err := path.Match(pattern, ""); err != nil {
@@ -140,6 +170,13 @@ func (c Config) withDefaults() Config {
 	if c.Hostnames.Lifetime == 0 {
 		c.Hostnames.Lifetime = c.Lifetime
 	}
+	// Its own copy, with the port of DNS where none is given.
+	c.Hostnames.DNS = slices.Clone(c.Hostnames.DNS)
+	for i, server := range c.Hostnames.DNS {
+		if server.Port() == 0 {
+			c.Hostnames.DNS[i] = netip.AddrPortFrom(server.Addr(), rdns.Port)
+		}
+	}
 	return c
 }
 
@@ -165,4 +202,22 @@ func (c Config) probesIPv4() bool  { return c.IPv4.Enabled && c.IPv4.Listen && c
 // namesLocally tells whether the local discovery learns names: asked for, and a family listens.
 func (c Config) namesLocally() bool {
 	return c.Hostnames.Enabled && (c.listensIPv6() || c.listensIPv4())
+}
+
+// names tells whether names are learned by that protocol: asked for, and it is among the
+// protocols, or none is named.
+func (c Config) names(protocol string) bool {
+	return c.Hostnames.Enabled && (len(c.Hostnames.Protocols) == 0 || slices.Contains(c.Hostnames.Protocols, protocol))
+}
+
+// asksNames tells whether anything asks the hosts their name: the local discovery, or the DNS
+// servers given, which are asked of the hosts the plugins found too.
+func (c Config) asksNames() bool {
+	return c.namesLocally() || c.names(NameDNS) && len(c.Hostnames.DNS) > 0
+}
+
+// ParseNameServer reads a DNS server of Hostnames.DNS as it is written: an address, alone or
+// with a port, the one of an IPv6 address in brackets. Without a port, it is at 53.
+func ParseNameServer(s string) (netip.AddrPort, error) {
+	return rdns.ParseServer(s)
 }

@@ -45,8 +45,8 @@ const (
 type report struct {
 	// The addresses of each MAC.
 	Hosts map[string][]reportAddr
-	// The packets each protocol sent and took, over the interfaces: ndp, ping, ssdp, wsd, and
-	// mdns of the naming layer.
+	// The packets each protocol sent and took, over the interfaces: ndp, ping, ssdp, wsd, arp,
+	// which only hears, and those of the naming layer, as mdns.
 	Sent, Received map[string]uint64
 	// The names of each MAC.
 	Names map[string][]reportName
@@ -84,19 +84,27 @@ func snapshot(w *Worker) report {
 	}
 	w.pcMutex.RLock()
 	defer w.pcMutex.RUnlock()
+	count := func(name string, stats map[string]any) {
+		// What only hears has nothing sent.
+		sent, _ := stats["sent"].(uint64)
+		r.Sent[name] += sent
+		r.Received[name] += stats["recv"].(uint64)
+	}
 	for _, processes := range w.protocolConns {
 		for _, protocol := range processes.Protocols {
-			stats := protocol.Worker.Stats()
-			r.Sent[protocol.Name] += stats["sent"].(uint64)
-			r.Received[protocol.Name] += stats["recv"].(uint64)
+			count(protocol.Name, protocol.Worker.Stats())
 		}
 	}
 	for _, processes := range w.nameConns {
 		for _, protocol := range processes.Protocols {
-			stats := protocol.Worker.Stats()
-			r.Sent[protocol.Name] += stats["sent"].(uint64)
-			r.Received[protocol.Name] += stats["recv"].(uint64)
+			count(protocol.Name, protocol.Worker.Stats())
 		}
+	}
+	for _, protocol := range w.nameGlobal {
+		count(protocol.Name, protocol.Worker.Stats())
+	}
+	for _, listener := range w.arpListeners {
+		count("arp", listener.Stats())
 	}
 	return r
 }
@@ -198,11 +206,18 @@ type remoteInstance struct {
 // test's own. It returns before the worker started: the first report waits for it.
 func startInstance(t *testing.T, namespace string, config Config) *remoteInstance {
 	t.Helper()
+	return startInstanceAs(t, namespace, config)
+}
+
+// startInstanceAs is startInstance, of a worker run by the command given, which runs the one
+// that follows it: as one that takes a privilege from it.
+func startInstanceAs(t *testing.T, namespace string, config Config, by ...string) *remoteInstance {
+	t.Helper()
 	encoded, err := json.Marshal(config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	args := []string{os.Args[0], "-test.run=^TestInstance$", "-test.timeout=10m"}
+	args := append(by, os.Args[0], "-test.run=^TestInstance$", "-test.timeout=10m")
 	name := "the other process"
 	if namespace != "" {
 		args = append([]string{"ip", "netns", "exec", namespace}, args...)
@@ -1063,6 +1078,16 @@ type capture struct {
 	counts map[string]map[string]int
 	// The port each MAC last sent a query to the group of mDNS from, of each family.
 	mdnsPorts map[string]map[bool]uint16
+	// The UDP port each MAC last sent each kind of probe from.
+	ports map[string]map[string]uint16
+}
+
+// port returns the UDP port mac last sent a probe of that kind from: zero if it sent none. Not
+// reset.
+func (c *capture) port(mac, kind string) uint16 {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	return c.ports[mac][kind]
 }
 
 // mdnsPort returns the port mac last sent a query to the group of mDNS from, over IPv4 or IPv6:
@@ -1107,7 +1132,7 @@ func startCapture(t *testing.T, ports ...string) *capture {
 	if err := unix.SetsockoptTimeval(fd, unix.SOL_SOCKET, unix.SO_RCVTIMEO, &unix.Timeval{Usec: 100_000}); err != nil {
 		t.Fatal(err)
 	}
-	c := &capture{counts: make(map[string]map[string]int), mdnsPorts: make(map[string]map[bool]uint16)}
+	c := &capture{counts: make(map[string]map[string]int), mdnsPorts: make(map[string]map[bool]uint16), ports: make(map[string]map[string]uint16)}
 	stop, done := make(chan struct{}), make(chan struct{})
 	t.Cleanup(func() { close(stop); <-done; unix.Close(fd) })
 	go func() {
@@ -1134,6 +1159,12 @@ func startCapture(t *testing.T, ports ...string) *capture {
 					c.counts[mac] = make(map[string]int)
 				}
 				c.counts[mac][kind]++
+				if port := udpSource(buf[:n]); port != 0 {
+					if c.ports[mac] == nil {
+						c.ports[mac] = make(map[string]uint16)
+					}
+					c.ports[mac][kind] = port
+				}
 				if kind == "mdns" {
 					// Where the UDP header is: after an IPv4 header without options, or an IPv6 one.
 					ipv4 := binary.BigEndian.Uint16(buf[12:14]) == unix.ETH_P_IP
@@ -1153,27 +1184,67 @@ func startCapture(t *testing.T, ports ...string) *capture {
 	return c
 }
 
+// udpSource is the port a UDP packet in an Ethernet frame was sent from, over IPv4 without
+// options or over IPv6 without a header between: zero for anything else.
+func udpSource(frame []byte) uint16 {
+	switch {
+	case len(frame) >= 42 && binary.BigEndian.Uint16(frame[12:14]) == unix.ETH_P_IP && frame[14] == 0x45 && frame[23] == unix.IPPROTO_UDP:
+		return binary.BigEndian.Uint16(frame[34:36])
+	case len(frame) >= 62 && binary.BigEndian.Uint16(frame[12:14]) == unix.ETH_P_IPV6 && frame[20] == unix.IPPROTO_UDP:
+		return binary.BigEndian.Uint16(frame[54:56])
+	}
+	return 0
+}
+
+// udpKinds are the kinds of what is sent to a UDP port, of either family, to a host: to a group,
+// mDNS is "mdns", and SSDP and WS-Discovery are counted by probeOf.
+var udpKinds = map[uint16]string{9: "discard", 53: "dns", 67: "dhcp", 137: "netbios", 547: "dhcp", 5353: "mdns lookup", 5355: "llmnr"}
+
 // probeOf tells the MAC an Ethernet frame is from, and the kind of probe it is, if any: a
 // broadcast ARP request, an echo request, to a group or to a host, a neighbor solicitation to a
-// group, as the worker's and the kernel's first are, an SSDP or WS-Discovery search, or a packet
-// to the port of mDNS, of either family: to the group, "mdns", or to a host, "mdns lookup".
+// group, as the worker's and the kernel's first are, an SSDP or WS-Discovery search, to the
+// group, or a Resolve of the latter, to a host, a packet to the port of mDNS, of either family:
+// to the group, "mdns", or to a host, "mdns lookup"; and what the names are asked by: a packet to
+// the port of NetBIOS, of LLMNR or of DNS, a TCP segment, of the metadata and the descriptions
+// fetched, and "udp" for one to any other port, which nothing here sends.
 func probeOf(frame []byte) (mac, kind string) {
 	if len(frame) < 14 {
 		return "", ""
 	}
 	mac = net.HardwareAddr(frame[6:12]).String()
+	udp := func(multicast bool, port uint16) string {
+		switch {
+		case port == 5353 && multicast:
+			return "mdns"
+		case port == 1900:
+			return "ssdp"
+		case port == 3702 && multicast:
+			return "wsd"
+		case port == 3702:
+			return "wsd resolve"
+		}
+		if kind, ok := udpKinds[port]; ok {
+			return kind
+		}
+		return "udp"
+	}
 	switch binary.BigEndian.Uint16(frame[12:14]) {
 	case unix.ETH_P_ARP:
 		if len(frame) >= 22 && binary.BigEndian.Uint16(frame[20:22]) == 1 && frame[0]&1 == 1 {
 			return mac, "arp"
 		}
+	case 0x88cc:
+		return mac, "lldp"
 	case unix.ETH_P_IP:
 		// A header without options, as all here.
-		if len(frame) >= 42 && frame[14] == 0x45 && frame[23] == unix.IPPROTO_UDP && binary.BigEndian.Uint16(frame[36:38]) == 5353 {
-			if frame[30]&0xf0 == 0xe0 {
-				return mac, "mdns"
-			}
-			return mac, "mdns lookup"
+		if len(frame) < 42 || frame[14] != 0x45 {
+			return "", ""
+		}
+		switch frame[23] {
+		case unix.IPPROTO_TCP:
+			return mac, "tcp"
+		case unix.IPPROTO_UDP:
+			return mac, udp(frame[30]&0xf0 == 0xe0, binary.BigEndian.Uint16(frame[36:38]))
 		}
 	case unix.ETH_P_IPV6:
 		if len(frame) < 58 {
@@ -1190,18 +1261,10 @@ func probeOf(frame []byte) (mac, kind string) {
 			case payload[0] == 135 && multicast:
 				return mac, "solicitation"
 			}
+		case unix.IPPROTO_TCP:
+			return mac, "tcp"
 		case unix.IPPROTO_UDP:
-			switch binary.BigEndian.Uint16(payload[2:4]) {
-			case 1900:
-				return mac, "ssdp"
-			case 3702:
-				return mac, "wsd"
-			case 5353:
-				if multicast {
-					return mac, "mdns"
-				}
-				return mac, "mdns lookup"
-			}
+			return mac, udp(multicast, binary.BigEndian.Uint16(payload[2:4]))
 		}
 	}
 	return "", ""

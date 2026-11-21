@@ -43,6 +43,12 @@ func (conn *Conn) Send(target netip.Addr, port int, msg []byte) error {
 // listening, without a call of onError: any other error of a read is reported, and the next read
 // tried, after a wait that grows while they fail.
 func Listen(iface *net.Interface, addr netip.Addr, onFoundAddr func(netip.Addr) bool, onError func(error)) (*Conn, error) {
+	return ListenPackets(iface, addr, func(from netip.Addr, _ []byte) bool { return onFoundAddr(from) }, onError)
+}
+
+// ListenPackets is Listen, for a protocol that reads what the senders say too: onPacket gets each
+// packet with its sender, and must not keep it.
+func ListenPackets(iface *net.Interface, addr netip.Addr, onPacket func(netip.Addr, []byte) bool, onError func(error)) (*Conn, error) {
 	conn, err := net.ListenPacket("udp6", netip.AddrPortFrom(addr, 0).String())
 	if err != nil {
 		return nil, err
@@ -58,17 +64,21 @@ func Listen(iface *net.Interface, addr netip.Addr, onFoundAddr func(netip.Addr) 
 		iface:          iface,
 	}
 
-	go result.read(pc.ReadFrom, onFoundAddr, onError)
+	go result.readPackets(pc.ReadFrom, onPacket, onError)
 
 	return result, nil
 }
 
 // read is the listening of Listen, on what readFrom reads, until it says the connection closed.
 func (conn *Conn) read(readFrom func([]byte) (int, *ipv6.ControlMessage, net.Addr, error), onFoundAddr func(netip.Addr) bool, onError func(error)) {
+	conn.readPackets(readFrom, func(from netip.Addr, _ []byte) bool { return onFoundAddr(from) }, onError)
+}
+
+func (conn *Conn) readPackets(readFrom func([]byte) (int, *ipv6.ControlMessage, net.Addr, error), onPacket func(netip.Addr, []byte) bool, onError func(error)) {
 	buf := make([]byte, 4096)
 	var retry backoff.Delay
 	for {
-		_, cm, remote, err := readFrom(buf)
+		n, cm, remote, err := readFrom(buf)
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) {
 				return
@@ -86,7 +96,7 @@ func (conn *Conn) read(readFrom func([]byte) (int, *ipv6.ControlMessage, net.Add
 		}
 		conn.PacketsReceived.Add(1)
 		if udpAddr, ok := remote.(*net.UDPAddr); ok {
-			if onFoundAddr(udpAddr.AddrPort().Addr().Unmap()) {
+			if onPacket(udpAddr.AddrPort().Addr().Unmap(), buf[:n]) {
 				conn.HostsFound.Add(1)
 			}
 		}

@@ -6,7 +6,7 @@
 
 `ipv6disc` finds the hosts of the local network and their addresses, each with its MAC: IPv6, and IPv4 too. It listens to the network, probes it, and reads the neighbor tables of routers. The name is from when it was IPv6 only.
 
-With `-hostnames` it learns the names of the hosts too: those they announce over mDNS, and those of the routers' DHCP leases.
+With `-hostnames` it learns the names of the hosts too: those they announce over mDNS and give as they ask for an address by DHCP, those they answer when asked, by mDNS, NetBIOS, LLMNR, WS-Discovery or SSDP, those a DNS server has for their addresses, and those of the routers' DHCP leases.
 
 It is a command, and a Go library: [ipv6ddns](https://github.com/miguelangel-nubla/ipv6ddns) uses it to keep DNS records of the devices of a network.
 

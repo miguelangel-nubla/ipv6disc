@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/netip"
 	"os"
 	"os/signal"
 	"strings"
@@ -32,6 +33,8 @@ var (
 	ipv6Lifetime, ipv4Lifetime    time.Duration
 	hostnames                     bool
 	hostnamesLifetime             time.Duration
+	hostnamesProtocols            listFlag
+	hostnamesDNS                  serversFlag
 	interfaces, excludeInterfaces listFlag
 
 	pluginsFlags pluginsFlag
@@ -46,6 +49,30 @@ func (l *listFlag) Set(value string) error {
 	for _, v := range strings.Split(value, ",") {
 		if v = strings.TrimSpace(v); v != "" {
 			*l = append(*l, v)
+		}
+	}
+	return nil
+}
+
+// serversFlag is a comma separated list of DNS servers, each an address, alone or with its port.
+type serversFlag []netip.AddrPort
+
+func (l *serversFlag) String() string {
+	servers := make([]string, len(*l))
+	for i, server := range *l {
+		servers[i] = server.String()
+	}
+	return strings.Join(servers, ",")
+}
+
+func (l *serversFlag) Set(value string) error {
+	for _, v := range strings.Split(value, ",") {
+		if v = strings.TrimSpace(v); v != "" {
+			server, err := ipv6disc.ParseNameServer(v)
+			if err != nil {
+				return err
+			}
+			*l = append(*l, server)
 		}
 	}
 	return nil
@@ -96,6 +123,7 @@ func init() {
 // again on a new one, as a flag set can't forget what it was given.
 func defineFlags() {
 	interfaces, excludeInterfaces, pluginsFlags = nil, nil, nil
+	hostnamesProtocols, hostnamesDNS = nil, nil
 	flag.StringVar(&logLevel, "log_level", "info", "The logging level: debug, info, warn, error")
 	flag.DurationVar(&lifetime, "lifetime", 4*time.Hour, "How long an address stays after it was last seen")
 	flag.DurationVar(&rediscover, "rediscover", 0, "How often the active discovery probes every host. Without it: a third of the shortest lifetime of the families that probe")
@@ -106,10 +134,12 @@ func defineFlags() {
 	flag.BoolVar(&ipv6Active, "ipv6_active", true, "IPv6: probe the links, by multicast ping, SSDP and WS-Discovery")
 	flag.DurationVar(&ipv6Lifetime, "ipv6_lifetime", 0, "IPv6: how long an address stays after it was last seen, in place of -lifetime")
 	flag.BoolVar(&ipv4, "ipv4", false, "Discover IPv4 addresses: the plugins read their routers' ARP tables too")
-	flag.BoolVar(&ipv4Listen, "ipv4_listen", true, "IPv4: read the kernel's neighbor table")
+	flag.BoolVar(&ipv4Listen, "ipv4_listen", true, "IPv4: read the kernel's neighbor table, and on Linux hear the ARP the hosts send")
 	flag.BoolVar(&ipv4Active, "ipv4_active", true, "IPv4: sweep the local subnets, which broadcasts an ARP request for each address")
 	flag.DurationVar(&ipv4Lifetime, "ipv4_lifetime", 0, "IPv4: how long an address stays after it was last seen, in place of -lifetime")
-	flag.BoolVar(&hostnames, "hostnames", false, "Learn the names of the hosts: listen for mDNS and ask each host its name, where the families listen, and the plugins read the names of their routers' DHCP leases")
+	flag.BoolVar(&hostnames, "hostnames", false, "Learn the names of the hosts: listen for mDNS, DHCP and LLDP, ask each host its name, by mDNS, NetBIOS and LLMNR, and the computers and devices that answer WS-Discovery and SSDP theirs, where the families listen, and the plugins read the names of their routers' DHCP leases")
+	flag.Var(&hostnamesProtocols, "hostnames_protocols", "The names only by these protocols of the local discovery, comma separated: "+strings.Join(ipv6disc.NameProtocols(), ", ")+". Without it: all")
+	flag.Var(&hostnamesDNS, "hostnames_dns", "DNS servers to ask the name of each address, its PTR record, comma separated, as the router's: 192.168.1.1, or with a port, 192.168.1.1:5353, [fd00::1]:53. Without it: none. Never the system's resolver")
 	flag.DurationVar(&hostnamesLifetime, "hostnames_lifetime", 0, "How long a name stays after it was last said, in place of -lifetime")
 	flag.Var(&interfaces, "interfaces", "The local discovery only on these interfaces, comma separated: names, or patterns as en*. Without it: all")
 	flag.Var(&excludeInterfaces, "exclude_interfaces", "No local discovery on these interfaces, comma separated: names, or patterns as docker*,veth*")
@@ -217,7 +247,7 @@ func startUpdater() {
 		Rediscover: rediscover,
 		IPv6:       ipv6disc.Family{Enabled: ipv6, Listen: ipv6Listen, Active: ipv6Active, Lifetime: ipv6Lifetime},
 		IPv4:       ipv6disc.Family{Enabled: ipv4, Listen: ipv4Listen, Active: ipv4Active, Lifetime: ipv4Lifetime},
-		Hostnames:  ipv6disc.Hostnames{Enabled: hostnames, Lifetime: hostnamesLifetime},
+		Hostnames:  ipv6disc.Hostnames{Enabled: hostnames, Lifetime: hostnamesLifetime, Protocols: hostnamesProtocols, DNS: hostnamesDNS},
 
 		Interfaces:        interfaces,
 		ExcludeInterfaces: excludeInterfaces,

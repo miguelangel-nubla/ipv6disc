@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/miguelangel-nubla/ipv6disc/pkg/arp"
 	"github.com/miguelangel-nubla/ipv6disc/pkg/ndp"
 	"github.com/miguelangel-nubla/ipv6disc/pkg/ping"
 	"github.com/miguelangel-nubla/ipv6disc/pkg/ssdp"
@@ -46,6 +47,12 @@ type Worker struct {
 	nameCancels map[nameKey]context.CancelFunc
 	naming      *namer
 	ipv4Wake    chan struct{}
+	// The naming protocols of no interface, as the reverse DNS, and the passive listeners of
+	// the IPv4 discovery, by interface: with the same lock too.
+	nameGlobal   []*NameProtocol
+	arpListeners map[arpKey]*arp.Listener
+	// What can't be heard, and was told so.
+	unheard sync.Map
 	// The goroutines Start starts, for Wait.
 	running sync.WaitGroup
 	started atomic.Bool
@@ -129,9 +136,10 @@ func NewWorker(logger *zap.SugaredLogger, config Config) *Worker {
 		nameConns:     make(map[nameKey]*nameProcesses),
 		nameCancels:   make(map[nameKey]context.CancelFunc),
 		ipv4Wake:      make(chan struct{}, 1),
+		arpListeners:  make(map[arpKey]*arp.Listener),
 	}
 	w.naming = newNamer(s, logger, config)
-	w.naming.askers = w.nameAskers
+	w.naming.askers = w.nameProtocols
 	return w
 }
 
@@ -161,6 +169,15 @@ func (w *Worker) PrettyPrintStats(prefix string) string {
 			ifaceMap[processes.InterfaceName] = nil
 		}
 	}
+	// And the passive listeners of the IPv4 discovery.
+	ipv4 := make(map[string]*arp.Listener)
+	for key, listener := range w.arpListeners {
+		ipv4[key.name] = listener
+		if _, ok := ifaceMap[key.name]; !ok {
+			ifaceMap[key.name] = nil
+		}
+	}
+	global := slices.Clone(w.nameGlobal)
 	w.pcMutex.RUnlock()
 
 	// Sort interface names
@@ -199,11 +216,22 @@ func (w *Worker) PrettyPrintStats(prefix string) string {
 				printStats(p.Name, p.Worker.Stats())
 			}
 		}
+		if listener, ok := ipv4[name]; ok {
+			fmt.Fprintf(&result, "%s        ipv4:\n", prefix)
+			printStats("arp", listener.Stats())
+		}
 		if len(names[name]) > 0 {
 			fmt.Fprintf(&result, "%s        names:\n", prefix)
 			for _, p := range names[name] {
 				printStats(p.Name, p.Worker.Stats())
 			}
+		}
+	}
+	// The naming protocols of no interface.
+	if len(global) > 0 {
+		fmt.Fprintf(&result, "%s    names:\n", prefix)
+		for _, p := range global {
+			printStats(p.Name, p.Worker.Stats())
 		}
 	}
 
@@ -292,7 +320,7 @@ func (w *Worker) Start(ctx context.Context) error {
 	// it listens over.
 	if w.config.namesLocally() {
 		w.naming.discover = func(iface string, addr netip.Addr) bool { return w.discoverAddr(ctx, iface, addr) }
-		w.running.Add(2)
+		w.running.Add(1)
 		go func() {
 			defer w.running.Done()
 			ticker := time.NewTicker(interfaceCheckInterval)
@@ -307,6 +335,12 @@ func (w *Worker) Start(ctx context.Context) error {
 				}
 			}
 		}()
+	}
+	// And what asks: of the hosts the local discovery found, and, by the DNS servers given, of
+	// those the plugins did too.
+	if w.config.asksNames() {
+		w.startNameServers(ctx)
+		w.running.Add(1)
 		go func() {
 			defer w.running.Done()
 			w.naming.run(ctx)
@@ -570,14 +604,26 @@ func (w *Worker) StartInterfaceAddr(ctx context.Context, iface net.Interface, ad
 	}
 	defer pingConn.Close()
 
-	ssdpConn, err = ssdp.ListenForSSDP(&iface, addr, onFoundAddrFunc(ndpConn, &iface, w.logger, "SSDP announcement"), onError("SSDP"))
+	// With names, the two that follow also fetch the name of each host that answers their
+	// probe, from that host: without, nothing is fetched.
+	if w.config.names(NameSSDP) {
+		wants, named := w.nameFetches(NameSSDP, iface.Name)
+		ssdpConn, err = ssdp.ListenForSSDPNames(&iface, addr, onFoundAddrFunc(ndpConn, &iface, w.logger, "SSDP announcement"), ssdp.Names{Wants: wants, Named: named}, onError("SSDP"))
+	} else {
+		ssdpConn, err = ssdp.ListenForSSDP(&iface, addr, onFoundAddrFunc(ndpConn, &iface, w.logger, "SSDP announcement"), onError("SSDP"))
+	}
 	if err != nil {
 		listenFailed("SSDP", err)
 		return
 	}
 	defer ssdpConn.Close()
 
-	wsdConn, err = wsd.ListenForWSD(&iface, addr, onFoundAddrFunc(ndpConn, &iface, w.logger, "WSD message"), onError("WSD"))
+	if w.config.names(NameWSD) {
+		wants, named := w.nameFetches(NameWSD, iface.Name)
+		wsdConn, err = wsd.ListenForWSDNames(&iface, addr, onFoundAddrFunc(ndpConn, &iface, w.logger, "WSD message"), wsd.Names{Wants: wants, Named: named}, onError("WSD"))
+	} else {
+		wsdConn, err = wsd.ListenForWSD(&iface, addr, onFoundAddrFunc(ndpConn, &iface, w.logger, "WSD message"), onError("WSD"))
+	}
 	if err != nil {
 		listenFailed("WSD", err)
 		return

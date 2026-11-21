@@ -178,3 +178,31 @@ func TestHostnamesFlags(t *testing.T) {
 		t.Errorf("with the flags: hostnames %v, lifetime %s, %v", hostnames, hostnamesLifetime, err)
 	}
 }
+
+// The protocols of the names and the DNS servers are lists, given at once or one by one: all
+// the protocols, and no server, without them. A server is an address, alone or with its port.
+func TestHostnamesProtocolsFlags(t *testing.T) {
+	resetFlags(t)
+	if err := flag.CommandLine.Parse(nil); err != nil || len(hostnamesProtocols) != 0 || len(hostnamesDNS) != 0 {
+		t.Errorf("without the flags: protocols %v, servers %v, %v", hostnamesProtocols, hostnamesDNS, err)
+	}
+	if err := flag.CommandLine.Parse([]string{"-hostnames_protocols=mdns, dhcp", "-hostnames_protocols", "dns", "-hostnames_dns=192.168.1.1,[fd00::1]:5353", "-hostnames_dns", "10.0.0.1:54"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := hostnamesProtocols.String(); got != "mdns,dhcp,dns" {
+		t.Errorf("protocols: %s", got)
+	}
+	if got := hostnamesDNS.String(); got != "192.168.1.1:53,[fd00::1]:5353,10.0.0.1:54" {
+		t.Errorf("servers: %s", got)
+	}
+	for _, server := range []string{"router.lan", "192.168.1.1:0", "192.168.1.1,nonsense"} {
+		var servers serversFlag
+		if err := servers.Set(server); err == nil {
+			t.Errorf("-hostnames_dns=%s: read as %v", server, servers)
+		}
+	}
+	// The usage names the protocols there are.
+	if usage := flag.Lookup("hostnames_protocols").Usage; !strings.Contains(usage, "mdns, dns, netbios, llmnr, wsd, ssdp, dhcp, lldp") {
+		t.Errorf("the usage of -hostnames_protocols: %s", usage)
+	}
+}

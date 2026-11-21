@@ -2,11 +2,13 @@ package ipv6disc
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"maps"
 	"net"
 	"net/netip"
+	"os"
 	"slices"
 	"time"
 
@@ -35,6 +37,11 @@ func (w *Worker) discoverIPv4(ctx context.Context) {
 	_, err := arpTable()
 	neighbors := !w.tableUnsupported(err)
 
+	// The ARP of the interfaces is heard too, where the system lets it be: until it is known
+	// not to.
+	passive := true
+	defer w.stopARPListeners()
+
 	var lastSweep time.Time
 	own := make(map[workerKey]bool)
 	for {
@@ -53,6 +60,9 @@ func (w *Worker) discoverIPv4(ctx context.Context) {
 
 		interfaces, err := w.listIPv4Interfaces()
 		own = w.syncSelfIPv4(own, interfaces, err == nil)
+		if passive {
+			passive = w.syncARPListeners(ctx, interfaces, err == nil)
+		}
 		if neighbors {
 			if err := w.readIPv4Table(interfaces, swept); w.tableUnsupported(err) {
 				neighbors = false
@@ -74,6 +84,122 @@ func (w *Worker) discoverIPv4(ctx context.Context) {
 			case <-time.After(ipv4WakeSettle):
 			}
 		}
+	}
+}
+
+// arpKey is what a passive ARP listener runs on: an interface, and the subnets it has there,
+// whose hosts are the ones it takes. When any changes it stops, and another starts.
+type arpKey struct {
+	index    int
+	name, hw string
+	prefixes string
+}
+
+// syncARPListeners has the ARP of each interface the IPv4 discovery runs on heard, and stops the
+// listeners of those that went or changed: not when the interfaces aren't all known, complete.
+// What a host sends tells it at once: its address at its MAC, registered as the neighbor
+// table's are, which otherwise wait for the kernel to talk to the host and for the next reading.
+// It returns whether to try again: not where the system has no packet sockets, nor without the
+// privilege for them, which is told once. The table is read as before, with or without.
+func (w *Worker) syncARPListeners(ctx context.Context, interfaces map[string]ipv4Interface, complete bool) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	found := make(map[arpKey]ipv4Interface)
+	for name, i := range interfaces {
+		found[arpKey{i.iface.Index, name, i.iface.HardwareAddr.String(), fmt.Sprint(i.prefixes)}] = i
+	}
+	w.pcMutex.Lock()
+	defer w.pcMutex.Unlock()
+	for key, listener := range w.arpListeners {
+		if _, ok := found[key]; !ok && complete {
+			listener.Close()
+			delete(w.arpListeners, key)
+		}
+	}
+	for key, i := range found {
+		if _, ok := w.arpListeners[key]; ok {
+			continue
+		}
+		iface := i.iface
+		listener, err := arp.Listen(&iface, w.heardARP(i), func(err error) {
+			w.logger.Errorw("ARP error", zap.String("interface", iface.Name), zap.Error(err))
+		})
+		if errors.Is(err, errors.ErrUnsupported) {
+			w.logger.Debugf("not listening for ARP: %s", err)
+			return false
+		}
+		if errors.Is(err, os.ErrPermission) {
+			w.logger.Warnf("not listening for ARP, which needs CAP_NET_RAW: the IPv4 hosts are found by the neighbor table alone, at each reading: %s", err)
+			return false
+		}
+		if err != nil {
+			// As an interface that went meanwhile: the next time tries again.
+			w.logger.Errorw("error listening for ARP", zap.String("interface", iface.Name), zap.Error(err))
+			continue
+		}
+		w.arpListeners[key] = listener
+	}
+	return true
+}
+
+// arpNewMost is how many hosts the ARP heard on an interface may tell that the state didn't have,
+// in an interfaceCheckInterval: the kernel's table has a bound too, and takes only the answers to
+// what it asked. A link where frames are made up, each from another MAC, fills no more than this:
+// those over it wait for the table, as all did.
+const arpNewMost = 1024
+
+// heardARP is what is done of the sender of an ARP packet heard on an interface: registered, as
+// a neighbor of the table is, when it is a host of a subnet of the interface, and not the
+// interface itself: its address, or its MAC, in a frame of another's. Nor the address of the
+// subnet itself, or its broadcast one, which the kernel resolves for nobody and so never had in
+// its table. It returns whether it is a host found.
+func (w *Worker) heardARP(i ipv4Interface) func(netip.Addr, net.HardwareAddr) bool {
+	name, own, prefixes := i.iface.Name, i.iface.HardwareAddr.String(), i.prefixes
+	// The listener calls it from its one reading.
+	var since time.Time
+	found := 0
+	return func(ip netip.Addr, mac net.HardwareAddr) bool {
+		if !slices.ContainsFunc(prefixes, func(p netip.Prefix) bool { return hostOf(p, ip) }) ||
+			slices.ContainsFunc(prefixes, func(p netip.Prefix) bool { return p.Addr() == ip }) || mac.String() == own {
+			return false
+		}
+		if !w.State.has(mac, ip, name) {
+			if now := time.Now(); now.Sub(since) >= interfaceCheckInterval {
+				since, found = now, 0
+			}
+			if found >= arpNewMost {
+				return false
+			}
+			found++
+		}
+		_, existing := w.State.registerLocal(mac, ip, name, w.config.Lifetime, nil)
+		return !existing
+	}
+}
+
+// hostOf tells whether ip can be a host's of the subnet of an interface's address: in it, and
+// neither its first address, the subnet's own, nor its last, which is all its hosts, where it
+// has those: a subnet of two addresses, or one, has only hosts.
+func hostOf(subnet netip.Prefix, ip netip.Addr) bool {
+	if !subnet.Contains(ip) {
+		return false
+	}
+	if subnet.Bits() >= 31 {
+		return true
+	}
+	bits := ip.As4()
+	host := binary.BigEndian.Uint32(bits[:]) & (1<<(32-subnet.Bits()) - 1)
+	return host != 0 && host != 1<<(32-subnet.Bits())-1
+}
+
+// stopARPListeners closes the passive ARP listeners, as the IPv4 discovery stops.
+func (w *Worker) stopARPListeners() {
+	w.pcMutex.Lock()
+	defer w.pcMutex.Unlock()
+	for key, listener := range w.arpListeners {
+		listener.Close()
+		delete(w.arpListeners, key)
 	}
 }
 
@@ -108,10 +234,18 @@ func (w *Worker) SolicitIPv4(ctx context.Context, targets []IPv4Target) (int, er
 	interfaces := w.ipv4Interfaces()
 	for _, target := range targets {
 		for _, p := range w.ipv4Probes(target, interfaces) {
+			// What the state had of it before it was asked: an address it answers for is found
+			// if it wasn't there then, whether this registers it or what hears its answer on
+			// the interface did, a moment sooner.
+			known := make(map[netip.Addr]bool)
+			for _, addr := range w.State.FilterMACs([]net.HardwareAddr{target.MAC}).Get() {
+				known[addr.WithZone("")] = true
+			}
 			addrs, err := arp.Probe(ctx, &p.iface.iface, p.local.Addr(), target.MAC, p.asked)
 			// What was found before an error counts too.
 			for _, ip := range addrs {
-				if _, existing := w.State.registerLocal(target.MAC, ip, p.name, w.config.Lifetime, nil); !existing {
+				w.State.registerLocal(target.MAC, ip, p.name, w.config.Lifetime, nil)
+				if !known[ip] {
 					found++
 				}
 			}
