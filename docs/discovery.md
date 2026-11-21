@@ -243,6 +243,8 @@ An address stays for its family's `lifetime`, the `lifetime` of all without, aft
 
 A name stays for the `lifetime` of `hostnames`, the same way: see [names](#the-lifetime).
 
+What a start can't know at once: an address a host keeps beside the one it uses. A host answers the multicast ping from one address, its preferred, and sends nothing from the others: one given while the worker runs is learned by the advertisement the host sends for it, but a worker started afterwards, as after a restart, learns it only when the host speaks from it, as the solicitation it then sends tells it. A stable address beside temporary ones is the usual case. A router's [plugin](plugins.md) knows the addresses in use from its neighbor table, and a solicitation finds an EUI-64 one that a filter names.
+
 ```yaml
 lifetime: 2h
 rediscover: 20m
