@@ -150,6 +150,13 @@ func (w *Worker) RegisterPlugin(p Plugin) {
 	w.plugins = append(w.plugins, p)
 }
 
+// Protocols returns the protocols of the local discovery that run, as the configuration names
+// them and in the order of ProtocolNames: those enabled whose family is on, and listens, or for
+// the sweep probes. PrettyPrintStats shows them first.
+func (w *Worker) Protocols() []string {
+	return w.config.running()
+}
+
 func (w *Worker) PrettyPrintStats(prefix string) string {
 	var result strings.Builder
 

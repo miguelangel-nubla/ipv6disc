@@ -108,6 +108,23 @@ func TestDefaultProtocols(t *testing.T) {
 	}
 }
 
+// A worker tells the protocols it runs, for a program that shows them: those of its
+// configuration, and none of a Config made by hand without them.
+func TestWorkerProtocols(t *testing.T) {
+	withPacketSockets(t, false)
+	if got := NewWorker(zap.NewNop().Sugar(), DefaultConfig()).Protocols(); !slices.Equal(got, []string{"ndp", "ping", "ssdp", "wsd"}) {
+		t.Errorf("the default runs %v", got)
+	}
+	config := DefaultConfig()
+	config.Protocols.SSDP.Enabled, config.Protocols.MDNS.Enabled = false, true
+	if got := NewWorker(zap.NewNop().Sugar(), config).Protocols(); !slices.Equal(got, []string{"ndp", "ping", "wsd", "mdns"}) {
+		t.Errorf("without ssdp and with mdns, it runs %v", got)
+	}
+	if got := NewWorker(zap.NewNop().Sugar(), Config{Lifetime: time.Hour, IPv6: Family{Enabled: true, Listen: true}}).Protocols(); len(got) != 0 {
+		t.Errorf("a Config without protocols runs %v", got)
+	}
+}
+
 // protocolRuns is the family, and the way, a protocol runs with: what the page of the discovery
 // tells of each.
 var protocolRuns = map[string]struct {
