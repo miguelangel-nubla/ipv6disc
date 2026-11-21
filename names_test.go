@@ -169,7 +169,7 @@ func TestNames(t *testing.T) {
 	if all := state.AllNames(); len(all) != 2 || len(all[namedMAC.String()]) != 2 {
 		t.Errorf("all the names: %v", all)
 	}
-	// The latest registration says how long it stays.
+	// Each source has its own lifetime, and the name stays the longest of them: the router's hour.
 	printer := state.NamesOf(namedMAC)[1]
 	if left := time.Until(printer.Expiration); left < 59*time.Minute || printer.Seen.Before(started) || !printer.Valid() {
 		t.Errorf("the name refreshed for an hour: %s left, seen %s", left, printer.Seen)
@@ -180,14 +180,22 @@ func TestNames(t *testing.T) {
 		t.Errorf("after writing a copy: %v", got)
 	}
 
-	// Said again and again, a name stays; the one that isn't expires, alone.
+	if said := printer.Said; len(said) != 2 || said[0].String() != "reported by mdns" || said[1].String() != "reported by router" ||
+		time.Until(said[0].Expiration()) > lifetime || time.Until(said[1].Expiration()) < 59*time.Minute || printer.FirstSeen.Before(started) {
+		t.Errorf("the sources of printer: %+v", said)
+	}
+
+	// The router says it again, for less: the latest of a source says how long it stays. Said
+	// again and again by mDNS, the name stays; the source that isn't expires, alone, and so does
+	// the name that isn't.
+	state.RegisterName(namedMAC, "printer", "router", lifetime)
 	state.RegisterName(namedMAC, "printer", "mdns", lifetime)
 	for time.Since(started) < 3*lifetime {
 		state.RegisterName(namedMAC, "printer", "mdns", lifetime)
 		time.Sleep(lifetime / 10)
 	}
-	if got := namesOf(state, namedMAC); !slices.Equal(got, []string{"printer (mdns,router)"}) {
-		t.Errorf("after the lifetime of the name not said again: %v", got)
+	if got := namesOf(state, namedMAC); !slices.Equal(got, []string{"printer (mdns)"}) {
+		t.Errorf("after the lifetime of the source and the name not said again: %v", got)
 	}
 	waitNames(t, state, namedMAC, 0)
 	if got := namesOf(state, otherMAC); len(got) != 1 {
@@ -485,7 +493,8 @@ func TestMacOf(t *testing.T) {
 	}
 }
 
-// The state shows a host's names after its MAC, each with what said it.
+// The state shows a host's names under its MAC, each with what said it, and its addresses, each
+// with its records, lined up.
 func TestPrettyPrintNames(t *testing.T) {
 	state := NewState()
 	defer state.Close()
@@ -497,8 +506,10 @@ func TestPrettyPrintNames(t *testing.T) {
 	state.RegisterName(namedMAC, "laserjet", "router", time.Hour)
 	got := state.PrettyPrint("", true)
 	for _, want := range []string{
-		"    00:1a:2b:3c:4d:a1 laserjet (router), printer (mdns,router)\n",
-		"    00:1a:2b:3c:4d:a2\n",
+		"Discovery: 2 hosts, 1 named, 2 addresses\n",
+		"    00:1a:2b:3c:4d:a1\n        names:\n            laserjet                 1h 0m 0s  up            0s\n                reported by router   1h 0m 0s  up            0s\n            printer ",
+		"                reported by mdns     1h 0m 0s  up            0s\n                reported by router   1h 0m 0s  up            0s\n        addresses:\n            2001:db8::20 ",
+		"    00:1a:2b:3c:4d:a2\n        addresses:\n            2001:db8::21 ",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("got:\n%s\nwant a line %q", got, want)

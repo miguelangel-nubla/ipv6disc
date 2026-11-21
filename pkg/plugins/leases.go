@@ -41,7 +41,7 @@ func RegisterLeases(state *ipv6disc.State, leases []Lease, neighbors map[netip.A
 			state.Attach(mac, lease.IP, source, typ, ipv6disc.FromLeases, lifetime)
 		}
 		if state.Names() && lease.Name != "" {
-			state.RegisterName(mac, lease.Name, source, lifetime)
+			state.ReportName(mac, lease.Name, source, ipv6disc.FromLeases, lifetime)
 		}
 	}
 }

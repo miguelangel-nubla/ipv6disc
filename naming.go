@@ -334,7 +334,7 @@ func (n *namer) settle(c claim) (bool, net.HardwareAddr) {
 		if !n.state.hasHost(c.hw) {
 			return false, nil
 		}
-		n.state.RegisterName(c.hw, c.name, c.source, n.lifetime)
+		n.state.registerName(c.hw, c.name, NameSource{Source: c.source, On: c.iface}, n.lifetime)
 		return true, c.hw
 	}
 	sender, ok := n.state.macOf(c.from, c.iface)
@@ -355,7 +355,7 @@ func (n *namer) settle(c claim) (bool, net.HardwareAddr) {
 			return true, nil
 		}
 	}
-	n.state.RegisterName(sender, c.name, c.source, n.lifetime)
+	n.state.registerName(sender, c.name, NameSource{Source: c.source, On: c.iface}, n.lifetime)
 	return true, sender
 }
 
@@ -396,7 +396,7 @@ func (n *namer) answeredBy(source, iface string, asked netip.Addr, name string) 
 	if !ok {
 		return
 	}
-	if clean, _ := n.state.RegisterName(hw, name, source, n.lifetime); clean == "" {
+	if clean, _ := n.state.registerName(hw, name, NameSource{Source: source, On: iface}, n.lifetime); clean == "" {
 		return
 	}
 	n.mutex.Lock()

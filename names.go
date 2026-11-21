@@ -21,11 +21,51 @@ import (
 type HostName struct {
 	Name string
 	// What said it, in the order they first did: a protocol of the local discovery, as "mdns"
-	// or "dhcp" (ProtocolNames), or a plugin's name.
+	// or "dhcp" (ProtocolNames), or a plugin's name. Of those whose lifetime runs.
 	Sources []string
-	// When it was last said, and until when it stays without being said again.
+	// Each that said it, with its own times, in the same order.
+	Said []NameSource
+	// When it was first said, and last, by any; and until when it stays, the last of Said's.
+	FirstSeen  time.Time
 	Seen       time.Time
 	Expiration time.Time
+}
+
+// NameSource is one that said a name, and when: a protocol of the local discovery, on an interface
+// or on none, as the reverse DNS; or a report, of a plugin or another caller of RegisterName or
+// ReportName, from a table, as the leases of a router.
+type NameSource struct {
+	Source   string
+	On       string
+	Reported bool
+	From     string
+
+	FirstSeen, LastSeen time.Time
+	Lifetime            time.Duration
+}
+
+// Expiration is when the source no longer says the name: its lifetime after it last did.
+func (s NameSource) Expiration() time.Time { return s.LastSeen.Add(s.Lifetime) }
+
+// String is the source as the page says it: mdns on eth0, or reported by router from leases.
+func (s NameSource) String() string {
+	var b strings.Builder
+	if s.Reported {
+		b.WriteString("reported by " + s.Source)
+		if s.From != "" {
+			b.WriteString(" from " + s.From)
+		}
+	} else {
+		b.WriteString(s.Source)
+	}
+	if s.On != "" {
+		b.WriteString(" on " + s.On)
+	}
+	return b.String()
+}
+
+func (s NameSource) same(o NameSource) bool {
+	return s.Source == o.Source && s.On == o.On && s.Reported == o.Reported && s.From == o.From
 }
 
 // Valid tells whether the name's lifetime is still running.
@@ -96,6 +136,18 @@ func (s *State) Names() bool {
 // The host needs no address yet: a name said before its first address is there when it comes.
 // When the last address of a host goes, its names go with it.
 func (s *State) RegisterName(hw net.HardwareAddr, name, source string, lifetime time.Duration) (string, bool) {
+	return s.registerName(hw, name, NameSource{Source: source, Reported: true}, lifetime)
+}
+
+// ReportName is RegisterName, of a name by of the table from has, as a plugin's of its router's
+// leases.
+func (s *State) ReportName(hw net.HardwareAddr, name, by, from string, lifetime time.Duration) (string, bool) {
+	return s.registerName(hw, name, NameSource{Source: by, Reported: true, From: from}, lifetime)
+}
+
+// registerName is RegisterName, of what said says the name: its source, and on which interface.
+func (s *State) registerName(hw net.HardwareAddr, name string, said NameSource, lifetime time.Duration) (string, bool) {
+	source := said.Source
 	if !s.Names() || len(hw) == 0 {
 		return "", true
 	}
@@ -125,14 +177,20 @@ func (s *State) RegisterName(hw net.HardwareAddr, name, source string, lifetime 
 	// One that expired and was not taken out yet is new again.
 	existing = existing && n.Expiration.After(now)
 	if !existing {
-		n = &HostName{Name: clean}
+		n = &HostName{Name: clean, FirstSeen: now}
 		host[clean] = n
 	}
+	n.Said = liveSaid(n.Said, now)
 	newSource := !slices.Contains(n.Sources, source)
-	if newSource {
-		n.Sources = append(n.Sources, source)
+	said.LastSeen, said.Lifetime = now, lifetime
+	if i := slices.IndexFunc(n.Said, said.same); i >= 0 {
+		n.Said[i].LastSeen, n.Said[i].Lifetime = now, lifetime
+	} else {
+		said.FirstSeen = now
+		n.Said = append(n.Said, said)
 	}
-	n.Seen, n.Expiration = now, now.Add(lifetime)
+	n.Sources = saidSources(n.Said)
+	n.Seen, n.Expiration = now, latestExpiration(n.Said)
 	s.namesStopped = false
 	s.armNames(n.Expiration)
 	s.namesMutex.Unlock()
@@ -265,7 +323,8 @@ func validNames(host map[string]*HostName, now time.Time) []HostName {
 	for _, n := range host {
 		if n.Expiration.After(now) {
 			name := *n
-			name.Sources = slices.Clone(n.Sources)
+			name.Said = liveSaid(slices.Clone(n.Said), now)
+			name.Sources = saidSources(name.Said)
 			names = append(names, name)
 		}
 	}
@@ -329,4 +388,36 @@ func (s *State) macOf(ip netip.Addr, iface string) (net.HardwareAddr, bool) {
 		return any[0].Hw, true
 	}
 	return nil, false
+}
+
+// liveSaid are the sources of said whose lifetime runs at now: of a name that has none, as one
+// that expired and is still held, all of them.
+func liveSaid(said []NameSource, now time.Time) []NameSource {
+	live := slices.DeleteFunc(slices.Clone(said), func(s NameSource) bool { return !s.Expiration().After(now) })
+	if len(live) == 0 {
+		return said
+	}
+	return live
+}
+
+// saidSources are the names of the sources of said, each once, in order.
+func saidSources(said []NameSource) []string {
+	var sources []string
+	for _, s := range said {
+		if !slices.Contains(sources, s.Source) {
+			sources = append(sources, s.Source)
+		}
+	}
+	return sources
+}
+
+// latestExpiration is the last of the expirations of said.
+func latestExpiration(said []NameSource) time.Time {
+	var latest time.Time
+	for _, s := range said {
+		if e := s.Expiration(); e.After(latest) {
+			latest = e
+		}
+	}
+	return latest
 }

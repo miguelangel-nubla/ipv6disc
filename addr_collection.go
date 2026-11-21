@@ -1,13 +1,13 @@
 package ipv6disc
 
 import (
-	"fmt"
 	"maps"
 	"net/netip"
 	"slices"
-	"strings"
 	"sync"
 	"time"
+
+	"github.com/miguelangel-nubla/ipv6disc/pkg/pretty"
 )
 
 // AddrCollection is a set of addresses, keyed by the address without its zone.
@@ -220,18 +220,45 @@ func (c *AddrCollection) Strings() []string {
 }
 
 func (c *AddrCollection) PrettyPrint(prefix string) string {
-	var result strings.Builder
+	var t pretty.Table
+	c.rows(&t, "", time.Now())
+	return t.Render(prefix)
+}
+
+// rows adds the addresses to t, each with how long it has left, how long it has been seen and
+// whether it is this host's; and under it its records, as it was seen, each with its own times:
+// one attached, as a lease, keeps the address no longer than the others, and has a note in place
+// of its time.
+func (c *AddrCollection) rows(t *pretty.Table, indent string, now time.Time) {
 	for _, addr := range c.Get() {
 		var notes string
 		switch {
 		case addr.Temporary():
-			notes = " (this host, temporary)"
+			notes = "(this host, temporary)"
 		case addr.Self():
-			notes = " (this host)"
+			notes = "(this host)"
 		}
-		fmt.Fprintf(&result, "%s%s %s %s%s\n", prefix, addrKey(addr), time.Until(addr.GetExpiration()).Round(time.Second), strings.Join(addr.Sources(), ","), notes)
+		records := addr.Records()
+		t.Row(indent+addrKey(addr), addr.GetExpiration().Sub(now), now.Sub(firstSeen(records)), notes)
+		for _, r := range records {
+			if r.Attached() {
+				t.RowNote(indent+"    "+r.String(), "(lease)", now.Sub(r.FirstSeen), "")
+				continue
+			}
+			t.Row(indent+"    "+r.String(), r.Expiration().Sub(now), now.Sub(r.FirstSeen), "")
+		}
 	}
-	return result.String()
+}
+
+// firstSeen is the first time of records, as an address was first seen.
+func firstSeen(records []Record) time.Time {
+	var first time.Time
+	for _, r := range records {
+		if first.IsZero() || r.FirstSeen.Before(first) {
+			first = r.FirstSeen
+		}
+	}
+	return first
 }
 
 func NewAddrCollection() *AddrCollection {

@@ -6,12 +6,13 @@ import (
 	"net"
 	"net/netip"
 	"slices"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
+
+	"github.com/miguelangel-nubla/ipv6disc/pkg/pretty"
 )
 
 // State is the addresses discovered, by MAC, and the names of the hosts, by MAC too.
@@ -415,38 +416,43 @@ func (s *State) FilterMACs(hws []net.HardwareAddr) *AddrCollection {
 
 // PrettyPrint lists the addresses of each MAC, after its names. hideSensible is there for symmetry
 // with the other PrettyPrint methods: nothing here is sensible.
+// PrettyPrint is the page of the discovery: a summary, and each host by its MAC, with its names
+// and their sources, and its addresses and their records, each with how long it has left and how
+// long it has been seen, lined up.
 func (s *State) PrettyPrint(prefix string, hideSensible bool) string {
-	var result strings.Builder
-
 	s.macsMutex.RLock()
 	defer s.macsMutex.RUnlock()
 
-	fmt.Fprintf(&result, "%sDiscovery:\n", prefix)
-
 	names := s.AllNames()
-	for _, mac := range slices.Sorted(maps.Keys(s.macs)) {
-		fmt.Fprintf(&result, "%s    %s%s\n", prefix, mac, prettyNames(names[mac]))
-		fmt.Fprint(&result, s.macs[mac].PrettyPrint(prefix+"        "))
+	addresses, named := 0, 0
+	for mac, c := range s.macs {
+		addresses += len(c.Get())
+		if len(names[mac]) > 0 {
+			named++
+		}
 	}
-
-	return result.String()
+	var t pretty.Table
+	t.Line(fmt.Sprintf("Discovery: %d hosts, %d named, %d addresses", len(s.macs), named, addresses))
+	now := time.Now()
+	for _, mac := range slices.Sorted(maps.Keys(s.macs)) {
+		t.Line("    " + mac)
+		if hostNames := names[mac]; len(hostNames) > 0 {
+			t.Line("        names:")
+			for _, n := range hostNames {
+				t.Row("            "+n.Name, n.Expiration.Sub(now), now.Sub(n.FirstSeen), "")
+				for _, said := range n.Said {
+					t.Row("                "+said.String(), said.Expiration().Sub(now), now.Sub(said.FirstSeen), "")
+				}
+			}
+		}
+		t.Line("        addresses:")
+		s.macs[mac].rows(&t, "            ", now)
+	}
+	return t.Render(prefix)
 }
 
 func NewState() *State {
 	return &State{
 		macs: make(map[string]*AddrCollection),
 	}
-}
-
-// prettyNames is the names of a host after its MAC, each with what said it:
-// " printer (mdns,router), laserjet (router)".
-func prettyNames(names []HostName) string {
-	var result strings.Builder
-	for i, n := range names {
-		if i > 0 {
-			result.WriteString(",")
-		}
-		fmt.Fprintf(&result, " %s (%s)", n.Name, strings.Join(n.Sources, ","))
-	}
-	return result.String()
 }

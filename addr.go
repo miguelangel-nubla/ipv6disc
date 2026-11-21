@@ -108,6 +108,13 @@ func (a *Addr) Interfaces() []string {
 	return interfaces
 }
 
+// FirstSeen is when the address was first seen, of its records that count.
+func (a *Addr) FirstSeen() time.Time {
+	a.mutex.RLock()
+	defer a.mutex.RUnlock()
+	return firstSeen(a.liveRecords(time.Now()))
+}
+
 // Self tells whether the address is one of this machine's own, rather than a neighbor's.
 func (a *Addr) Self() bool {
 	a.mutex.RLock()
