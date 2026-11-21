@@ -20,7 +20,7 @@ import (
 )
 
 func init() {
-	plugins.Describe("mikrotik", "A Mikrotik router, over its API: `/ipv6/neighbor` for IPv6, `/ip/arp` for IPv4, and with `hostnames` the names of `/ip/dhcp-server/lease`.")
+	plugins.Describe("mikrotik", "A Mikrotik router, over its API: `/ipv6/neighbor` for IPv6, `/ip/arp` for IPv4, and the DHCP leases of `/ip/dhcp-server/lease`.")
 	plugins.Register("mikrotik", func(name string, config string, lifetime time.Duration) (ipv6disc.Plugin, error) {
 		cfg, err := ParseConfig(config)
 		if err != nil {
@@ -106,8 +106,8 @@ type Config struct {
 	TLSFingerprint string
 }
 
-// MikrotikPlugin reads the neighbor tables of a RouterOS router over its API, and the names of its
-// DHCP leases.
+// MikrotikPlugin reads the neighbor tables of a RouterOS router over its API, and its DHCP
+// leases.
 type MikrotikPlugin struct {
 	plugins.Poller
 
@@ -237,11 +237,12 @@ func (p *MikrotikPlugin) discover(ctx context.Context, state *ipv6disc.State) (i
 		}
 	}
 
-	// The names the hosts gave the router's DHCP server, of the leases bound now: one that
-	// waits, as a static lease of a host that isn't there, names nobody. A lease is of a MAC,
-	// so its name is the host's whatever the families read. The bindings of the DHCPv6 server
-	// have no name to read.
-	if state.Names() {
+	// The leases of the router's DHCP server bound now, their addresses and the names the hosts
+	// gave: one that waits, as a static lease of a host that isn't there, says nothing. A lease
+	// is of a MAC, so its name is the host's whatever the families read. The bindings of the
+	// DHCPv6 server have no name to read. Of IPv4 only, a lease's address is of a family the state
+	// takes.
+	if state.IPv4() || state.Names() {
 		const table = "/ip/dhcp-server/lease/print"
 		reply, err := client.RunContext(ctx, table)
 		if err != nil {
@@ -249,17 +250,19 @@ func (p *MikrotikPlugin) discover(ctx context.Context, state *ipv6disc.State) (i
 		}
 		var leases []plugins.Lease
 		for _, re := range reply.Re {
-			if re.Map["status"] != "bound" || re.Map["host-name"] == "" {
+			if re.Map["status"] != "bound" {
 				continue
 			}
-			// The MAC the lease is bound to now, where the router tells it apart.
+			// The MAC and the address the lease is bound to now, where the router tells them
+			// apart.
 			hw, err := net.ParseMAC(cmp.Or(re.Map["active-mac-address"], re.Map["mac-address"]))
 			if err != nil {
 				continue
 			}
-			leases = append(leases, plugins.Lease{MAC: hw, Name: re.Map["host-name"]})
+			ip, _ := netip.ParseAddr(cmp.Or(re.Map["active-address"], re.Map["address"]))
+			leases = append(leases, plugins.Lease{MAC: hw, IP: ip, Name: re.Map["host-name"]})
 		}
-		plugins.RegisterLeases(state, leases, nil, p.Name(), p.lifetime)
+		plugins.RegisterLeases(state, leases, nil, p.Name(), "mikrotik", p.lifetime)
 	}
 
 	return found, nil

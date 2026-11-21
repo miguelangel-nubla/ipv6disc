@@ -28,16 +28,11 @@ shows the hosts as they are found, in the terminal. Without `-live`, it logs the
 sudo ipv6disc | jq 'select(.msg == "host identified") | .ip'
 ```
 
-Everything else is in a configuration file, YAML: the families, each protocol with its switch and its options, the names, the interfaces, the lifetimes, the plugins. Without one, the defaults discover IPv6. With IPv4 too, the names mDNS tells, and the neighbor table of a router, `discovery.yaml`:
+Everything else is in a configuration file, YAML: the families, each protocol with its switch and its options, the names, the interfaces, the lifetimes, the plugins. Without one, the defaults discover IPv6, by every protocol, and the names the hosts tell. With IPv4 too, and the neighbor table of a router, `discovery.yaml`:
 
 ```yaml
 ipv4:
   enabled: true
-hostnames:
-  enabled: true
-protocols:
-  mdns:
-    enabled: true
 plugins:
   router:
     type: mikrotik

@@ -16,12 +16,12 @@ import (
 	"go.uber.org/zap"
 )
 
-// everyProtocol is every protocol enabled, with all it needs to be: names kept, servers for the
-// reverse DNS, and both families probing.
+// everyProtocol is every protocol enabled, with all it needs to be: servers for the reverse DNS,
+// and both families probing.
 func everyProtocol() Config {
 	on := Protocol{Enabled: true}
 	probing := Family{Enabled: true, Listen: true, Active: true}
-	return Config{Lifetime: time.Hour, IPv6: probing, IPv4: probing, Hostnames: Hostnames{Enabled: true},
+	return Config{Lifetime: time.Hour, IPv6: probing, IPv4: probing,
 		Protocols: Protocols{NDP: on, Ping: on, SSDP: SSDPProtocol{Enabled: true, Names: true}, WSD: WSDProtocol{Enabled: true, Names: true},
 			MDNS: MDNSProtocol{Enabled: true, Ask: true}, ARP: on, ARPSweep: ARPSweepProtocol{Enabled: true}, ARPListen: on, DHCP: on, LLDP: on,
 			NetBIOS: on, LLMNR: on, DNS: DNSProtocol{Enabled: true, Servers: []netip.AddrPort{netip.MustParseAddrPort("192.168.1.1:53")}}}}
@@ -66,8 +66,8 @@ func TestProtocolNames(t *testing.T) {
 	}
 }
 
-// The defaults are what ran before the protocols had switches: those that find hosts, of both
-// families, and none that tells names. The ARP heard, where the system can.
+// The defaults are every protocol, with its options on: those that hear frames where the system
+// can, and the reverse DNS once it has servers.
 func TestDefaultProtocols(t *testing.T) {
 	// As the system is: only Linux has what hears frames.
 	if (DefaultProtocols().ARPListen.Enabled) != (runtime.GOOS == "linux") {
@@ -75,33 +75,38 @@ func TestDefaultProtocols(t *testing.T) {
 	}
 	for _, linux := range []bool{true, false} {
 		withPacketSockets(t, linux)
-		want := map[string]bool{ProtocolNDP: true, ProtocolPing: true, ProtocolSSDP: true, ProtocolWSD: true,
-			ProtocolARP: true, ProtocolARPSweep: true, ProtocolARPListen: linux}
+		want := map[string]bool{}
+		for _, name := range ProtocolNames() {
+			want[name] = true
+		}
+		want[ProtocolARPListen], want[ProtocolDHCP], want[ProtocolLLDP] = linux, linux, linux
 		defaults := DefaultProtocols()
 		for _, name := range ProtocolNames() {
 			if defaults.enabled(name) != want[name] {
 				t.Errorf("packet sockets %v: %s enabled %v by default, want %v", linux, name, defaults.enabled(name), want[name])
 			}
 		}
-		if defaults.SSDP.Names || defaults.WSD.Names || !defaults.MDNS.Ask || defaults.ARPSweep.MaxPrefix != 22 || len(defaults.DNS.Servers) != 0 {
+		if !defaults.SSDP.Names || !defaults.WSD.Names || !defaults.MDNS.Ask || defaults.ARPSweep.MaxPrefix != 22 || len(defaults.DNS.Servers) != 0 {
 			t.Errorf("the options by default: %+v", defaults)
 		}
 		config := DefaultConfig()
-		if !reflect.DeepEqual(config.Protocols, defaults) || config.Hostnames.Enabled || config.IPv4.Enabled || !config.IPv4.Listen || !config.IPv4.Active {
+		if !reflect.DeepEqual(config.Protocols, defaults) || config.IPv4.Enabled || !config.IPv4.Listen || !config.IPv4.Active {
 			t.Errorf("the default configuration: %+v", config)
 		}
 		if err := config.Validate(); err != nil {
 			t.Errorf("packet sockets %v: the default: %v", linux, err)
 		}
-		// IPv6 alone runs, until IPv4 is turned on.
-		if got := config.running(); !slices.Equal(got, []string{"ndp", "ping", "ssdp", "wsd"}) {
-			t.Errorf("the default runs %v", got)
+		// IPv6 alone runs, until IPv4 is turned on; the reverse DNS, with no server, not.
+		wantIPv6 := []string{"ndp", "ping", "ssdp", "wsd", "mdns", "llmnr"}
+		wantIPv4 := []string{"ndp", "ping", "ssdp", "wsd", "mdns", "arp", "arp-sweep", "netbios", "llmnr"}
+		if linux {
+			wantIPv6 = []string{"ndp", "ping", "ssdp", "wsd", "mdns", "dhcp", "lldp", "llmnr"}
+			wantIPv4 = []string{"ndp", "ping", "ssdp", "wsd", "mdns", "arp", "arp-sweep", "arp-listen", "dhcp", "lldp", "netbios", "llmnr"}
+		}
+		if got := config.running(); !slices.Equal(got, wantIPv6) {
+			t.Errorf("the default runs %v, want %v", got, wantIPv6)
 		}
 		config.IPv4.Enabled = true
-		wantIPv4 := []string{"ndp", "ping", "ssdp", "wsd", "arp", "arp-sweep"}
-		if linux {
-			wantIPv4 = append(wantIPv4, "arp-listen")
-		}
 		if got := config.running(); !slices.Equal(got, wantIPv4) {
 			t.Errorf("with IPv4, it runs %v, want %v", got, wantIPv4)
 		}
@@ -112,13 +117,13 @@ func TestDefaultProtocols(t *testing.T) {
 // configuration, and none of a Config made by hand without them.
 func TestWorkerProtocols(t *testing.T) {
 	withPacketSockets(t, false)
-	if got := NewWorker(zap.NewNop().Sugar(), DefaultConfig()).Protocols(); !slices.Equal(got, []string{"ndp", "ping", "ssdp", "wsd"}) {
+	if got := NewWorker(zap.NewNop().Sugar(), DefaultConfig()).Protocols(); !slices.Equal(got, []string{"ndp", "ping", "ssdp", "wsd", "mdns", "llmnr"}) {
 		t.Errorf("the default runs %v", got)
 	}
 	config := DefaultConfig()
-	config.Protocols.SSDP.Enabled, config.Protocols.MDNS.Enabled = false, true
-	if got := NewWorker(zap.NewNop().Sugar(), config).Protocols(); !slices.Equal(got, []string{"ndp", "ping", "wsd", "mdns"}) {
-		t.Errorf("without ssdp and with mdns, it runs %v", got)
+	config.Protocols.SSDP.Enabled, config.Protocols.MDNS.Enabled = false, false
+	if got := NewWorker(zap.NewNop().Sugar(), config).Protocols(); !slices.Equal(got, []string{"ndp", "ping", "wsd", "llmnr"}) {
+		t.Errorf("without ssdp and mdns, it runs %v", got)
 	}
 	if got := NewWorker(zap.NewNop().Sugar(), Config{Lifetime: time.Hour, IPv6: Family{Enabled: true, Listen: true}}).Protocols(); len(got) != 0 {
 		t.Errorf("a Config without protocols runs %v", got)
@@ -130,25 +135,24 @@ func TestWorkerProtocols(t *testing.T) {
 var protocolRuns = map[string]struct {
 	family string
 	way    string
-	names  bool
 }{
-	ProtocolNDP:       {"IPv6", "listen", false},
-	ProtocolPing:      {"IPv6", "listen", false},
-	ProtocolSSDP:      {"IPv6", "listen", false},
-	ProtocolWSD:       {"IPv6", "listen", false},
-	ProtocolMDNS:      {"either", "listen", false},
-	ProtocolARP:       {"IPv4", "listen", false},
-	ProtocolARPSweep:  {"IPv4", "active", false},
-	ProtocolARPListen: {"IPv4", "listen", false},
-	ProtocolDHCP:      {"either", "listen", false},
-	ProtocolLLDP:      {"either", "listen", false},
-	ProtocolNetBIOS:   {"IPv4", "listen", true},
-	ProtocolLLMNR:     {"either", "listen", true},
-	ProtocolDNS:       {"none", "", true},
+	ProtocolNDP:       {"IPv6", "listen"},
+	ProtocolPing:      {"IPv6", "listen"},
+	ProtocolSSDP:      {"IPv6", "listen"},
+	ProtocolWSD:       {"IPv6", "listen"},
+	ProtocolMDNS:      {"either", "listen"},
+	ProtocolARP:       {"IPv4", "listen"},
+	ProtocolARPSweep:  {"IPv4", "active"},
+	ProtocolARPListen: {"IPv4", "listen"},
+	ProtocolDHCP:      {"either", "listen"},
+	ProtocolLLDP:      {"either", "listen"},
+	ProtocolNetBIOS:   {"IPv4", "listen"},
+	ProtocolLLMNR:     {"either", "listen"},
+	ProtocolDNS:       {"none", ""},
 }
 
 // A protocol runs only when it is enabled, and its family is, and listens, or for the sweep
-// probes; one that only learns names, only with the names kept.
+// probes; the reverse DNS, of no family, once it has servers.
 func TestProtocolsRunWithTheirFamily(t *testing.T) {
 	withPacketSockets(t, true)
 	all := everyProtocol()
@@ -161,15 +165,15 @@ func TestProtocolsRunWithTheirFamily(t *testing.T) {
 	off, listening, probing := Family{Listen: true, Active: true}, Family{Enabled: true, Listen: true}, Family{Enabled: true, Listen: true, Active: true}
 	for _, name := range ProtocolNames() {
 		want := protocolRuns[name]
-		runs := func(ipv6, ipv4 Family, names bool) bool {
+		runs := func(ipv6, ipv4 Family) bool {
 			c := all
-			c.IPv6, c.IPv4, c.Hostnames.Enabled = ipv6, ipv4, names
+			c.IPv6, c.IPv4 = ipv6, ipv4
 			return c.runs(name)
 		}
 		// By family.
 		got := "none"
-		switch v6, v4 := runs(probing, off, true), runs(off, probing, true); {
-		case v6 && v4 && runs(off, off, true):
+		switch v6, v4 := runs(probing, off), runs(off, probing); {
+		case v6 && v4 && runs(off, off):
 		case v6 && v4:
 			got = "either"
 		case v6:
@@ -186,20 +190,17 @@ func TestProtocolsRunWithTheirFamily(t *testing.T) {
 		way := ""
 		switch {
 		case want.family == "none":
-		case runs(listening, listening, true):
+		case runs(listening, listening):
 			way = "listen"
-		case runs(probing, probing, true):
+		case runs(probing, probing):
 			way = "active"
 		}
 		if way != want.way {
 			t.Errorf("%s runs with %q, want %q", name, way, want.way)
 		}
 		// A family that only has active on, without listening, runs nothing.
-		if want.family != "none" && runs(Family{Enabled: true, Active: true}, Family{Enabled: true, Active: true}, true) {
+		if want.family != "none" && runs(Family{Enabled: true, Active: true}, Family{Enabled: true, Active: true}) {
 			t.Errorf("%s runs without listening", name)
-		}
-		if names := !runs(probing, probing, false); names != want.names {
-			t.Errorf("%s needs the names kept: %v, want %v", name, names, want.names)
 		}
 		// And never when it is off.
 		c := everyProtocol()
@@ -243,7 +244,7 @@ func TestDiscoveryPageProtocols(t *testing.T) {
 			map[bool]string{true: "on", false: "off"}[defaults.enabled(name)],
 			map[string]string{"IPv6": "IPv6", "IPv4": "IPv4", "either": "Either", "none": "None"}[runs.family],
 			map[string]string{"listen": "`listen`", "active": "`active`", "": "-"}[runs.way])
-		if name == ProtocolARPListen {
+		if name == ProtocolARPListen || name == ProtocolDHCP || name == ProtocolLLDP {
 			row = strings.Replace(row, "| on |", "| on, on Linux |", 1)
 		}
 		if !strings.Contains(string(page), row) {
@@ -271,18 +272,9 @@ func TestProtocolsValidate(t *testing.T) {
 		change func(*Config)
 		want   []string
 	}{
-		{"the reverse DNS without servers", func(c *Config) { c.Protocols.DNS.Servers = nil },
-			[]string{"the dns protocol is enabled without servers: it asks only those it is given"}},
 		{"a server that is none", func(c *Config) {
 			c.Protocols.DNS.Servers = []netip.AddrPort{netip.MustParseAddrPort("0.0.0.0:53"), netip.MustParseAddrPort("224.0.0.1:53"), {}}
 		}, []string{"invalid server of the dns protocol: 0.0.0.0:53", "invalid server of the dns protocol: 224.0.0.1:53", "invalid server of the dns protocol: invalid AddrPort"}},
-		{"what only learns names, without the names kept", func(c *Config) { c.Hostnames.Enabled = false }, []string{
-			"the netbios protocol is enabled, and it only learns names, which hostnames, off, doesn't keep: enable hostnames, or disable netbios",
-			"the llmnr protocol is enabled, and it only learns names, which hostnames, off, doesn't keep: enable hostnames, or disable llmnr",
-			"the dns protocol is enabled, and it only learns names, which hostnames, off, doesn't keep: enable hostnames, or disable dns",
-			"the names of the ssdp protocol are on, and hostnames, off, doesn't keep them: enable hostnames, or turn the names of ssdp off",
-			"the names of the wsd protocol are on, and hostnames, off, doesn't keep them: enable hostnames, or turn the names of wsd off",
-		}},
 		{"the protocols of IPv6 without NDP", func(c *Config) { c.Protocols.NDP.Enabled = false }, []string{
 			"the ping protocol is enabled without ndp, which tells the MAC of the hosts it hears: it would find none",
 			"the ssdp protocol is enabled without ndp, which tells the MAC of the hosts it hears: it would find none",
@@ -325,8 +317,6 @@ func TestProtocolsValidate(t *testing.T) {
 	// The options of a protocol that is off are not looked at, whatever they are; and both ends
 	// of the range of the sweep are in it.
 	c := everyProtocol()
-	c.Hostnames.Enabled = false
-	c.Protocols.NetBIOS.Enabled, c.Protocols.LLMNR.Enabled = false, false
 	c.Protocols.SSDP, c.Protocols.WSD = SSDPProtocol{Names: true}, WSDProtocol{Names: true}
 	c.Protocols.DNS = DNSProtocol{Servers: []netip.AddrPort{{}}}
 	c.Protocols.ARPSweep = ARPSweepProtocol{MaxPrefix: 99}
@@ -341,13 +331,11 @@ func TestProtocolsValidate(t *testing.T) {
 			t.Errorf("a max_prefix of %d: %v", bits, err)
 		}
 	}
-	// What also finds hosts runs without the names kept, and takes none.
+	// The reverse DNS without servers is valid, and runs not.
 	c = everyProtocol()
-	c.Hostnames.Enabled = false
-	c.Protocols.NetBIOS.Enabled, c.Protocols.LLMNR.Enabled, c.Protocols.DNS.Enabled = false, false, false
-	c.Protocols.SSDP.Names, c.Protocols.WSD.Names = false, false
-	if err := c.Validate(); err != nil || !c.runs(ProtocolMDNS) || !c.runs(ProtocolDHCP) || !c.runs(ProtocolLLDP) || !c.naming() || c.asksNames() {
-		t.Errorf("mDNS, DHCP and LLDP without names: %v, naming %v, asking %v", err, c.naming(), c.asksNames())
+	c.Protocols.DNS.Servers = nil
+	if err := c.Validate(); err != nil || c.runs(ProtocolDNS) {
+		t.Errorf("the reverse DNS without servers: %v, runs %v", err, c.runs(ProtocolDNS))
 	}
 
 	// On a system without packet sockets the defaults are valid: the ARP heard is not among them.
@@ -392,7 +380,7 @@ func TestProtocolsWarnings(t *testing.T) {
 		{"the ARP heard alone", Config{Lifetime: time.Hour, IPv4: listening, Protocols: Protocols{ARPListen: Protocol{Enabled: true}}}, nil},
 		{"mDNS alone, which is of both", Config{Lifetime: time.Hour, IPv6: listening, IPv4: listening, Protocols: Protocols{MDNS: MDNSProtocol{Enabled: true}}}, nil},
 		{"the families off, or not listening", Config{Lifetime: time.Hour, IPv6: Family{Enabled: true}, IPv4: Family{Listen: true}}, nil},
-		{"names alone, which find nothing", Config{Lifetime: time.Hour, IPv4: listening, Hostnames: Hostnames{Enabled: true}, Protocols: Protocols{NetBIOS: Protocol{Enabled: true}}},
+		{"names alone, which find nothing", Config{Lifetime: time.Hour, IPv4: listening, Protocols: Protocols{NetBIOS: Protocol{Enabled: true}}},
 			[]string{"IPv4 listens, but no protocol that finds its hosts is enabled: this machine's own addresses only"}},
 	} {
 		c := tt.c.withDefaults()
@@ -402,39 +390,6 @@ func TestProtocolsWarnings(t *testing.T) {
 		if got := c.warnings(); !slices.Equal(got, tt.want) {
 			t.Errorf("%s: warnings %q, want %q", tt.what, got, tt.want)
 		}
-	}
-}
-
-// Without the names kept, the naming layer only has the discovery find the addresses its
-// protocols hear of: what they say names nobody, and nothing is asked.
-func TestNamingWithoutNames(t *testing.T) {
-	n := newTestNamer(t)
-	n.names = false
-	n.state.SetNames(false, 0)
-	n.state.registerLocal(hostMAC(1), hostIPv4(1), Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, time.Hour, nil)
-
-	// A record of a host the state has, and one of an address it doesn't: the address is asked of
-	// the discovery, and nothing waits for it.
-	n.said("eth0", hostIPv4(1), "printer.local.", hostIPv4(1), true)
-	n.said("eth0", hostIPv4(1), "other.local.", hostIPv4(9), true)
-	// What tells a MAC, as a DHCP client's message: its address is asked for too.
-	if n.claimed(NameDHCP, "eth0", hostMAC(2), "laptop", []netip.Addr{hostIPv4(2)}) {
-		t.Error("a name claimed counts as one, without names")
-	}
-	n.namedFrom(NameDHCP, "eth0", netip.MustParseAddr("fe80::3"), hostMAC(3), "")
-	if want := []string{"eth0 192.168.1.9", "eth0 192.168.1.2", "eth0 fe80::3"}; !slices.Equal(n.discovered, want) {
-		t.Errorf("asked of the discovery: %v, want %v", n.discovered, want)
-	}
-	if len(n.claims) != 0 || len(n.state.AllNames()) != 0 {
-		t.Errorf("%d names wait, and the state has %v", len(n.claims), n.state.AllNames())
-	}
-	// Nobody is asked its name, though a protocol could.
-	if n.lookups() || len(n.asker.take()) != 0 {
-		t.Error("a host was asked its name, without names")
-	}
-	n.resolve()
-	if len(n.wanted) != 3 {
-		t.Errorf("%d addresses waited for, want the three heard of", len(n.wanted))
 	}
 }
 

@@ -64,14 +64,9 @@ type Family struct {
 	Lifetime time.Duration
 }
 
-// Hostnames is whether the names of the hosts are kept, whatever the family they are heard over.
-// What learns them is each protocol's to say, in Protocols.
+// Hostnames are the names of the hosts, whatever the family they are heard over: always kept. What
+// learns them is each protocol's to say, in Protocols, and the plugins', of their router's leases.
 type Hostnames struct {
-	// Whether the state takes names, and the plugins read those of their router's leases. Without
-	// it no name is kept: a protocol that also finds hosts, as mDNS, DHCP and LLDP, still does,
-	// and takes no name; one that only learns names, as NetBIOS, LLMNR, the reverse DNS, and
-	// the names of WS-Discovery and SSDP, is then an error to enable.
-	Enabled bool
 	// How long a name stays after it was last said, whatever said it, the plugins too. Zero:
 	// the lifetime of each registration, Config.Lifetime for the local discovery, and for a
 	// plugin the one it was made with.
@@ -124,7 +119,7 @@ type Protocol struct {
 type SSDPProtocol struct {
 	Enabled bool
 	// Whether a device that answers the search is asked its description, over HTTP, for its
-	// friendly name. It needs Hostnames.
+	// friendly name.
 	Names bool
 }
 
@@ -132,7 +127,6 @@ type SSDPProtocol struct {
 type WSDProtocol struct {
 	Enabled bool
 	// Whether a computer that answers the probe is asked its metadata, over HTTP, for its name.
-	// It needs Hostnames.
 	Names bool
 }
 
@@ -140,7 +134,7 @@ type WSDProtocol struct {
 type MDNSProtocol struct {
 	Enabled bool
 	// Whether questions are sent: the query to the group at every rediscovery, where a family
-	// is active, and, with Hostnames, to each host for its name. Without it mDNS only listens.
+	// is active, and to each host for its name. Without it mDNS only listens.
 	Ask bool
 }
 
@@ -156,8 +150,9 @@ type ARPSweepProtocol struct {
 // DNSProtocol is the reverse DNS.
 type DNSProtocol struct {
 	Enabled bool
-	// The servers asked the name of each address, the PTR record of its reverse name: needed.
-	// Only these, never the system's resolver. With a port of zero, at 53.
+	// The servers asked the name of each address, the PTR record of its reverse name: without,
+	// the protocol has none to ask, and runs not. Only these, never the system's resolver. With
+	// a port of zero, at 53.
 	Servers []netip.AddrPort
 }
 
@@ -195,17 +190,19 @@ const (
 // tests.
 var packetSockets = packet.Supported
 
-// DefaultProtocols are the protocols that run unless a configuration says: those that find
-// hosts, NDP, the ping, SSDP and WS-Discovery over IPv6, and the neighbor table, the sweep and,
-// on Linux, where alone it can be, the ARP heard, over IPv4. Those that tell names too, or names
-// alone, are off, with the options they have when turned on: mDNS asks.
+// DefaultProtocols are the protocols that run unless a configuration says: all of them, with their
+// options on, SSDP and WS-Discovery fetching names, mDNS asking. Those that hear frames, the ARP
+// heard, DHCP and LLDP, only where they can be, on Linux. The reverse DNS runs once it has servers.
 func DefaultProtocols() Protocols {
 	on := Protocol{Enabled: true}
+	frames := Protocol{Enabled: packetSockets}
 	return Protocols{
-		NDP: on, Ping: on, SSDP: SSDPProtocol{Enabled: true}, WSD: WSDProtocol{Enabled: true},
-		MDNS: MDNSProtocol{Ask: true},
+		NDP: on, Ping: on, SSDP: SSDPProtocol{Enabled: true, Names: true}, WSD: WSDProtocol{Enabled: true, Names: true},
+		MDNS: MDNSProtocol{Enabled: true, Ask: true},
 		ARP:  on, ARPSweep: ARPSweepProtocol{Enabled: true, MaxPrefix: arp.DefaultSweepPrefix},
-		ARPListen: Protocol{Enabled: packetSockets},
+		ARPListen: frames, DHCP: frames, LLDP: frames,
+		NetBIOS: on, LLMNR: on,
+		DNS: DNSProtocol{Enabled: true},
 	}
 }
 
@@ -286,12 +283,12 @@ func (c Config) validate() error {
 			errs = append(errs, fmt.Errorf("invalid interface pattern %q: %w", pattern, err))
 		}
 	}
-	return errors.Join(append(errs, c.Protocols.validate(c.Hostnames.Enabled)...)...)
+	return errors.Join(append(errs, c.Protocols.validate()...)...)
 }
 
-// validate tells what of the protocols enabled can't run, whatever the families: with names kept
-// or not. The options of a protocol that is off are not looked at.
-func (p Protocols) validate(names bool) []error {
+// validate tells what of the protocols enabled can't run, whatever the families. The options of a
+// protocol that is off are not looked at.
+func (p Protocols) validate() []error {
 	var errs []error
 	// Only NDP tells a MAC: the others of IPv6 ask it of what they hear.
 	for _, protocol := range []string{ProtocolPing, ProtocolSSDP, ProtocolWSD} {
@@ -313,23 +310,7 @@ func (p Protocols) validate(names bool) []error {
 			errs = append(errs, fmt.Errorf("the %s protocol is enabled, and this system can't run it: it needs Linux", protocol))
 		}
 	}
-	// What only learns names.
-	if !names {
-		for _, protocol := range []string{ProtocolNetBIOS, ProtocolLLMNR, ProtocolDNS} {
-			if p.enabled(protocol) {
-				errs = append(errs, fmt.Errorf("the %s protocol is enabled, and it only learns names, which hostnames, off, doesn't keep: enable hostnames, or disable %s", protocol, protocol))
-			}
-		}
-		for _, protocol := range []string{ProtocolSSDP, ProtocolWSD} {
-			if protocol == ProtocolSSDP && p.SSDP.Enabled && p.SSDP.Names || protocol == ProtocolWSD && p.WSD.Enabled && p.WSD.Names {
-				errs = append(errs, fmt.Errorf("the names of the %s protocol are on, and hostnames, off, doesn't keep them: enable hostnames, or turn the names of %s off", protocol, protocol))
-			}
-		}
-	}
 	if p.DNS.Enabled {
-		if len(p.DNS.Servers) == 0 {
-			errs = append(errs, fmt.Errorf("the %s protocol is enabled without servers: it asks only those it is given", ProtocolDNS))
-		}
 		for _, server := range p.DNS.Servers {
 			if !server.Addr().IsValid() || server.Addr().IsUnspecified() || server.Addr().IsMulticast() {
 				errs = append(errs, fmt.Errorf("invalid server of the %s protocol: %s", ProtocolDNS, server))
@@ -427,8 +408,8 @@ func (c Config) listensIPv4() bool { return c.IPv4.Enabled && c.IPv4.Listen }
 func (c Config) probesIPv4() bool  { return c.IPv4.Enabled && c.IPv4.Listen && c.IPv4.Active }
 
 // runs tells whether a protocol runs: enabled, and its family on, and listening, or for the sweep
-// probing. A protocol of either family runs while one listens; one that only learns names, with
-// the names kept; and the reverse DNS, which is of no family, whatever they are.
+// probing. A protocol of either family runs while one listens; and the reverse DNS, which is of
+// no family, whatever they are, once it has servers.
 func (c Config) runs(protocol string) bool {
 	if !c.Protocols.enabled(protocol) {
 		return false
@@ -441,11 +422,9 @@ func (c Config) runs(protocol string) bool {
 	case ProtocolARPSweep:
 		return c.probesIPv4()
 	case ProtocolNetBIOS:
-		return c.listensIPv4() && c.Hostnames.Enabled
-	case ProtocolLLMNR:
-		return (c.listensIPv6() || c.listensIPv4()) && c.Hostnames.Enabled
+		return c.listensIPv4()
 	case ProtocolDNS:
-		return c.Hostnames.Enabled
+		return len(c.Protocols.DNS.Servers) > 0
 	}
 	return c.listensIPv6() || c.listensIPv4()
 }
@@ -475,9 +454,9 @@ func (c Config) sweepPrefix() int {
 func (c Config) fetchesNames(protocol string) bool {
 	switch protocol {
 	case ProtocolSSDP:
-		return c.runs(protocol) && c.Protocols.SSDP.Names && c.Hostnames.Enabled
+		return c.runs(protocol) && c.Protocols.SSDP.Names
 	case ProtocolWSD:
-		return c.runs(protocol) && c.Protocols.WSD.Names && c.Hostnames.Enabled
+		return c.runs(protocol) && c.Protocols.WSD.Names
 	}
 	return false
 }
@@ -496,5 +475,5 @@ func (c Config) naming() bool {
 
 // asksNames tells whether anything asks the hosts their name, once in a rediscovery.
 func (c Config) asksNames() bool {
-	return c.Hostnames.Enabled && (c.runs(ProtocolMDNS) && c.Protocols.MDNS.Ask || c.runs(ProtocolNetBIOS) || c.runs(ProtocolLLMNR) || c.runs(ProtocolDNS))
+	return c.runs(ProtocolMDNS) && c.Protocols.MDNS.Ask || c.runs(ProtocolNetBIOS) || c.runs(ProtocolLLMNR) || c.runs(ProtocolDNS)
 }

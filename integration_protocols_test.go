@@ -361,9 +361,19 @@ func stopClean(t *testing.T, instance *remoteInstance) {
 // namesBy is a worker that learns names by those protocols alone, over the families given, with
 // short lifetimes: beside the protocols that find hosts by default, each of those is enabled, and
 // the names of WS-Discovery and SSDP are those protocols' option.
+// findingProtocols are the protocols that find hosts, of DefaultProtocols, and none of the names:
+// what a test of them adds to, or of another, leaves alone.
+func findingProtocols() Protocols {
+	p := DefaultProtocols()
+	p.MDNS.Enabled, p.DHCP.Enabled, p.LLDP.Enabled = false, false, false
+	p.NetBIOS.Enabled, p.LLMNR.Enabled, p.DNS.Enabled = false, false, false
+	p.SSDP.Names, p.WSD.Names = false, false
+	return p
+}
+
 func namesBy(ipv6, ipv4 Family, protocols ...string) Config {
-	config := Config{Protocols: DefaultProtocols(), Lifetime: time.Minute, Rediscover: 3 * time.Second, IPv6: ipv6, IPv4: ipv4,
-		Hostnames: Hostnames{Enabled: true, Lifetime: namesLifetime}}
+	config := Config{Protocols: findingProtocols(), Lifetime: time.Minute, Rediscover: 3 * time.Second, IPv6: ipv6, IPv4: ipv4,
+		Hostnames: Hostnames{Lifetime: namesLifetime}}
 	on := Protocol{Enabled: true}
 	for _, protocol := range protocols {
 		switch protocol {
@@ -739,7 +749,7 @@ func TestLivePassiveARP(t *testing.T) {
 	a, b, p, q := lan["a"], lan["b"], lan["p"], lan["q"]
 	wire := startCapture(t, "port-a", "port-b", "port-p", "port-q")
 	// No names, and nothing probed.
-	instance := startInstance(t, a.namespace, Config{Protocols: DefaultProtocols(), Lifetime: time.Minute, Rediscover: 3 * time.Second, IPv4: listening})
+	instance := startInstance(t, a.namespace, Config{Protocols: findingProtocols(), Lifetime: time.Minute, Rediscover: 3 * time.Second, IPv4: listening})
 	defer instance.stop()
 	waitFor(t, 30*time.Second, "the worker's own address", func() bool {
 		found, _ := instance.report().self(a.ipv4)
@@ -944,12 +954,12 @@ func TestLiveNamesLLDP(t *testing.T) {
 	stopClean(t, instance)
 }
 
-// Without names asked for, nothing of any of this: beside the services that would answer, a
-// worker that probes over both families sends nothing to their ports, fetches nothing, joins no
+// With the protocols of names off, nothing of any of this: beside the services that would answer,
+// a worker that probes over both families sends nothing to their ports, fetches nothing, joins no
 // group, and hears no DHCP nor LLDP; and it has no name.
-func TestLiveNamesProtocolsOffByDefault(t *testing.T) {
+func TestLiveNamesProtocolsOff(t *testing.T) {
 	if os.Getenv(insideEnv) == "" {
-		runOnLAN(t, "TestLiveNamesProtocolsOffByDefault")
+		runOnLAN(t, "TestLiveNamesProtocolsOff")
 		return
 	}
 	a, b, p, q := lan["a"], lan["b"], lan["p"], lan["q"]
@@ -961,9 +971,8 @@ func TestLiveNamesProtocolsOffByDefault(t *testing.T) {
 	device := startHelper(t, q.namespace, "device", q.ipv6.String(), q.ipv6.String(), "/description.xml", "Living_Room_TV")
 	startDnsmasq(t, b.namespace, "--host-record=printer-p.lan.test,"+p.ipv4.String(), "--dhcp-range=10.66.5.32,10.66.5.60,255.255.255.192,10m")
 
-	// The protocols of the defaults, and no names: the servers are given, and not asked.
+	// The protocols that find hosts, and none of the names: the servers are given, and not asked.
 	config := namesBy(probing, probing)
-	config.Hostnames = Hostnames{}
 	config.Protocols.DNS.Servers = []netip.AddrPort{netip.AddrPortFrom(b.ipv4, 53)}
 	instance := startInstance(t, a.namespace, config)
 	defer instance.stop()
@@ -987,7 +996,7 @@ func TestLiveNamesProtocolsOffByDefault(t *testing.T) {
 	sent := wire.from(a.mac)
 	for _, kind := range []string{"mdns", "mdns lookup", "netbios", "llmnr", "dns", "dhcp", "tcp", "wsd resolve", "udp", "lldp"} {
 		if sent[kind] != 0 {
-			t.Errorf("%d of %q sent without names asked for: %v", sent[kind], kind, sent)
+			t.Errorf("%d of %q sent with the protocols of names off: %v", sent[kind], kind, sent)
 		}
 	}
 	// The probes went, and were answered: there was what to fetch.
@@ -995,7 +1004,7 @@ func TestLiveNamesProtocolsOffByDefault(t *testing.T) {
 		t.Errorf("the capture saw no probe of the worker: %v", sent)
 	}
 	if strings.Contains(device.String(), "FETCHED") {
-		t.Errorf("a description fetched without names asked for:\n%s", device.String())
+		t.Errorf("a description fetched with the protocols of names off:\n%s", device.String())
 	}
 	if r.Received["wsd"] == 0 || r.Received["ssdp"] == 0 {
 		t.Errorf("the probes had no answer: nothing was there to fetch: %v", r.Received)
@@ -1003,7 +1012,7 @@ func TestLiveNamesProtocolsOffByDefault(t *testing.T) {
 	groups := inNamespace(t, a.namespace, "ip", "maddr", "show", "dev", "lan")
 	for _, group := range []string{"224.0.0.251", "ff02::fb", "224.0.0.252", "ff02::1:3", "01:80:c2:00:00:0e", "ff02::1:2"} {
 		if strings.Contains(groups, group) {
-			t.Errorf("the group %s joined without names asked for:\n%s", group, groups)
+			t.Errorf("the group %s joined with the protocols of names off:\n%s", group, groups)
 		}
 	}
 	// The packet sockets of the machine: the one that hears ARP, which is of the IPv4
@@ -1014,7 +1023,7 @@ func TestLiveNamesProtocolsOffByDefault(t *testing.T) {
 	}
 	for _, protocol := range []string{" 0800 ", " 86dd ", " 88cc ", " 0003 "} {
 		if strings.Contains(sockets, protocol) {
-			t.Errorf("a packet socket of the protocol%swithout names asked for:\n%s", protocol, sockets)
+			t.Errorf("a packet socket of the protocol%swith the protocols of names off:\n%s", protocol, sockets)
 		}
 	}
 }

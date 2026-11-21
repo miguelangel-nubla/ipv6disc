@@ -420,19 +420,17 @@ func TestLiveNamesAnnounced(t *testing.T) {
 	}
 }
 
-// Names are off unless asked for: beside a responder that announces itself and answers, a worker
-// that probes over both families sends nothing to the port of mDNS, joins no group of it, and
-// has no name.
-func TestLiveNamesOffByDefault(t *testing.T) {
+// With mDNS off: beside a responder that announces itself and answers, a worker that probes over
+// both families sends nothing to the port of mDNS, joins no group of it, and has no name.
+func TestLiveNamesOff(t *testing.T) {
 	if os.Getenv(insideEnv) == "" {
-		runOnLAN(t, "TestLiveNamesOffByDefault")
+		runOnLAN(t, "TestLiveNamesOff")
 		return
 	}
 	a, p := lan["a"], lan["p"]
 	wire := startCapture(t, "port-a", "port-b", "port-p", "port-q")
-	// As a configuration that says nothing of them: the protocols of the defaults, and no names.
+	// The protocols that find hosts, and none of the names.
 	config := namesBy(probing, probing)
-	config.Hostnames = Hostnames{}
 	instance := startInstance(t, a.namespace, config)
 	defer instance.stop()
 	startAvahi(t, p.namespace, "printer-p", true)
@@ -449,7 +447,7 @@ func TestLiveNamesOffByDefault(t *testing.T) {
 	}
 	sent := wire.from(a.mac)
 	if sent["mdns"] != 0 || sent["mdns lookup"] != 0 || r.Sent["mdns"] != 0 {
-		t.Errorf("sent to the port of mDNS without names asked for: %v", sent)
+		t.Errorf("sent to the port of mDNS with the protocols of names off: %v", sent)
 	}
 	if sent["multicast ping"] == 0 {
 		t.Errorf("the capture saw no probe of the worker at all: %v", sent)
@@ -460,7 +458,7 @@ func TestLiveNamesOffByDefault(t *testing.T) {
 	}
 	groups, err := exec.Command("ip", "netns", "exec", a.namespace, "ip", "maddr", "show", "dev", "lan").CombinedOutput()
 	if err != nil || strings.Contains(string(groups), "224.0.0.251") || strings.Contains(string(groups), "ff02::fb") {
-		t.Errorf("the groups of mDNS joined without names asked for: %v\n%s", err, groups)
+		t.Errorf("the groups of mDNS joined with the protocols of names off: %v\n%s", err, groups)
 	}
 }
 

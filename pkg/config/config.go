@@ -53,7 +53,7 @@ type Discovery struct {
 	// The families: the switches of all their protocols at once.
 	IPv6 Family `json:"ipv6"`
 	IPv4 Family `json:"ipv4"`
-	// Whether the names of the hosts are kept.
+	// The names of the hosts: how long they stay.
 	Hostnames Hostnames `json:"hostnames"`
 	// The protocols of the local discovery, each with its switch and its options.
 	Protocols Protocols `json:"protocols"`
@@ -71,7 +71,6 @@ type Family struct {
 
 // Hostnames is ipv6disc.Hostnames.
 type Hostnames struct {
-	Enabled  bool     `json:"enabled"`
 	Lifetime Duration `json:"lifetime"`
 }
 
@@ -350,7 +349,7 @@ func fromConfig(c ipv6disc.Config) Discovery {
 		Lifetime: Duration(c.Lifetime), Rediscover: Duration(c.Rediscover),
 		Interfaces: c.Interfaces, ExcludeInterfaces: c.ExcludeInterfaces,
 		IPv6: family(c.IPv6), IPv4: family(c.IPv4),
-		Hostnames: Hostnames{Enabled: c.Hostnames.Enabled, Lifetime: Duration(c.Hostnames.Lifetime)},
+		Hostnames: Hostnames{Lifetime: Duration(c.Hostnames.Lifetime)},
 		Protocols: Protocols{
 			NDP: Protocol(p.NDP), Ping: Protocol(p.Ping),
 			SSDP: Fetching{Enabled: p.SSDP.Enabled, Names: p.SSDP.Names},
@@ -374,7 +373,7 @@ func (d Discovery) Config() ipv6disc.Config {
 		Lifetime: time.Duration(d.Lifetime), Rediscover: time.Duration(d.Rediscover),
 		Interfaces: d.Interfaces, ExcludeInterfaces: d.ExcludeInterfaces,
 		IPv6: family(d.IPv6), IPv4: family(d.IPv4),
-		Hostnames: ipv6disc.Hostnames{Enabled: d.Hostnames.Enabled, Lifetime: time.Duration(d.Hostnames.Lifetime)},
+		Hostnames: ipv6disc.Hostnames{Lifetime: time.Duration(d.Hostnames.Lifetime)},
 		Protocols: ipv6disc.Protocols{
 			NDP: ipv6disc.Protocol(p.NDP), Ping: ipv6disc.Protocol(p.Ping),
 			SSDP: ipv6disc.SSDPProtocol{Enabled: p.SSDP.Enabled, Names: p.SSDP.Names},

@@ -114,7 +114,7 @@ func checkSchema(t *testing.T, document map[string]any, path string, schema map[
 		written, has := schema["default"]
 		switch {
 		// On where the system can run it: the schema says so in words.
-		case path == "protocols.arp-listen.enabled":
+		case path == "protocols.arp-listen.enabled", path == "protocols.dhcp.enabled", path == "protocols.lldp.enabled":
 			if has || !strings.Contains(schema["description"].(string), "Default: true on Linux") {
 				t.Errorf("%s: the default depends on the system, which the description says: %v", path, schema["description"])
 			}
@@ -157,10 +157,9 @@ func TestSchemaBounds(t *testing.T) {
 	if !slices.Equal(levels, LogLevels()) {
 		t.Errorf("the levels of the schema: %v, of the code: %v", levels, LogLevels())
 	}
-	// The servers are needed when the reverse DNS is enabled, there as in the code.
-	dns := at("properties", "protocols", "properties", "dns")
-	if required := dns["then"].(map[string]any)["required"]; !reflect.DeepEqual(required, []any{"servers"}) {
-		t.Errorf("the servers of dns: %v", required)
+	// The reverse DNS, on by default, asks nobody without servers: none are needed.
+	if dns := at("properties", "protocols", "properties", "dns"); dns["then"] != nil || dns["required"] != nil {
+		t.Errorf("the servers of dns are needed: %v", dns)
 	}
 }
 

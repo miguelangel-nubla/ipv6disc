@@ -325,13 +325,14 @@ func TestDiscoverIPv4Only(t *testing.T) {
 	state := ipv6disc.NewState()
 	state.SetFamilies(false, true)
 	found, err := NewMikrotikPlugin("router", Config{Interval: time.Minute, Address: address, Username: "admin"}, time.Hour).discover(context.Background(), state)
-	if err != nil || found != 1 || !slices.Equal(asked, []string{"/ip/arp/print"}) {
+	if err != nil || found != 1 || !slices.Equal(asked, []string{"/ip/arp/print", "/ip/dhcp-server/lease/print"}) {
 		t.Errorf("found %d, %v, asked %v", found, err, asked)
 	}
 }
 
 // With names, the leases of the router's DHCP server are read too, and the host names of those
-// bound now registered at their MAC, whatever the families read. Without, the table isn't asked.
+// bound now registered at their MAC, whatever the families read. Without names, and IPv6 alone,
+// whose addresses no lease has, the table isn't asked.
 func TestDiscoverNames(t *testing.T) {
 	leases := []map[string]string{
 		{"address": "192.168.88.10", "mac-address": "00:11:22:33:44:10", "host-name": "Laptop", "status": "bound"},

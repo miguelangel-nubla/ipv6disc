@@ -125,7 +125,7 @@ func NewWorker(logger *zap.SugaredLogger, config Config) *Worker {
 	// The families' own lifetimes, as given: without, each registration's.
 	s.SetLifetimes(config.IPv6.Lifetime, config.IPv4.Lifetime)
 	// And the names', the same.
-	s.SetNames(config.Hostnames.Enabled, config.Hostnames.Lifetime)
+	s.SetNames(true, config.Hostnames.Lifetime)
 	config = config.withDefaults()
 
 	w := &Worker{

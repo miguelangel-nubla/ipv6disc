@@ -56,7 +56,7 @@ invalid-ip                           00:11:22:33:44:55   em0 permanent R
 
 func TestDiscoverOverSSH(t *testing.T) {
 	server := sshtest.Start(t, "root", "secret", func(command string) ([]byte, error) {
-		if command != "ndp -an" {
+		if strings.TrimSuffix(command, leasesCommand) != "ndp -an" {
 			return nil, errors.New("unexpected command")
 		}
 		return []byte("Neighbor Linklayer Address Netif Expire S Flags\n2001:db8::1 00:11:22:33:44:55 em0 permanent R\n"), nil
@@ -70,7 +70,7 @@ func TestDiscoverOverSSH(t *testing.T) {
 
 func TestDiscoverIPv4OverSSH(t *testing.T) {
 	server := sshtest.Start(t, "root", "secret", func(command string) ([]byte, error) {
-		if command != "ndp -an; echo "+arpMarker+"; arp -an" {
+		if strings.TrimSuffix(command, leasesCommand) != "ndp -an; echo "+arpMarker+"; arp -an" {
 			return nil, errors.New("unexpected command")
 		}
 		return []byte("Neighbor Linklayer Address Netif Expire S Flags\n2001:db8::1 00:11:22:33:44:55 em0 permanent R\n" + arpMarker + "\n? (192.168.1.10) at 00:11:22:33:44:10 on em0 expires in 1189 seconds [ethernet]\n? (192.168.1.12) at (incomplete) on em0 expired [ethernet]\n"), nil
@@ -89,7 +89,7 @@ func TestDiscoverIPv4OverSSH(t *testing.T) {
 
 func TestDiscoverIPv4Only(t *testing.T) {
 	server := sshtest.Start(t, "root", "secret", func(command string) ([]byte, error) {
-		if command != "echo "+arpMarker+"; arp -an" {
+		if strings.TrimSuffix(command, leasesCommand) != "echo "+arpMarker+"; arp -an" {
 			return nil, errors.New("unexpected command " + command)
 		}
 		// With a line of stderr, which comes with the output: not a neighbor.

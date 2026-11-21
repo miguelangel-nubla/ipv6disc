@@ -109,11 +109,8 @@ const (
 // only once the discovery found a host there: an address a packet tells is asked of the
 // discovery too, never registered on its word.
 type namer struct {
-	state  *State
-	logger *zap.SugaredLogger
-	// Whether names are kept. Without, the layer only has the discovery find the addresses its
-	// protocols hear of: nothing is asked, and what they say names nobody.
-	names      bool
+	state      *State
+	logger     *zap.SugaredLogger
 	lifetime   time.Duration
 	rediscover time.Duration
 	// The protocols running on an interface, or, for "", on none, and what has the discovery
@@ -195,7 +192,6 @@ func newNamer(state *State, logger *zap.SugaredLogger, config Config) *namer {
 	return &namer{
 		state:      state,
 		logger:     logger,
-		names:      config.Hostnames.Enabled,
 		lifetime:   config.Hostnames.Lifetime,
 		rediscover: config.Rediscover,
 		now:        time.Now,
@@ -262,10 +258,7 @@ func (n *namer) saidBy(source, iface string, from netip.Addr, name string, addr 
 // say settles a claim of saidBy, or has it wait for the discovery.
 func (n *namer) say(c claim, onLink bool) {
 	source, iface, from, addr := c.source, c.iface, c.from, c.addr
-	settled, hw := false, net.HardwareAddr(nil)
-	if n.names {
-		settled, hw = n.settle(c)
-	}
+	settled, hw := n.settle(c)
 	n.mutex.Lock()
 	defer n.mutex.Unlock()
 	if settled {
@@ -277,9 +270,7 @@ func (n *namer) say(c claim, onLink bool) {
 			n.want(iface, a)
 		}
 	}
-	if n.names {
-		n.wait(c)
-	}
+	n.wait(c)
 }
 
 // wait keeps a claim for when the discovery tells whose it is, unless it waits already, or too
@@ -304,8 +295,7 @@ func (n *namer) named(source, iface string, addr netip.Addr, name string) {
 // MAC the State has addr at. The address of a packet is whatever its sender wrote, and one who
 // writes another's, from its own MAC, names nobody.
 func (n *namer) namedFrom(source, iface string, addr netip.Addr, via net.HardwareAddr, name string) {
-	// Without names kept, the address alone counts: a host to find.
-	if _, ok := CleanName(name); !ok && n.names || len(via) == 0 {
+	if _, ok := CleanName(name); !ok || len(via) == 0 {
 		return
 	}
 	n.say(claim{source: source, iface: iface, from: addr, name: name, addr: addr, at: n.now(), via: via}, true)
@@ -318,7 +308,6 @@ func (n *namer) namedFrom(source, iface string, addr netip.Addr, via net.Hardwar
 // It returns whether the name is one a host can have.
 func (n *namer) claimed(source, iface string, hw net.HardwareAddr, name string, addrs []netip.Addr) bool {
 	_, clean := CleanName(name)
-	clean = clean && n.names
 	c := claim{source: source, iface: iface, name: name, at: n.now(), hw: hw, addrs: addrs}
 	settled := false
 	if clean {
@@ -493,9 +482,6 @@ func (n *namer) resolve() (waiting bool) {
 // sent one question, and one that answers nothing one by each protocol, in a rediscovery
 // interval. It returns whether hosts are left to ask, for the second that follows.
 func (n *namer) lookups() (backlog bool) {
-	if !n.names {
-		return false
-	}
 	n.mutex.Lock()
 	defer n.mutex.Unlock()
 	now := n.now()
@@ -939,8 +925,7 @@ func (w *Worker) startInterfaceNames(ctx context.Context, iface net.Interface, k
 			Client6: func(from netip.Addr, hw net.HardwareAddr, m dhcp.Message6) bool {
 				w.saw(iface.Name, from, ProtocolDHCP, Heard, hw)
 				_, named := CleanName(m.Name)
-				named = named && w.config.Hostnames.Enabled
-				if named || !w.config.Hostnames.Enabled {
+				if named {
 					w.naming.namedFrom(NameDHCP, iface.Name, from, hw, m.Name)
 				}
 				return named

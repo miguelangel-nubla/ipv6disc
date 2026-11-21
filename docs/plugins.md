@@ -1,6 +1,6 @@
 # Plugins
 
-A plugin reads the neighbor table of another host, a router usually, every `interval`, and registers its entries, and with `hostnames` the [names](#names) of its DHCP leases: it finds the hosts of networks the local discovery doesn't reach, as other VLANs, or all of them where the local discovery can't run.
+A plugin reads the neighbor table of another host, a router usually, every `interval`, and registers its entries, and reads its DHCP [leases](#leases): it finds the hosts of networks the local discovery doesn't reach, as other VLANs, or all of them where the local discovery can't run.
 
 ```yaml
 plugins:
@@ -23,9 +23,12 @@ Only hosts: the multicast groups a Mikrotik router lists among its neighbors are
 
 A poll takes 30 seconds at most, connecting included: a host that doesn't answer is an error of that poll, and the next one runs at its time. Stopping the program stops the poll under way, which is not reported as an error.
 
-## Names
+## Leases
 
-With `hostnames` enabled, a plugin also reads the host names of its router's DHCP leases, whatever [protocols](discovery.md#protocols) are, in the same poll, and registers each as a [name](discovery.md#names) of the lease's MAC, with the plugin's name as its source. A name is the host's whatever the family of the lease: one of a DHCPv4 lease names the host for its IPv6 addresses too. A lease registers no address, only the name.
+A plugin also reads its router's DHCP leases, whatever [protocols](discovery.md#protocols) are, in the same poll. Of each lease:
+
+- **Its name** is a [name](discovery.md#names) of the lease's MAC, with the plugin's name as its source. A name is the host's whatever the family of the lease: one of a DHCPv4 lease names the host for its IPv6 addresses too.
+- **Its address**, when the discovery has it at that MAC, gets a record, reported by the plugin from `leases`: what a program can filter on, as one that takes only the addresses its DHCP server gave. A lease registers no address: a server keeps the lease of a host that left until it ends, so a lease finds nobody, and keeps an address no longer than what found it.
 
 | | |
 |---|---|

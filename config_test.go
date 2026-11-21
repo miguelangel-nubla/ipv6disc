@@ -207,18 +207,20 @@ func TestSelfRefreshIsWithinTheLifetime(t *testing.T) {
 	}
 }
 
-// A configuration that loses hosts that are there is valid, and warned of.
+// A configuration that loses hosts that are there is valid, and warned of. The names, asked once
+// in a rediscovery, last longer here: their warning is TestConfigHostnames'.
 func TestConfigWarnings(t *testing.T) {
 	probing := Family{Enabled: true, Listen: true, Active: true}
+	names := Hostnames{Lifetime: 4 * time.Hour}
 	for _, tt := range []struct {
 		what string
 		c    Config
 		want int
 	}{
 		{"the default", DefaultConfig(), 0},
-		{"rediscovering less often than the lifetime", Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, Rediscover: 80 * time.Minute, IPv6: probing}, 1},
-		{"the same, of both families", Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, Rediscover: time.Hour, IPv6: probing, IPv4: probing}, 2},
-		{"the same, listening only: nothing is probed", Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, Rediscover: 80 * time.Minute, IPv6: Family{Enabled: true, Listen: true}}, 0},
+		{"rediscovering less often than the lifetime", Config{Protocols: DefaultProtocols(), Hostnames: names, Lifetime: time.Hour, Rediscover: 80 * time.Minute, IPv6: probing}, 1},
+		{"the same, of both families", Config{Protocols: DefaultProtocols(), Hostnames: names, Lifetime: time.Hour, Rediscover: time.Hour, IPv6: probing, IPv4: probing}, 2},
+		{"the same, listening only: nothing is probed", Config{Protocols: DefaultProtocols(), Hostnames: names, Lifetime: time.Hour, Rediscover: 80 * time.Minute, IPv6: Family{Enabled: true, Listen: true}}, 0},
 		{"an IPv4 lifetime of the interval of the table", Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, IPv6: probing, IPv4: Family{Enabled: true, Listen: true, Lifetime: time.Minute}}, 1},
 		{"the same, IPv4 not listening", Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, IPv6: probing, IPv4: Family{Enabled: true, Lifetime: time.Minute}}, 0},
 		{"an IPv4 lifetime of two minutes", Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, IPv6: probing, IPv4: Family{Enabled: true, Listen: true, Lifetime: 2 * time.Minute}}, 0},

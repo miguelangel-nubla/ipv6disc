@@ -124,6 +124,35 @@ func (s *State) Report(hw net.HardwareAddr, ip netip.Addr, by, typ, from string,
 	return s.register(hw, ip, Record{By: by, Type: typ, From: from}, kind{}, lifetime, onExpiration)
 }
 
+// Attach adds a report to the address of that MAC the state has, if it has it: by, of type typ,
+// from its table from. The report says how the address was seen for its lifetime, refreshed by the
+// next, and keeps the address no longer than the others do: a table that lists an address whether
+// its host is there or not, as a DHCP server's leases, finds nobody, and names one that is. It
+// tells whether there was the address.
+func (s *State) Attach(hw net.HardwareAddr, ip netip.Addr, by, typ, from string, lifetime time.Duration) bool {
+	ip = ip.Unmap().WithZone("")
+	s.macsMutex.RLock()
+	c := s.macs[hw.String()]
+	s.macsMutex.RUnlock()
+	if c == nil {
+		return false
+	}
+	c.addressesMutex.RLock()
+	addr := c.addresses[ip.String()]
+	c.addressesMutex.RUnlock()
+	if addr == nil || !addr.Valid() {
+		return false
+	}
+	now := time.Now()
+	addr.mutex.Lock()
+	added := addr.addRecord(Record{By: by, Type: typ, From: from, FirstSeen: now, LastSeen: now, Lifetime: lifetime, attached: true})
+	addr.mutex.Unlock()
+	if added {
+		s.changed()
+	}
+	return true
+}
+
 // registerLocal is Register for the local discovery: r says how, and on which interface.
 func (s *State) registerLocal(hw net.HardwareAddr, ip netip.Addr, r Record, lifetime time.Duration, onExpiration func(*Addr, AddrExpirationRemainingEvents)) (*Addr, bool) {
 	return s.register(hw, ip, r, kind{}, lifetime, onExpiration)

@@ -55,9 +55,16 @@ type Record struct {
 	FirstSeen, LastSeen time.Time
 	Lifetime            time.Duration
 
+	// Of State.Attach: a report of an address something else saw, as a lease, which says how it
+	// was seen while it counts, and keeps the address no longer than the others do.
+	attached bool
 	// The order records were added in, of the address: Records and Sources keep it.
 	order uint64
 }
+
+// Attached tells whether the record is State.Attach's: it says how the address was seen, and keeps
+// it no longer than the others do.
+func (r Record) Attached() bool { return r.attached }
 
 // Reported tells whether the record is a report, rather than of a protocol.
 func (r Record) Reported() bool { return r.Protocol == "" }
@@ -152,13 +159,16 @@ func (a *Addr) addRecord(r Record) (added bool) {
 }
 
 // lasting is the record that keeps the address longest, of those that count at now, with the mutex
-// held: the address expires with it. The records that are over are dropped, but the last one,
-// which an expired address still held keeps.
+// held: the address expires with it. An attached one keeps it none. The records that are over are
+// dropped, but the last one, which an expired address still held keeps.
 func (a *Addr) lasting(now time.Time) *Record {
 	var best *Record
 	for k, r := range a.records {
 		if !r.Live(now) && len(a.records) > 1 {
 			delete(a.records, k)
+			continue
+		}
+		if r.attached {
 			continue
 		}
 		if best == nil || r.Expiration().After(best.Expiration()) {

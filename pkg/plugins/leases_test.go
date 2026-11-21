@@ -176,13 +176,13 @@ func TestRegisterLeases(t *testing.T) {
 
 	state := ipv6disc.NewState()
 	defer state.Close()
-	RegisterLeases(state, leases, neighbors, "router", time.Hour)
+	RegisterLeases(state, leases, neighbors, "router", "linux", time.Hour)
 	if got := state.AllNames(); len(got) != 0 {
 		t.Errorf("names in a state that takes none: %v", got)
 	}
 
 	state.SetNames(true, 0)
-	RegisterLeases(state, leases, neighbors, "router", time.Hour)
+	RegisterLeases(state, leases, neighbors, "router", "linux", time.Hour)
 	var got []string
 	for mac, names := range state.AllNames() {
 		for _, n := range names {
@@ -197,6 +197,49 @@ func TestRegisterLeases(t *testing.T) {
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("got %q\nwant %q", got, want)
+	}
+}
+
+// The addresses of the leases: a lease finds no host, and says of an address something else found
+// that it is leased, until the lease is gone. It keeps the address no longer than the others do.
+func TestRegisterLeasesAttach(t *testing.T) {
+	state := ipv6disc.NewState()
+	defer state.Close()
+	state.SetFamilies(true, true)
+	laptop, _ := net.ParseMAC("00:1a:2b:3c:4d:5e")
+	phone, _ := net.ParseMAC("00:1a:2b:3c:4d:61")
+	leases := []Lease{
+		{MAC: laptop, IP: netip.MustParseAddr("192.168.1.50")},
+		{MAC: laptop, IP: netip.MustParseAddr("192.168.1.99")}, // nothing found it
+		{IP: netip.MustParseAddr("fd00::1c3")},
+	}
+	neighbors := map[netip.Addr]net.HardwareAddr{netip.MustParseAddr("fd00::1c3"): phone}
+	a, _ := state.Report(laptop, netip.MustParseAddr("192.168.1.50"), "router", "linux", ipv6disc.FromNeighbors, 50*time.Millisecond, nil)
+	b, _ := state.Report(phone, netip.MustParseAddr("fd00::1c3"), "router", "linux", ipv6disc.FromNeighbors, time.Hour, nil)
+	RegisterLeases(state, leases, neighbors, "router", "linux", time.Hour)
+
+	leased := func(addr *ipv6disc.Addr) bool {
+		return slices.ContainsFunc(addr.Records(), func(r ipv6disc.Record) bool {
+			return r.From == ipv6disc.FromLeases && r.By == "router" && r.Type == "linux" && r.Attached()
+		})
+	}
+	if !leased(a) || !leased(b) {
+		t.Errorf("the leased addresses: %v, %v", a.Records(), b.Records())
+	}
+	if got := state.GetAll()[laptop.String()].Get(); len(got) != 1 {
+		t.Errorf("the laptop's addresses: %v: a lease of an address nothing found found it", got)
+	}
+	// The lease, of an hour, keeps the laptop's address no longer than its report.
+	if until := a.GetExpiration(); time.Until(until) > time.Second {
+		t.Errorf("the laptop's address, leased, stays until %s", until)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if a.Valid() {
+		t.Error("the laptop's address is valid after its report expired: its lease kept it")
+	}
+	RegisterLeases(state, leases, neighbors, "router", "linux", time.Hour)
+	if a.Valid() {
+		t.Error("a lease brought an expired address back")
 	}
 }
 
@@ -222,7 +265,7 @@ func FuzzParseLeases(f *testing.F) {
 			// Whatever the names, the state takes labels only.
 			state := ipv6disc.NewState()
 			state.SetNames(true, 0)
-			RegisterLeases(state, leases, nil, "test", time.Hour)
+			RegisterLeases(state, leases, nil, "test", "linux", time.Hour)
 			for _, names := range state.AllNames() {
 				for _, n := range names {
 					if clean, ok := ipv6disc.CleanName(n.Name); !ok || clean != n.Name {

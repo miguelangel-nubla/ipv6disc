@@ -26,7 +26,7 @@ import (
 // off do nothing.
 func onlyProtocols(t *testing.T, names ...string) Config {
 	t.Helper()
-	config := Config{Lifetime: time.Minute, Rediscover: 3 * time.Second, IPv6: probing, IPv4: probing, Hostnames: Hostnames{Enabled: true},
+	config := Config{Lifetime: time.Minute, Rediscover: 3 * time.Second, IPv6: probing, IPv4: probing,
 		Protocols: Protocols{MDNS: MDNSProtocol{Ask: true}, SSDP: SSDPProtocol{Names: true}, WSD: WSDProtocol{Names: true},
 			DNS: DNSProtocol{Servers: []netip.AddrPort{netip.AddrPortFrom(lan["b"].ipv4, 53)}}}}
 	p := &config.Protocols
@@ -319,12 +319,12 @@ func TestLiveProtocolSwitches(t *testing.T) {
 	}
 }
 
-// mDNS without the names kept finds hosts, and takes no name: a host that only announces itself,
-// which nothing probes for, is found by what it says to the group, over both families, and it is
-// not asked its name. Without mDNS, the same worker doesn't find it.
-func TestLiveMDNSFindsHostsWithoutNames(t *testing.T) {
+// mDNS finds hosts: a host that only announces itself, which nothing probes for, is found by what
+// it says to the group, over both families, and named by it. With ask off, mDNS sends nothing.
+// Without mDNS, the same worker doesn't find it, nor names it.
+func TestLiveMDNSFindsHosts(t *testing.T) {
 	if os.Getenv(insideEnv) == "" {
-		runOnLAN(t, "TestLiveMDNSFindsHostsWithoutNames")
+		runOnLAN(t, "TestLiveMDNSFindsHosts")
 		return
 	}
 	a, p := lan["a"], lan["p"]
@@ -333,7 +333,7 @@ func TestLiveMDNSFindsHostsWithoutNames(t *testing.T) {
 	// it is heard.
 	config := func(mdns bool) Config {
 		return Config{Lifetime: time.Minute, Rediscover: 3 * time.Second, IPv6: listening, IPv4: listening,
-			Protocols: Protocols{NDP: Protocol{Enabled: true}, ARP: Protocol{Enabled: true}, MDNS: MDNSProtocol{Enabled: mdns, Ask: true}}}
+			Protocols: Protocols{NDP: Protocol{Enabled: true}, ARP: Protocol{Enabled: true}, MDNS: MDNSProtocol{Enabled: mdns}}}
 	}
 	for _, mdns := range []bool{false, true} {
 		for _, h := range lan {
@@ -350,7 +350,7 @@ func TestLiveMDNSFindsHostsWithoutNames(t *testing.T) {
 		if mdns {
 			waitFor(t, 20*time.Second, "p, by what it announces over mDNS", found)
 		}
-		// Three rediscoveries: time to ask it its name, if it were asked.
+		// Three rediscoveries: time to ask it its name, if mDNS asked.
 		time.Sleep(10 * time.Second)
 		r, sent := instance.report(), wire.from(a.mac)
 		if !mdns && (r.has(p.mac, p.ipv6) || r.has(p.mac, p.ipv4)) {
@@ -359,11 +359,12 @@ func TestLiveMDNSFindsHostsWithoutNames(t *testing.T) {
 		if mdns && !found() {
 			t.Errorf("p, found by mDNS, is gone: %v", r.Hosts)
 		}
-		if len(r.Names) != 0 {
-			t.Errorf("names taken without the names kept: %+v", r.Names)
+		named := len(r.Names[p.mac]) == 1 && r.Names[p.mac][0].Name == "printer-p" && len(r.Names) == 1
+		if mdns != named {
+			t.Errorf("mDNS %v, and the names %+v", mdns, r.Names)
 		}
 		if sent["mdns"] != 0 || sent["mdns lookup"] != 0 {
-			t.Errorf("mDNS sent, of families that are not active, and with no name to ask: %v", sent)
+			t.Errorf("mDNS sent, of families that are not active, and with ask off: %v", sent)
 		}
 		if heard := wire.from(p.mac); heard["mdns"] == 0 {
 			t.Errorf("p announced nothing: %v", heard)
@@ -446,7 +447,7 @@ func TestLiveCommandConfigFile(t *testing.T) {
 	c.mutex.Lock()
 	log := strings.Join(c.lines, "\n")
 	c.mutex.Unlock()
-	if want := `"msg":"protocols of the local discovery: ndp, ping, arp, arp-listen"`; !strings.Contains(log, want) {
+	if want := `"msg":"protocols of the local discovery: ndp, ping, mdns, arp, arp-listen, dhcp, lldp, netbios, llmnr"`; !strings.Contains(log, want) {
 		t.Errorf("the log of the command doesn't say %s:\n%s", want, log)
 	}
 }
@@ -584,7 +585,7 @@ func TestLiveSweepHeardWithoutTable(t *testing.T) {
 		ip(t, "-n", h.namespace, "neigh", "flush", "all")
 	}
 	config := onlyProtocols(t, "arp-listen", "arp-sweep")
-	config.IPv6, config.Hostnames, config.Rediscover = Family{}, Hostnames{}, 10*time.Minute
+	config.IPv6, config.Rediscover = Family{}, 10*time.Minute
 	config.Protocols.SSDP.Names, config.Protocols.WSD.Names = false, false
 	if err := config.Validate(); err != nil {
 		t.Fatal(err)
@@ -619,9 +620,11 @@ func TestLiveCommandDefaults(t *testing.T) {
 	}
 	a, p := lan["a"], lan["p"]
 	wire := startCapture(t, "port-a", "port-b", "port-p", "port-q")
-	// What only the names, mDNS and IPv4 send: none of it by default.
-	others := []string{"mdns", "mdns lookup", "discard", "netbios", "llmnr", "dns", "dhcp", "tcp", "wsd resolve", "udp", "lldp"}
-	probes := []string{"multicast ping", "ssdp", "wsd"}
+	// What the defaults never send: the sweep, of IPv4, NetBIOS, the reverse DNS, with no servers,
+	// DHCP and LLDP, which only listen, and the fetches of names, of no device here that answers.
+	// mDNS and LLMNR do: the query to the group, and the questions to the hosts.
+	others := []string{"discard", "netbios", "dns", "dhcp", "tcp", "wsd resolve", "udp", "lldp"}
+	probes := []string{"multicast ping", "ssdp", "wsd", "mdns"}
 
 	run := func(name string, config *string) (map[string]int, *command, string) {
 		t.Helper()
@@ -674,7 +677,7 @@ func TestLiveCommandDefaults(t *testing.T) {
 				t.Errorf("%s: identified %s at %s, of IPv4", tt.name, found.ip, found.mac)
 			}
 		}
-		if want := `"msg":"protocols of the local discovery: ndp, ping, ssdp, wsd"`; !strings.Contains(log, want) {
+		if want := `"msg":"protocols of the local discovery: ndp, ping, ssdp, wsd, mdns, dhcp, lldp, llmnr"`; !strings.Contains(log, want) {
 			t.Errorf("%s: the log doesn't say %s:\n%s", tt.name, want, log)
 		}
 		// One probe of each as it starts, and no other in the 80 minutes before the next.
@@ -693,17 +696,18 @@ func TestLiveCommandDefaults(t *testing.T) {
 	if sent["discard"] == 0 || sent["arp"] == 0 || !c.identified(p.mac, p.ipv4) {
 		t.Errorf("with IPv4 enabled: no sweep, or p not found by it: %v, %v", sent, c.hosts())
 	}
+	// The query of mDNS goes over each family; the probes of IPv6 are as they were.
 	for _, kind := range probes {
-		if sent[kind] != first[kind] {
-			t.Errorf("with IPv4 enabled: %d of %q, and %d without a file", sent[kind], kind, first[kind])
+		if want := map[bool]int{true: 2, false: 1}[kind == "mdns"] * first[kind]; sent[kind] != want {
+			t.Errorf("with IPv4 enabled: %d of %q, want %d: %d without a file", sent[kind], kind, want, first[kind])
 		}
 	}
 	for _, kind := range others {
-		if kind != "discard" && sent[kind] != 0 {
+		if kind != "discard" && kind != "netbios" && sent[kind] != 0 {
 			t.Errorf("with IPv4 enabled: %d of %q on the wire: %v", sent[kind], kind, sent)
 		}
 	}
-	if want := `"msg":"protocols of the local discovery: ndp, ping, ssdp, wsd, arp, arp-sweep, arp-listen"`; !strings.Contains(log, want) {
+	if want := `"msg":"protocols of the local discovery: ndp, ping, ssdp, wsd, mdns, arp, arp-sweep, arp-listen, dhcp, lldp, netbios, llmnr"`; !strings.Contains(log, want) {
 		t.Errorf("with IPv4 enabled: the log doesn't say %s:\n%s", want, log)
 	}
 }

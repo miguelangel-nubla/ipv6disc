@@ -18,7 +18,7 @@ A field is a string, in quotes when YAML would read it as something else, as a p
 
 ## freebsd
 
-A FreeBSD host, as pfSense or OPNsense, over SSH: `ndp -an` for IPv6, `arp -an` for IPv4, and with `hostnames` the names of the DHCP leases of ISC dhcpd, Kea and dnsmasq.
+A FreeBSD host, as pfSense or OPNsense, over SSH: `ndp -an` for IPv6, `arp -an` for IPv4, and the DHCP leases of ISC dhcpd, Kea and dnsmasq.
 
 | Field | Takes | |
 |---|---|---|
@@ -31,7 +31,7 @@ A FreeBSD host, as pfSense or OPNsense, over SSH: `ndp -an` for IPv6, `arp -an` 
 
 ## linux
 
-A Linux host, as OpenWrt, over SSH: `ip neigh`, and with `hostnames` the names of the DHCP leases of dnsmasq and odhcpd.
+A Linux host, as OpenWrt, over SSH: `ip neigh`, and the DHCP leases of dnsmasq and odhcpd.
 
 | Field | Takes | |
 |---|---|---|
@@ -44,7 +44,7 @@ A Linux host, as OpenWrt, over SSH: `ip neigh`, and with `hostnames` the names o
 
 ## mikrotik
 
-A Mikrotik router, over its API: `/ipv6/neighbor` for IPv6, `/ip/arp` for IPv4, and with `hostnames` the names of `/ip/dhcp-server/lease`.
+A Mikrotik router, over its API: `/ipv6/neighbor` for IPv6, `/ip/arp` for IPv4, and the DHCP leases of `/ip/dhcp-server/lease`.
 
 | Field | Takes | |
 |---|---|---|

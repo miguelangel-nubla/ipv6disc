@@ -20,14 +20,14 @@ type Lease struct {
 	Name string
 }
 
-// RegisterLeases registers the names of the leases, as names of the hosts with their MACs, when
-// the state takes names. A lease without a MAC is of the host that neighbors, the addresses of
-// the neighbor table read at the same time, has at its address, if any. The names are as the
-// clients gave them: the state cleans them, and leaves out those that are none, as a *.
-func RegisterLeases(state *ipv6disc.State, leases []Lease, neighbors map[netip.Addr]net.HardwareAddr, source string, lifetime time.Duration) {
-	if !state.Names() {
-		return
-	}
+// RegisterLeases registers what the leases say of the hosts with their MACs: of each address the
+// state has of the MAC, that it is leased, attached as reported by source, of type typ, from
+// leases; and the name, when the state takes names. A lease finds no host: a server keeps one of a
+// host that left until it ends, so it says how an address seen otherwise was given. A lease
+// without a MAC is of the host that neighbors, the addresses of the neighbor table read at the same
+// time, has at its address, if any. The names are as the clients gave them: the state cleans them,
+// and leaves out those that are none, as a *.
+func RegisterLeases(state *ipv6disc.State, leases []Lease, neighbors map[netip.Addr]net.HardwareAddr, source, typ string, lifetime time.Duration) {
 	for _, lease := range leases {
 		mac := lease.MAC
 		if len(mac) == 0 {
@@ -37,7 +37,12 @@ func RegisterLeases(state *ipv6disc.State, leases []Lease, neighbors map[netip.A
 		if len(mac) == 0 || mac[0]&1 != 0 {
 			continue
 		}
-		state.RegisterName(mac, lease.Name, source, lifetime)
+		if lease.IP.IsValid() {
+			state.Attach(mac, lease.IP, source, typ, ipv6disc.FromLeases, lifetime)
+		}
+		if state.Names() && lease.Name != "" {
+			state.RegisterName(mac, lease.Name, source, lifetime)
+		}
 	}
 }
 

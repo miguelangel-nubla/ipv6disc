@@ -14,7 +14,7 @@ import (
 )
 
 func init() {
-	plugins.Describe("linux", "A Linux host, as OpenWrt, over SSH: `ip neigh`, and with `hostnames` the names of the DHCP leases of dnsmasq and odhcpd.")
+	plugins.Describe("linux", "A Linux host, as OpenWrt, over SSH: `ip neigh`, and the DHCP leases of dnsmasq and odhcpd.")
 	plugins.Register("linux", func(name string, config string, lifetime time.Duration) (ipv6disc.Plugin, error) {
 		cfg, err := ParseConfig(config)
 		if err != nil {
@@ -31,7 +31,7 @@ func ParseConfig(config string) (Config, error) {
 }
 
 // LinuxPlugin reads the neighbor table of a Linux host over SSH, `ip neigh`, of the families the
-// state takes; and, when it takes names, those of the host's DHCP leases.
+// state takes; and the host's DHCP leases.
 type LinuxPlugin struct {
 	plugins.Poller
 
@@ -75,9 +75,7 @@ func (p *LinuxPlugin) discover(ctx context.Context, state *ipv6disc.State, onErr
 	default:
 		return 0, nil
 	}
-	if state.Names() {
-		command += leasesCommand
-	}
+	command += leasesCommand
 	output, hostKey, err := plugins.RunSSH(ctx, p.config, command)
 	if err != nil {
 		return 0, err
@@ -87,11 +85,11 @@ func (p *LinuxPlugin) discover(ctx context.Context, state *ipv6disc.State, onErr
 		onError(plugins.HostKeyWarning(p.config.Address, hostKey))
 	}
 
-	// Without the markers, no names asked, all of it is the table.
+	// Without the markers, all of it is the table.
 	table, rest, _ := strings.Cut(string(output), leasesMarker+"\n")
 	dnsmasq, hosts, _ := strings.Cut(rest, hostsMarker+"\n")
 	found, neighbors := p.parseNeighbors(table, state)
-	plugins.RegisterLeases(state, slices.Concat(plugins.ParseDnsmasqLeases(dnsmasq), plugins.ParseHosts(hosts)), neighbors, p.Name(), p.lifetime)
+	plugins.RegisterLeases(state, slices.Concat(plugins.ParseDnsmasqLeases(dnsmasq), plugins.ParseHosts(hosts)), neighbors, p.Name(), "linux", p.lifetime)
 	return found, nil
 }
 

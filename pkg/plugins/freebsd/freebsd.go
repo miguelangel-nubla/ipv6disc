@@ -15,7 +15,7 @@ import (
 )
 
 func init() {
-	plugins.Describe("freebsd", "A FreeBSD host, as pfSense or OPNsense, over SSH: `ndp -an` for IPv6, `arp -an` for IPv4, and with `hostnames` the names of the DHCP leases of ISC dhcpd, Kea and dnsmasq.")
+	plugins.Describe("freebsd", "A FreeBSD host, as pfSense or OPNsense, over SSH: `ndp -an` for IPv6, `arp -an` for IPv4, and the DHCP leases of ISC dhcpd, Kea and dnsmasq.")
 	plugins.Register("freebsd", func(name string, config string, lifetime time.Duration) (ipv6disc.Plugin, error) {
 		cfg, err := ParseConfig(config)
 		if err != nil {
@@ -76,9 +76,7 @@ func (p *FreeBSDPlugin) discover(ctx context.Context, state *ipv6disc.State, onE
 	default:
 		return 0, nil
 	}
-	if state.Names() {
-		command += leasesCommand
-	}
+	command += leasesCommand
 	output, hostKey, err := plugins.RunSSH(ctx, p.config, command)
 	if err != nil {
 		return 0, err
@@ -103,7 +101,7 @@ func (p *FreeBSDPlugin) discover(ctx context.Context, state *ipv6disc.State, onE
 
 	isc, rest, _ := strings.Cut(leases, keaMarker+"\n")
 	kea, dnsmasq, _ := strings.Cut(rest, dnsmasqMarker+"\n")
-	plugins.RegisterLeases(state, slices.Concat(plugins.ParseISCLeases(isc), plugins.ParseKeaLeases(kea), plugins.ParseDnsmasqLeases(dnsmasq)), neighbors, p.Name(), p.lifetime)
+	plugins.RegisterLeases(state, slices.Concat(plugins.ParseISCLeases(isc), plugins.ParseKeaLeases(kea), plugins.ParseDnsmasqLeases(dnsmasq)), neighbors, p.Name(), "freebsd", p.lifetime)
 	return found, nil
 }
 

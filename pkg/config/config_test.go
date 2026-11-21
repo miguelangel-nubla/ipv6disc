@@ -40,7 +40,7 @@ func TestDefaultIsDefaultConfig(t *testing.T) {
 	}
 }
 
-// The defaults, as a file would write them: what ran before the protocols had switches.
+// The defaults, as a file would write them: every protocol, those that hear frames where they can.
 func TestDefaultsTable(t *testing.T) {
 	got, err := json.MarshalIndent(Default(), "", " ")
 	if err != nil {
@@ -53,21 +53,21 @@ func TestDefaultsTable(t *testing.T) {
  "exclude_interfaces": null,
  "ipv6": {"enabled": true, "listen": true, "active": true, "lifetime": "0s"},
  "ipv4": {"enabled": false, "listen": true, "active": true, "lifetime": "0s"},
- "hostnames": {"enabled": false, "lifetime": "0s"},
+ "hostnames": {"lifetime": "0s"},
  "protocols": {
   "ndp": {"enabled": true},
   "ping": {"enabled": true},
-  "ssdp": {"enabled": true, "names": false},
-  "wsd": {"enabled": true, "names": false},
-  "mdns": {"enabled": false, "ask": true},
+  "ssdp": {"enabled": true, "names": true},
+  "wsd": {"enabled": true, "names": true},
+  "mdns": {"enabled": true, "ask": true},
   "arp": {"enabled": true},
   "arp-sweep": {"enabled": true, "max_prefix": 22},
   "arp-listen": {"enabled": ` + map[bool]string{true: "true", false: "false"}[linux] + `},
-  "dhcp": {"enabled": false},
-  "lldp": {"enabled": false},
-  "netbios": {"enabled": false},
-  "llmnr": {"enabled": false},
-  "dns": {"enabled": false, "servers": []}
+  "dhcp": {"enabled": ` + map[bool]string{true: "true", false: "false"}[linux] + `},
+  "lldp": {"enabled": ` + map[bool]string{true: "true", false: "false"}[linux] + `},
+  "netbios": {"enabled": true},
+  "llmnr": {"enabled": true},
+  "dns": {"enabled": true, "servers": []}
  },
  "plugins": null,
  "log_level": "info"
@@ -110,7 +110,6 @@ ipv4:
   active: true
   lifetime: 1h30m
 hostnames:
-  enabled: true
   lifetime: 90m
 protocols:
   ndp:
@@ -167,10 +166,12 @@ log_level: debug
 		Interfaces: []string{"eth0", "en*"}, ExcludeInterfaces: []string{"docker*", "veth*"},
 		IPv6:      ipv6disc.Family{Enabled: true, Listen: true, Lifetime: 30 * time.Minute},
 		IPv4:      ipv6disc.Family{Enabled: true, Listen: true, Active: true, Lifetime: 90 * time.Minute},
-		Hostnames: ipv6disc.Hostnames{Enabled: true, Lifetime: 90 * time.Minute},
+		Hostnames: ipv6disc.Hostnames{Lifetime: 90 * time.Minute},
 		Protocols: ipv6disc.Protocols{
 			NDP: on, SSDP: ipv6disc.SSDPProtocol{Enabled: true, Names: true}, WSD: ipv6disc.WSDProtocol{Names: true},
 			MDNS: ipv6disc.MDNSProtocol{Enabled: true}, ARP: on, ARPSweep: ipv6disc.ARPSweepProtocol{Enabled: true, MaxPrefix: 24},
+			// Not in the file: on where they can run.
+			DHCP: ipv6disc.Protocol{Enabled: linux}, LLDP: ipv6disc.Protocol{Enabled: linux},
 			NetBIOS: on, LLMNR: on,
 			DNS: ipv6disc.DNSProtocol{Enabled: true, Servers: []netip.AddrPort{netip.MustParseAddrPort("192.168.1.1:53"), netip.MustParseAddrPort("[fd00::1]:5353")}},
 		},
@@ -225,21 +226,16 @@ func TestParseErrors(t *testing.T) {
 		{"a switch in place of the settings", "protocols:\n  mdns: true\n  lldp: false",
 			[]string{"protocols.lldp: false is not its settings: it is written as lldp, with enabled: false under it", "protocols.mdns: true is not its settings: it is written as mdns, with enabled: true under it"}},
 		{"a family as a switch", "ipv4: true", []string{"ipv4: true is not its settings: it is written as ipv4, with enabled: true under it"}},
-		{"the names as a switch", "hostnames: true", []string{"hostnames: true is not its settings: it is written as hostnames, with enabled: true under it"}},
+		{"the names as a switch, as they were", "hostnames: true", []string{"hostnames: true: " + namesAlwaysKept}},
+		{"the names' switch, as it was", "hostnames:\n  enabled: false", []string{"hostnames.enabled: " + namesAlwaysKept}},
 		{"a list in place of the protocols", "protocols:\n  - mdns\n  - dhcp", []string{`protocols: ["mdns","dhcp"] is not a mapping of its keys`}},
 		{"a switch of the wrong type", `protocols: {mdns: {enabled: "sometimes"}}`, []string{`protocols.mdns.enabled: "sometimes" is not true or false`}},
 		{"an option of the wrong type: a boolean", "protocols:\n  ssdp:\n    names: 1\n  mdns:\n    ask:\n      - true",
 			[]string{"protocols.mdns.ask: [true] is not true or false", "protocols.ssdp.names: 1 is not true or false"}},
 		{"an option of the wrong type: a number", `protocols: {arp-sweep: {max_prefix: "/24"}}`, []string{`protocols.arp-sweep.max_prefix: "/24" is not a whole number`}},
 		{"a number that is not whole", "protocols:\n  arp-sweep:\n    max_prefix: 22.5", []string{"protocols.arp-sweep.max_prefix: 22.5 is not a whole number"}},
-		{"an option of the wrong type: the servers", "hostnames:\n  enabled: true\nprotocols:\n  dns:\n    enabled: true\n    servers:\n      a: 1", []string{`protocols.dns.servers: {"a":1} is not a string, nor a list of them`}},
-		{"a server by its name", "hostnames:\n  enabled: true\nprotocols:\n  dns:\n    enabled: true\n    servers:\n      - router.lan\n      - 192.168.1.1", []string{`protocols.dns.servers: invalid DNS server "router.lan": an address, as 192.168.1.1, or one with its port, as 192.168.1.1:5353 or [fd00::1]:53`}},
-		{"the reverse DNS without servers", "hostnames:\n  enabled: true\nprotocols:\n  dns:\n    enabled: true",
-			[]string{"the dns protocol is enabled without servers: it asks only those it is given"}},
-		{"a protocol of names alone, without the names", "protocols:\n  netbios:\n    enabled: true",
-			[]string{"the netbios protocol is enabled, and it only learns names, which hostnames, off, doesn't keep: enable hostnames, or disable netbios"}},
-		{"the names of a protocol, without the names", "protocols:\n  wsd:\n    names: true",
-			[]string{"the names of the wsd protocol are on, and hostnames, off, doesn't keep them: enable hostnames, or turn the names of wsd off"}},
+		{"an option of the wrong type: the servers", "protocols:\n  dns:\n    enabled: true\n    servers:\n      a: 1", []string{`protocols.dns.servers: {"a":1} is not a string, nor a list of them`}},
+		{"a server by its name", "protocols:\n  dns:\n    enabled: true\n    servers:\n      - router.lan\n      - 192.168.1.1", []string{`protocols.dns.servers: invalid DNS server "router.lan": an address, as 192.168.1.1, or one with its port, as 192.168.1.1:5353 or [fd00::1]:53`}},
 		{"a subnet too large to sweep", "protocols:\n  arp-sweep:\n    max_prefix: 8", []string{"invalid max_prefix of the arp-sweep protocol, 8: it is from 16 to 30"}},
 		{"a sweep of no subnet at all", "protocols:\n  arp-sweep:\n    max_prefix: 0", []string{"invalid max_prefix of the arp-sweep protocol, 0: it is from 16 to 30"}},
 		{"a negative one", "protocols:\n  arp-sweep:\n    max_prefix: -24", []string{"invalid max_prefix of the arp-sweep protocol, -24: it is from 16 to 30"}},
@@ -251,7 +247,7 @@ func TestParseErrors(t *testing.T) {
 			"hostname: no such key: the configuration has lifetime, rediscover, interfaces, exclude_interfaces, ipv6, ipv4, hostnames, protocols, plugins, log_level",
 			"live: no such key: the configuration has lifetime, rediscover, interfaces, exclude_interfaces, ipv6, ipv4, hostnames, protocols, plugins, log_level"}},
 		{"a key a family doesn't have", "ipv6:\n  solicit: true", []string{"ipv6.solicit: no such key: ipv6 has enabled, listen, active, lifetime"}},
-		{"the protocols of the names, where they were", "hostnames:\n  enabled: true\n  protocols:\n    - mdns", []string{"hostnames.protocols: no such key: hostnames has enabled, lifetime"}},
+		{"the protocols of the names, where they were", "hostnames:\n  protocols:\n    - mdns", []string{"hostnames.protocols: no such key: hostnames has lifetime"}},
 		{"a duration that is none", "lifetime: soon\nipv4:\n  lifetime:\n    - 1\nrediscover: 1e300", []string{
 			"ipv4.lifetime: [1] is not a duration, as 90s or 4h, nor a number of seconds",
 			`lifetime: "soon" is not a duration, as 90s or 4h, nor a number of seconds`,
@@ -266,7 +262,7 @@ func TestParseErrors(t *testing.T) {
 		{"a key twice", "ipv4:\n  enabled: true\nipv4:\n  enabled: false", []string{`not YAML: yaml: unmarshal errors:`, `  line 4: key "ipv4" already set in map`}},
 		{"an option twice", "protocols:\n  mdns:\n    enabled: true\n    enabled: false", []string{`not YAML: yaml: unmarshal errors:`, `  line 4: key "enabled" already set in map`}},
 		{"a key there is none of, at every depth", "protocols:\n  mdns:\n    ask:\n      often: true\nplugins:\n  router:\n    type: linux\n    interval: 60s\n    address: 192.168.1.1\n    username: root\n    password: x\n    port: 22\nhostnames:\n  names: true", []string{
-			"hostnames.names: no such key: hostnames has enabled, lifetime",
+			"hostnames.names: no such key: hostnames has lifetime",
 			"plugins.router.port: no such field of a linux plugin: it has interval, address, username, password, identity_file, host_key",
 			`protocols.mdns.ask: {"often":true} is not true or false`}},
 		{"two documents", "ipv4:\n  enabled: true\n---\nipv4:\n  enabled: false\n", []string{"the configuration is more than one YAML document: it is one, without a --- after it"}},

@@ -31,16 +31,15 @@ ipv4:
   active: true      # the sweep broadcasts an ARP request for each address
   # lifetime: 1h    # of the family's addresses, in place of lifetime
 
-# The names of the hosts: kept, for the protocols enabled below to learn them, and the plugins to
-# read those of their routers' DHCP leases.
-hostnames:
-  enabled: true     # off by default
-  # lifetime: 4h
+# The names of the hosts, always kept: what the protocols enabled below learn, and the plugins
+# read of their routers' DHCP leases. To learn none, disable those.
+# hostnames:
+#   lifetime: 4h    # in place of lifetime
 
 # The protocols of the local discovery: each a mapping, with its switch and its options. One runs
 # when it is enabled, and its family is, and listens, or for the sweep is active.
 protocols:
-  # IPv6. On by default.
+  # Every protocol is on by default. IPv6:
   ndp:
     enabled: true
   ping:
@@ -50,37 +49,37 @@ protocols:
     names: false    # ask the devices that answer their friendly name, over HTTP
   wsd:
     enabled: true
-    names: true     # ask the computers that answer their name, over HTTP: off by default
-  # IPv4. On by default.
+    names: true     # ask the computers that answer their name, over HTTP
+  # IPv4:
   arp:
     enabled: true
   arp-sweep:
     enabled: true
     max_prefix: 22  # the largest subnet swept whole
-  # The ARP the hosts send, heard: on by default on Linux, and an error to enable elsewhere.
+  # The ARP the hosts send, heard: Linux only, and an error to enable elsewhere.
 #  arp-listen:
 #    enabled: true
-  # Either family. Off by default.
+  # Either family:
   mdns:
     enabled: true
     ask: true       # false: only listen
-  # What DHCP clients and LLDP neighbors say, heard: Linux only.
-  dhcp:
-    enabled: false
-  lldp:
-    enabled: false
-  # Names only: they need hostnames. Off by default.
+  # What DHCP clients and LLDP neighbors say, heard: Linux only, as arp-listen.
+#  dhcp:
+#    enabled: true
+#  lldp:
+#    enabled: true
+  # Names only:
   netbios:
     enabled: true
   llmnr:                   # its questions go to every host of the link
     enabled: false
   dns:
     enabled: true
-    servers:                # as the router's: needed when dns is enabled
+    servers:                # as the router's: without, dns asks nobody
       - 192.168.1.1
 
-# The plugins read the neighbor tables of routers and other hosts, and with hostnames the names of
-# their DHCP leases: docs/reference/plugins.md has the fields of each type.
+# The plugins read the neighbor tables of routers and other hosts, and their DHCP leases: the names,
+# and that an address is leased. docs/reference/plugins.md has the fields of each type.
 # plugins:
 #   router:
 #     type: mikrotik

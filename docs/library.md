@@ -85,9 +85,18 @@ The worker's `State` holds the addresses, by MAC:
 - `Register`: adds an address, as the plugins do. It returns nil, and true, for an address the state leaves out: one of a family it doesn't take, one that is invalid, unspecified or multicast, or one with no MAC. `Seen` takes an `Addr` as it is, without those checks nor the families' lifetimes: one it adds is valid for its lifetime from then on.
 - `Close`: stops the expiration of every address, each of which has a goroutine and its timers until it expires, and of the names, which have one timer among them all. For after `Worker.Wait`, which leaves the state as it is, still expiring: a program that makes workers again and again would otherwise keep those of each for a lifetime. Nothing is removed, and `Valid` still tells by time.
 
+## Records
+
+An address has a record of each way it was seen, each with its own `FirstSeen`, `LastSeen` and `Lifetime`: it stays while any of them does. `Addr.Records` returns those that still count, in the order they came.
+
+- A **protocol's** record has its `Protocol`, as `ndp` or `mdns`, its `Way`, `Announced`, `Answered` or `Heard`, and the interface it was seen `On`. The local discovery makes them.
+- A **report** has who made it, `By`, a plugin's name or `ReportedByKernel`; its `Type`, the plugin's; and the table it is `From`: `FromNeighbors`, `FromLeases` or `FromInterfaces`. `Reported` tells it from a protocol's.
+- `Report` registers an address as a plugin does, with a report. `Register` is a report of `By` alone.
+- `Attach` adds a report to an address the state has already, and registers none: it says how the address was seen while it counts, and keeps the address no longer than the others do. The plugins attach their leases so: a server keeps the lease of a host that left until it ends. `Record.Attached` tells it.
+
 ## Names
 
-With `Config.Hostnames.Enabled`, the state holds the [names](discovery.md#names) of the hosts too, by MAC, which the protocols enabled for them tell, and the plugins:
+The state a worker runs holds the [names](discovery.md#names) of the hosts too, by MAC, which the protocols enabled for them tell, and the plugins; a state of a program's own, once `SetNames` enables them:
 
 - `NamesOf`, `AllNames`: the names of a MAC, or of each, whose lifetime is running, as `HostName`s: the `Name`, its `Sources`, each a protocol of the local discovery, as `mdns`, `dns`, `netbios`, `llmnr`, `wsd`, `ssdp`, `dhcp` or `lldp`, or a plugin's name, when it was last `Seen` and its `Expiration`. They are copies. A name is the host's, not an address's: use it with whichever addresses `GetAll` has at that MAC.
 - `Subscribe` tells the changes of the names as those of the addresses: a name added, expired, gone with its host, or said by a new source.

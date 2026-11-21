@@ -65,7 +65,7 @@ func TestLiveSecondAddress(t *testing.T) {
 		return slices.Contains(solicitedFrom, from)
 	}
 	start := func() (*Worker, context.CancelFunc) {
-		w := NewWorker(zaptest.NewLogger(t).Sugar(), Config{Protocols: DefaultProtocols(), Lifetime: time.Minute, Rediscover: 2 * time.Second,
+		w := NewWorker(zaptest.NewLogger(t).Sugar(), Config{Protocols: findingProtocols(), Lifetime: time.Minute, Rediscover: 2 * time.Second,
 			IPv6: Family{Enabled: true, Listen: true, Active: true}})
 		ctx, cancel := context.WithCancel(context.Background())
 		if err := w.Start(ctx); err != nil {

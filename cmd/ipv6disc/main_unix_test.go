@@ -47,7 +47,8 @@ func (o *output) String() string {
 // of a family with no protocol, and says at info which protocols run. It sends nothing: IPv4
 // alone, with none of its protocols.
 func TestLogLevelOfTheFile(t *testing.T) {
-	const quiet = "ipv6:\n  enabled: false\nipv4:\n  enabled: true\nprotocols:\n  arp:\n    enabled: false\n  arp-sweep:\n    enabled: false\n  arp-listen:\n    enabled: false\n"
+	const quiet = "ipv6:\n  enabled: false\nipv4:\n  enabled: true\nprotocols:\n  arp:\n    enabled: false\n  arp-sweep:\n    enabled: false\n  arp-listen:\n    enabled: false\n" +
+		"  mdns:\n    enabled: false\n  dhcp:\n    enabled: false\n  lldp:\n    enabled: false\n  netbios:\n    enabled: false\n  llmnr:\n    enabled: false\n"
 	for _, tt := range []struct {
 		level      string
 		warn, info bool

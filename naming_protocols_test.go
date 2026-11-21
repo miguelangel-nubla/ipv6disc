@@ -560,7 +560,7 @@ func TestHeardARP(t *testing.T) {
 // The stats show the listener of ARP of an interface under it, and the naming protocols of no
 // interface after those of all.
 func TestWorkerStatsOfTheProtocols(t *testing.T) {
-	w := NewWorker(zap.NewNop().Sugar(), Config{Lifetime: time.Hour, IPv4: Family{Enabled: true, Listen: true}, Hostnames: Hostnames{Enabled: true},
+	w := NewWorker(zap.NewNop().Sugar(), Config{Lifetime: time.Hour, IPv4: Family{Enabled: true, Listen: true},
 		Protocols: Protocols{ARP: Protocol{Enabled: true}, ARPSweep: ARPSweepProtocol{Enabled: true}, ARPListen: Protocol{Enabled: true}, NDP: Protocol{Enabled: true},
 			DHCP: Protocol{Enabled: true}, DNS: DNSProtocol{Enabled: true, Servers: []netip.AddrPort{netip.MustParseAddrPort("192.168.1.1:53")}}}})
 	defer w.State.Close()

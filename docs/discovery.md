@@ -35,29 +35,26 @@ Under `protocols`, each protocol of the local discovery has its own switch, `ena
 | `arp` | on | IPv4 | `listen` | The kernel's neighbor table, read every minute |
 | `arp-sweep` | on | IPv4 | `active` | The sweep of the subnets, of those no larger than its `max_prefix`, 22 by default |
 | `arp-listen` | on, on Linux | IPv4 | `listen` | The ARP the hosts send, heard. Linux only |
-| `mdns` | off | Either | `listen` | Whatever sends to the groups of [mDNS](#mdns) is a host, and what it announces its name. With `active`, a query to the group. Without its `ask`, it only listens |
-| `dhcp` | off | Either | `listen` | What the [DHCP](#heard) clients say as they ask for an address, heard. Linux only |
-| `lldp` | off | Either | `listen` | What the [LLDP](#heard) neighbor of an interface says, heard. Linux only |
-| `netbios` | off | IPv4 | `listen` | A host is [asked](#asking-a-host) its NetBIOS name. Names only |
-| `llmnr` | off | Either | `listen` | A host is [asked](#asking-a-host) its name by LLMNR. Names only |
-| `dns` | off | None | - | Its `servers` are asked the name of each address, of the hosts the plugins found too. Names only |
+| `mdns` | on | Either | `listen` | Whatever sends to the groups of [mDNS](#mdns) is a host, and what it announces its name. With `active`, a query to the group. Without its `ask`, it only listens |
+| `dhcp` | on, on Linux | Either | `listen` | What the [DHCP](#heard) clients say as they ask for an address, heard. Linux only |
+| `lldp` | on, on Linux | Either | `listen` | What the [LLDP](#heard) neighbor of an interface says, heard. Linux only |
+| `netbios` | on | IPv4 | `listen` | A host is [asked](#asking-a-host) its NetBIOS name. Names only |
+| `llmnr` | on | Either | `listen` | A host is [asked](#asking-a-host) its name by LLMNR. Names only |
+| `dns` | on | None | - | Its `servers` are asked the name of each address, of the hosts the plugins found too: without, nobody is. Names only |
 
-By default the protocols that find hosts are on, and those that tell names, too or alone, are off: a configuration that says nothing sends, joins and opens what it did before the protocols had switches. A protocol of either family runs on an interface over the families that listen there. A protocol that is off sends nothing, joins no group and opens no socket: the others run without it.
+By default every protocol is on, with its options: `ssdp` and `wsd` fetch names, `mdns` asks. Those that hear frames, `arp-listen`, `dhcp` and `lldp`, are on where they can run, on Linux, and off elsewhere; `dns` asks only the `servers` it is given, so it runs once it has some. A protocol of either family runs on an interface over the families that listen there. A protocol that is off sends nothing, joins no group and opens no socket: the others run without it.
 
 ```yaml
 ipv4:
-  enabled: true
-hostnames:
   enabled: true
 protocols:
   arp-sweep:                    # nothing broadcast
     enabled: false
   ssdp:
     enabled: false
-  mdns:
-    enabled: true
+  llmnr:                        # its questions go to every host of the link
+    enabled: false
   dns:
-    enabled: true
     servers:
       - 192.168.1.1
 ```
@@ -66,10 +63,9 @@ What can't run is an error at start, which says what and where, not a protocol l
 
 - A protocol there is none of, an option its protocol doesn't have, and a value of another type than its key takes: `mdns: true` is written as `enabled: true` under `mdns`.
 - `ping`, `ssdp` or `wsd` enabled without `ndp`: they hear an address, and only NDP tells its MAC, so they would find no host. And `arp-sweep` without both `arp` and `arp-listen`, which tell the hosts that answer it.
-- `arp-listen`, `dhcp` or `lldp` enabled where the system can't run them, which is anywhere but Linux. `arp-listen` is on by default on Linux and off elsewhere, so a configuration that doesn't name it runs everywhere.
-- `dns` enabled without `servers`.
+- `arp-listen`, `dhcp` or `lldp` enabled where the system can't run them, which is anywhere but Linux. They are on by default on Linux and off elsewhere, so a configuration that doesn't name them runs everywhere.
 - A `max_prefix` of `arp-sweep` that is not from 16 to 30. A subnet larger than a /`max_prefix` is swept in the /24 of the interface's address only, or in the /`max_prefix` there when that is smaller.
-- A protocol that only learns names, `netbios`, `llmnr`, `dns`, or the `names` of `wsd` or `ssdp`, enabled without [`hostnames`](#names), which keeps them.
+- `hostnames: true`, or `enabled` under `hostnames`, as there were: the [names](#names) are always kept, of the protocols that learn them.
 
 The options of a protocol that is off are not looked at. The log says at start which protocols run, `protocols of the local discovery: ndp, ping, ssdp, wsd`, and `-live` shows them first, under `Protocols`.
 
@@ -100,20 +96,18 @@ An address that answers is registered as any other.
 
 ## Names
 
-With `hostnames` enabled, a host has names too: what it calls itself, what the DNS server of the network calls it, and what a router's DHCP server knows it by. It is off by default, and so is every protocol that tells names: nothing is sent for a name, nothing is fetched, no group of mDNS is joined, no DHCP nor LLDP is heard, and the plugins read no lease.
+A host has names too: what it calls itself, what the DNS server of the network calls it, and what a router's DHCP server knows it by.
 
-`hostnames` is whether names are kept: the state takes them, and the plugins read those of their leases. What learns them on the local links is each protocol's switch, under [`protocols`](#protocols): with `hostnames` on and none of them, only the plugins tell names. A protocol that also finds hosts, `mdns`, `dhcp` and `lldp`, runs without `hostnames` too, for the hosts alone: the addresses it hears of are found, no name is taken, and nobody is asked for one. A protocol that only learns names, `netbios`, `llmnr`, `dns`, and the `names` of `wsd` and `ssdp`, is an error to enable without it.
+The names are always kept, of what learns them: each protocol that does, under [`protocols`](#protocols), and the plugins, of their routers' DHCP leases. To learn none, disable those that do, `mdns`, `dhcp`, `lldp`, `netbios`, `llmnr` and `dns`, and the `names` of `wsd` and `ssdp`: a protocol that also finds hosts, as `mdns`, finds them all the same while it runs. `hostnames` has only their `lifetime`.
 
 ```yaml
 hostnames:
-  enabled: true
+  lifetime: 4h
 protocols:
-  mdns:
-    enabled: true
   netbios:
-    enabled: true
+    enabled: false
   wsd:
-    names: true
+    names: false
 ```
 
 A name is the host's, its MAC's, not an address's: one learned over IPv4 is the host's for its IPv6 addresses too. A host can have several at once, when its sources disagree or it was renamed, each with what said it: the protocol, as `mdns` or `dhcp`, or a plugin's name.
@@ -131,7 +125,7 @@ A name is the host's, its MAC's, not an address's: one learned over IPv4 is the 
 | **SSDP** | `ssdp` | With its `names`, a device that answers the search is asked its description, over HTTP, which has its friendly name |
 | **DHCP, heard** | `dhcp` | What a client says to all as it asks for an address: its host name, with its MAC. On Linux |
 | **LLDP, heard** | `lldp` | What the neighbor of an interface says of itself: its system name. On Linux |
-| **[Plugins](plugins.md#names)** | The plugin's name | The host names of the DHCP leases of their routers |
+| **[Plugins](plugins.md#leases)** | The plugin's name | The host names of the DHCP leases of their routers |
 
 Each is its protocol, enabled under `protocols`, and runs on the interfaces the local discovery runs on, over the families that listen there. The plugins read their leases whatever protocols are enabled. A name goes to a MAC only when the discovery found a host there: an address the state doesn't have yet is found as any other, by a neighbor solicitation for an IPv6 one, and for an IPv4 one by a packet to its discard port, as the sweep's, and a reading of the neighbor table a second later, and what was said waits for it, 30 seconds at most. So an IPv6 address heard of is found with `ndp`, and an IPv4 one with `arp` or `arp-listen`, whichever tells the answer. Nothing a name protocol says registers an address.
 

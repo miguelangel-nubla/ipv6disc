@@ -324,8 +324,8 @@ func TestExampleConfig(t *testing.T) {
 	}
 	// What it turns on is on: it is no copy of the defaults.
 	file, _ := config.Parse(content)
-	if !file.IPv4.Enabled || !file.Hostnames.Enabled || !file.Protocols.MDNS.Enabled || len(file.Plugins) != 0 {
-		t.Errorf("the example: IPv4 %v, names %v, mDNS %v, %d plugins", file.IPv4.Enabled, file.Hostnames.Enabled, file.Protocols.MDNS.Enabled, len(file.Plugins))
+	if !file.IPv4.Enabled || file.Protocols.LLMNR.Enabled || len(file.Protocols.DNS.Servers) == 0 || len(file.Plugins) != 0 {
+		t.Errorf("the example: IPv4 %v, llmnr %v, dns servers %v, %d plugins", file.IPv4.Enabled, file.Protocols.LLMNR.Enabled, file.Protocols.DNS.Servers, len(file.Plugins))
 	}
 }
 
