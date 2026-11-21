@@ -488,88 +488,10 @@ func TestNamingFetches(t *testing.T) {
 	}
 }
 
-// The protocols of the names are those the configuration names, or all: an unknown one is
-// refused, and the DNS servers are asked at the port of DNS unless they have their own.
-func TestConfigHostnamesProtocols(t *testing.T) {
-	config := DefaultConfig()
-	for _, protocol := range NameProtocols() {
-		if config.names(protocol) {
-			t.Errorf("%s runs without names asked for", protocol)
-		}
-	}
-	config.Hostnames.Enabled = true
-	for _, protocol := range NameProtocols() {
-		if !config.names(protocol) {
-			t.Errorf("%s doesn't run by default", protocol)
-		}
-	}
-	if !slices.Equal(NameProtocols()[:4], nameOrder) {
-		t.Errorf("the protocols that ask, %v, are not in the order they ask in, %v", NameProtocols()[:4], nameOrder)
-	}
-	config.Hostnames.Protocols = []string{NameMDNS, NameDHCP}
-	if !config.names(NameMDNS) || !config.names(NameDHCP) || config.names(NameLLMNR) || config.names(NameWSD) {
-		t.Error("the protocols that run are not those named")
-	}
-	if err := config.withDefaults().validate(); err != nil {
-		t.Error(err)
-	}
-	config.Hostnames.Protocols = []string{NameMDNS, "bonjour"}
-	if err := config.withDefaults().validate(); err == nil || !strings.Contains(err.Error(), `"bonjour"`) || !strings.Contains(err.Error(), "mdns, dns, netbios, llmnr, wsd, ssdp, dhcp, lldp") {
-		t.Errorf("an unknown protocol: %v", err)
-	}
-
-	config.Hostnames.Protocols = nil
-	given := []netip.AddrPort{netip.AddrPortFrom(netip.MustParseAddr("192.168.1.1"), 0), netip.MustParseAddrPort("[fd00::1]:5353")}
-	config.Hostnames.DNS = given
-	got := config.withDefaults()
-	if want := []netip.AddrPort{netip.MustParseAddrPort("192.168.1.1:53"), given[1]}; !slices.Equal(got.Hostnames.DNS, want) || given[0].Port() != 0 {
-		t.Errorf("the servers: %v, want %v; given %v", got.Hostnames.DNS, want, given)
-	}
-	if err := got.validate(); err != nil || len(got.warnings()) != 0 {
-		t.Errorf("servers given: %v, %v", err, got.warnings())
-	}
-	for _, server := range []string{"0.0.0.0:53", "224.0.0.1:53"} {
-		config.Hostnames.DNS = []netip.AddrPort{netip.MustParseAddrPort(server)}
-		if err := config.withDefaults().validate(); err == nil {
-			t.Errorf("the server %s is taken", server)
-		}
-	}
-	config.Hostnames.DNS = []netip.AddrPort{{}}
-	if err := config.withDefaults().validate(); err == nil {
-		t.Error("no server is taken as one")
-	}
-	if server, err := ParseNameServer("192.168.1.1"); err != nil || server != netip.MustParseAddrPort("192.168.1.1:53") {
-		t.Errorf("a server as it is written: %s, %v", server, err)
-	}
-	if _, err := ParseNameServer("router.lan"); err == nil {
-		t.Error("a server by its name, which something would have to resolve")
-	}
-
-	// Servers nothing asks, and a protocol with nobody to ask, are told.
-	config.Hostnames = Hostnames{Enabled: true, Protocols: []string{NameMDNS}, DNS: given}
-	if warnings := config.withDefaults().warnings(); len(warnings) != 1 || !strings.Contains(warnings[0], "dns is not among the protocols") {
-		t.Errorf("servers that are not asked: %v", warnings)
-	}
-	config.Hostnames = Hostnames{Enabled: true, Protocols: []string{NameDNS}}
-	if warnings := config.withDefaults().warnings(); len(warnings) != 1 || !strings.Contains(warnings[0], "no DNS server is given") {
-		t.Errorf("the reverse DNS without servers: %v", warnings)
-	}
-	// With servers, the hosts of the plugins are asked of without any local discovery; without,
-	// nothing asks.
-	config = Config{Lifetime: time.Hour, IPv6: Family{Enabled: true}, Hostnames: Hostnames{Enabled: true, DNS: given}}
-	if config.namesLocally() || !config.asksNames() {
-		t.Error("the servers given are not asked without local discovery")
-	}
-	config.Hostnames.DNS = nil
-	if config.asksNames() {
-		t.Error("something asks without local discovery nor servers")
-	}
-}
-
 // The sender of an ARP packet heard is registered as a neighbor of the table is, on its
 // interface: a host of a subnet of the interface, and not the interface itself.
 func TestHeardARP(t *testing.T) {
-	w := NewWorker(zap.NewNop().Sugar(), Config{Lifetime: time.Hour, IPv4: Family{Enabled: true, Listen: true}})
+	w := NewWorker(zap.NewNop().Sugar(), Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, IPv4: Family{Enabled: true, Listen: true}})
 	defer w.State.Close()
 	own := hostMAC(5)
 	heard := w.heardARP(ipv4Interface{iface: net.Interface{Index: 2, Name: "eth0", HardwareAddr: own},
@@ -605,7 +527,7 @@ func TestHeardARP(t *testing.T) {
 	}
 	// A link where every frame is of another MAC, made up, fills the state with arpNewMost in an
 	// interval, no more; the hosts it has are still heard, and refreshed.
-	flood := NewWorker(zap.NewNop().Sugar(), Config{Lifetime: time.Hour, IPv4: Family{Enabled: true, Listen: true}})
+	flood := NewWorker(zap.NewNop().Sugar(), Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, IPv4: Family{Enabled: true, Listen: true}})
 	defer flood.State.Close()
 	heard = flood.heardARP(ipv4Interface{iface: net.Interface{Index: 2, Name: "eth0", HardwareAddr: own}, prefixes: []netip.Prefix{netip.MustParsePrefix("10.0.0.5/8")}})
 	if !heard(netip.MustParseAddr("10.1.1.1"), hostMAC(1)) {
@@ -628,7 +550,7 @@ func TestHeardARP(t *testing.T) {
 	}
 
 	// Without the IPv4 family, the state takes none.
-	off := NewWorker(zap.NewNop().Sugar(), Config{Lifetime: time.Hour, IPv6: Family{Enabled: true}})
+	off := NewWorker(zap.NewNop().Sugar(), Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, IPv6: Family{Enabled: true}})
 	defer off.State.Close()
 	if off.heardARP(ipv4Interface{iface: net.Interface{Name: "eth0", HardwareAddr: own}, prefixes: []netip.Prefix{netip.MustParsePrefix("192.168.1.5/24")}})(hostIPv4(20), hostMAC(1)) || len(off.State.GetAll()) != 0 {
 		t.Error("an IPv4 host registered without the family")
@@ -638,13 +560,23 @@ func TestHeardARP(t *testing.T) {
 // The stats show the listener of ARP of an interface under it, and the naming protocols of no
 // interface after those of all.
 func TestWorkerStatsOfTheProtocols(t *testing.T) {
-	w := NewWorker(zap.NewNop().Sugar(), Config{Lifetime: time.Hour, IPv4: Family{Enabled: true, Listen: true}, Hostnames: Hostnames{Enabled: true}})
+	w := NewWorker(zap.NewNop().Sugar(), Config{Lifetime: time.Hour, IPv4: Family{Enabled: true, Listen: true}, Hostnames: Hostnames{Enabled: true},
+		Protocols: Protocols{ARP: Protocol{Enabled: true}, ARPSweep: ARPSweepProtocol{Enabled: true}, ARPListen: Protocol{Enabled: true}, NDP: Protocol{Enabled: true},
+			DHCP: Protocol{Enabled: true}, DNS: DNSProtocol{Enabled: true, Servers: []netip.AddrPort{netip.MustParseAddrPort("192.168.1.1:53")}}}})
 	defer w.State.Close()
 	w.arpListeners[arpKey{index: 2, name: "eth0"}] = &arp.Listener{}
 	w.nameConns[nameKey{index: 2, name: "eth0"}] = &nameProcesses{InterfaceName: "eth0", Protocols: []*NameProtocol{{Name: NameDHCP, Worker: &fakeAsker{}}}}
 	w.nameGlobal = []*NameProtocol{{Name: NameDNS, Worker: &fakeAsker{}}}
 	stats := w.PrettyPrintStats("")
-	if want := "    eth0:\n        ipv4:\n            arp  : hosts=0 recv=0\n        names:\n            dhcp :\n    names:\n            dns  :\nPlugins:\n"; !strings.Contains(stats, want) {
+	// First what the configuration runs: not the sweep, of a family that isn't active, nor NDP,
+	// of one that is off.
+	if !strings.HasPrefix(stats, "Protocols: arp, arp-listen, dhcp, dns\nProtocol Workers:\n") {
+		t.Errorf("stats:\n%s\nwant the protocols that run first", stats)
+	}
+	if none := NewWorker(zap.NewNop().Sugar(), Config{Lifetime: time.Hour, IPv4: Family{Enabled: true, Listen: true}}).PrettyPrintStats(""); !strings.HasPrefix(none, "Protocols: none\n") {
+		t.Errorf("stats without a protocol:\n%s", none)
+	}
+	if want := "    eth0:\n        ipv4:\n            arp-listen: hosts=0 recv=0\n        names:\n            dhcp :\n    names:\n            dns  :\nPlugins:\n"; !strings.Contains(stats, want) {
 		t.Errorf("stats:\n%s\nwant\n%s", stats, want)
 	}
 	if got := w.nameProtocols(""); len(got) != 1 || got[0].Name != NameDNS {

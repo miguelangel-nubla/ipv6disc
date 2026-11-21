@@ -18,8 +18,9 @@ import (
 func Example() {
 	ctx, logger := context.Background(), zap.NewNop().Sugar()
 	run := func() error {
-		config := ipv6disc.DefaultConfig() // IPv6 by every way, no IPv4
-		config.IPv4 = ipv6disc.Family{Enabled: true, Listen: true}
+		config := ipv6disc.DefaultConfig() // IPv6 by the protocols that find hosts, no IPv4
+		config.IPv4.Enabled = true         // by its own: the neighbor table, the sweep
+		config.Protocols.ARPSweep.Enabled = false
 		config.ExcludeInterfaces = []string{"docker*", "veth*"}
 
 		worker := ipv6disc.NewWorker(logger, config)

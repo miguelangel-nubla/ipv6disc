@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"slices"
 	"testing"
 	"time"
 )
@@ -181,6 +182,31 @@ func TestSweepTargets(t *testing.T) {
 		if got := SweepTargets(netip.MustParsePrefix(local)); got != nil {
 			t.Errorf("%s, not IPv4: %v", local, got)
 		}
+	}
+	// Another bound than a /22: a subnet larger than it is swept in the /24 of the address, or in
+	// its prefix of that length when that is smaller; one no larger, whole.
+	for _, tt := range []struct {
+		local       string
+		maxPrefix   int
+		count       int
+		first, last string
+	}{
+		{"10.0.0.5/16", 16, 65533, "10.0.0.1", "10.0.255.254"},
+		{"10.0.0.5/16", 17, 253, "10.0.0.1", "10.0.0.254"},
+		{"10.0.0.5/22", 24, 253, "10.0.0.1", "10.0.0.254"},
+		{"10.0.0.70/24", 26, 61, "10.0.0.65", "10.0.0.126"},
+		{"10.0.0.70/26", 26, 61, "10.0.0.65", "10.0.0.126"},
+		{"10.0.0.70/24", 30, 1, "10.0.0.69", "10.0.0.69"},
+		{"10.0.0.70/30", 30, 1, "10.0.0.69", "10.0.0.69"},
+		{"10.0.0.70/31", 30, 1, "10.0.0.71", "10.0.0.71"},
+	} {
+		got := SweepTargetsWithin(netip.MustParsePrefix(tt.local), tt.maxPrefix)
+		if len(got) != tt.count || len(got) > 0 && (got[0].String() != tt.first || got[len(got)-1].String() != tt.last) {
+			t.Errorf("SweepTargetsWithin(%s, %d): %d from %v to %v, want %d from %s to %s", tt.local, tt.maxPrefix, len(got), first(got), last(got), tt.count, tt.first, tt.last)
+		}
+	}
+	if !slices.Equal(SweepTargets(netip.MustParsePrefix("10.0.0.5/16")), SweepTargetsWithin(netip.MustParsePrefix("10.0.0.5/16"), DefaultSweepPrefix)) {
+		t.Error("a sweep, and one within the default bound, differ")
 	}
 	if got := SweepTargets(netip.Prefix{}); got != nil {
 		t.Errorf("no prefix: %v", got)

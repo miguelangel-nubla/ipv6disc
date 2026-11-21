@@ -358,10 +358,35 @@ func stopClean(t *testing.T, instance *remoteInstance) {
 	}
 }
 
-// namesBy is a worker that learns names by those protocols alone, over the families given.
+// namesBy is a worker that learns names by those protocols alone, over the families given, with
+// short lifetimes: beside the protocols that find hosts by default, each of those is enabled, and
+// the names of WS-Discovery and SSDP are those protocols' option.
 func namesBy(ipv6, ipv4 Family, protocols ...string) Config {
-	config := namesConfig(ipv6, ipv4)
-	config.Hostnames.Protocols = protocols
+	config := Config{Protocols: DefaultProtocols(), Lifetime: time.Minute, Rediscover: 3 * time.Second, IPv6: ipv6, IPv4: ipv4,
+		Hostnames: Hostnames{Enabled: true, Lifetime: namesLifetime}}
+	on := Protocol{Enabled: true}
+	for _, protocol := range protocols {
+		switch protocol {
+		case NameMDNS:
+			config.Protocols.MDNS = MDNSProtocol{Enabled: true, Ask: true}
+		case NameDNS:
+			config.Protocols.DNS.Enabled = true
+		case NameNetBIOS:
+			config.Protocols.NetBIOS = on
+		case NameLLMNR:
+			config.Protocols.LLMNR = on
+		case NameWSD:
+			config.Protocols.WSD.Names = true
+		case NameSSDP:
+			config.Protocols.SSDP.Names = true
+		case NameDHCP:
+			config.Protocols.DHCP = on
+		case NameLLDP:
+			config.Protocols.LLDP = on
+		default:
+			panic("no such protocol of the names: " + protocol)
+		}
+	}
 	return config
 }
 
@@ -531,7 +556,7 @@ func TestLiveNamesDNS(t *testing.T) {
 	a, b, p, q := lan["a"], lan["b"], lan["p"], lan["q"]
 	wire := startCapture(t, "port-a", "port-b", "port-p", "port-q")
 	config := namesBy(probing, probing, NameDNS)
-	config.Hostnames.DNS = []netip.AddrPort{netip.AddrPortFrom(b.ipv4, 53)}
+	config.Protocols.DNS.Servers = []netip.AddrPort{netip.AddrPortFrom(b.ipv4, 53)}
 	instance := startInstance(t, a.namespace, config)
 	defer instance.stop()
 	// The hosts are there, with all their addresses, and were asked of, before the server is.
@@ -714,7 +739,7 @@ func TestLivePassiveARP(t *testing.T) {
 	a, b, p, q := lan["a"], lan["b"], lan["p"], lan["q"]
 	wire := startCapture(t, "port-a", "port-b", "port-p", "port-q")
 	// No names, and nothing probed.
-	instance := startInstance(t, a.namespace, Config{Lifetime: time.Minute, Rediscover: 3 * time.Second, IPv4: listening})
+	instance := startInstance(t, a.namespace, Config{Protocols: DefaultProtocols(), Lifetime: time.Minute, Rediscover: 3 * time.Second, IPv4: listening})
 	defer instance.stop()
 	waitFor(t, 30*time.Second, "the worker's own address", func() bool {
 		found, _ := instance.report().self(a.ipv4)
@@ -936,8 +961,10 @@ func TestLiveNamesProtocolsOffByDefault(t *testing.T) {
 	device := startHelper(t, q.namespace, "device", q.ipv6.String(), q.ipv6.String(), "/description.xml", "Living_Room_TV")
 	startDnsmasq(t, b.namespace, "--host-record=printer-p.lan.test,"+p.ipv4.String(), "--dhcp-range=10.66.5.32,10.66.5.60,255.255.255.192,10m")
 
-	config := namesConfig(probing, probing)
-	config.Hostnames = Hostnames{DNS: []netip.AddrPort{netip.AddrPortFrom(b.ipv4, 53)}}
+	// The protocols of the defaults, and no names: the servers are given, and not asked.
+	config := namesBy(probing, probing)
+	config.Hostnames = Hostnames{}
+	config.Protocols.DNS.Servers = []netip.AddrPort{netip.AddrPortFrom(b.ipv4, 53)}
 	instance := startInstance(t, a.namespace, config)
 	defer instance.stop()
 	waitFor(t, 30*time.Second, "the hosts", func() bool {

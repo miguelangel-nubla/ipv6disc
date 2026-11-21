@@ -24,7 +24,7 @@ func (p *blockingPlugin) Start(ctx context.Context, _ *State, _ func(error)) err
 }
 
 func TestWorkerStopsWithItsContext(t *testing.T) {
-	w := NewWorker(zap.NewNop().Sugar(), Config{Lifetime: time.Hour, Rediscover: time.Minute, IPv6: Family{Enabled: true}})
+	w := NewWorker(zap.NewNop().Sugar(), Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, Rediscover: time.Minute, IPv6: Family{Enabled: true}})
 	plugin := &blockingPlugin{stopped: make(chan struct{})}
 	w.RegisterPlugin(plugin)
 
@@ -49,7 +49,7 @@ func TestWorkerStopsWithItsContext(t *testing.T) {
 }
 
 func TestWorkerWithNothingToDo(t *testing.T) {
-	w := NewWorker(zap.NewNop().Sugar(), Config{Lifetime: time.Hour, Rediscover: time.Minute, IPv6: Family{Enabled: true}})
+	w := NewWorker(zap.NewNop().Sugar(), Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, Rediscover: time.Minute, IPv6: Family{Enabled: true}})
 	if err := w.Start(context.Background()); err == nil {
 		t.Error("no plugins and no listening: want an error")
 	}
@@ -90,7 +90,7 @@ func TestDiffWorkers(t *testing.T) {
 // went, or that is now on another interface, stops, and one that ended by itself, as on a failure
 // to listen, starts again at the next check.
 func TestSyncWorkers(t *testing.T) {
-	w := NewWorker(zap.NewNop().Sugar(), Config{Lifetime: time.Hour, IPv6: Family{Enabled: true}})
+	w := NewWorker(zap.NewNop().Sugar(), Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, IPv6: Family{Enabled: true}})
 	ctx, cancel := context.WithCancel(context.Background())
 	addr := netip.MustParseAddr("2001:db8::1")
 
@@ -181,7 +181,7 @@ func TestSyncWorkers(t *testing.T) {
 // same address of the same interface, as when the address went and came back: the next check
 // would start a second one beside it.
 func TestSyncWorkersStoppedWorkerLeavesItsSuccessor(t *testing.T) {
-	w := NewWorker(zap.NewNop().Sugar(), Config{Lifetime: time.Hour, IPv6: Family{Enabled: true}})
+	w := NewWorker(zap.NewNop().Sugar(), Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, IPv6: Family{Enabled: true}})
 	ctx, cancel := context.WithCancel(context.Background())
 	key := workerKey{2, "eth0", netip.MustParseAddr("2001:db8::1"), ""}
 	found := map[workerKey]net.Interface{key: {Index: 2, Name: "eth0"}}
@@ -229,7 +229,7 @@ func TestSyncWorkersStoppedWorkerLeavesItsSuccessor(t *testing.T) {
 // the whole discovery stops, the machine still having it. With another MAC, the address under the
 // old one goes.
 func TestSyncWorkersRemovesTheAddressesGone(t *testing.T) {
-	w := NewWorker(zap.NewNop().Sugar(), Config{Lifetime: time.Hour, IPv6: Family{Enabled: true}})
+	w := NewWorker(zap.NewNop().Sugar(), Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, IPv6: Family{Enabled: true}})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	mac, _ := net.ParseMAC("00:1a:2b:3c:4d:17")
@@ -308,7 +308,7 @@ func TestSyncWorkersRemovesTheAddressesGone(t *testing.T) {
 
 // A worker starts once.
 func TestWorkerStartsOnce(t *testing.T) {
-	w := NewWorker(zap.NewNop().Sugar(), Config{Lifetime: time.Hour, IPv6: Family{Enabled: true}})
+	w := NewWorker(zap.NewNop().Sugar(), Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, IPv6: Family{Enabled: true}})
 	w.RegisterPlugin(&blockingPlugin{stopped: make(chan struct{})})
 	ctx, cancel := context.WithCancel(context.Background())
 	if err := w.Start(ctx); err != nil {
@@ -373,7 +373,7 @@ func TestWorkerLeavesNoGoroutines(t *testing.T) {
 // The ping before an address expires goes from a listener of an interface that saw it, whichever
 // is running then: not the one that first registered it, which can be gone.
 func TestPingerFor(t *testing.T) {
-	w := NewWorker(zap.NewNop().Sugar(), Config{Lifetime: time.Hour, IPv6: Family{Enabled: true}})
+	w := NewWorker(zap.NewNop().Sugar(), Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, IPv6: Family{Enabled: true}})
 	stable, temporary, ula, other := &fakeConn{}, &fakeConn{}, &fakeConn{}, &fakeConn{}
 	protocols := func(c *fakeConn) []*DiscoveryProtocol {
 		return []*DiscoveryProtocol{{Name: "ndp", Worker: struct{ worker }{}}, {Name: "ping", Worker: c}}

@@ -234,10 +234,10 @@ func (a *avahi) stop() {
 	}
 }
 
-// namesConfig is a worker that learns names, over the families given, with short lifetimes.
+// namesConfig is a worker that learns names by mDNS, which is asked too, over the families given,
+// with short lifetimes: beside the protocols that find hosts by default.
 func namesConfig(ipv6, ipv4 Family) Config {
-	return Config{Lifetime: time.Minute, Rediscover: 3 * time.Second, IPv6: ipv6, IPv4: ipv4,
-		Hostnames: Hostnames{Enabled: true, Lifetime: namesLifetime}}
+	return namesBy(ipv6, ipv4, NameMDNS)
 }
 
 const namesLifetime = 20 * time.Second
@@ -422,7 +422,8 @@ func TestLiveNamesOffByDefault(t *testing.T) {
 	}
 	a, p := lan["a"], lan["p"]
 	wire := startCapture(t, "port-a", "port-b", "port-p", "port-q")
-	config := namesConfig(probing, probing)
+	// As a configuration that says nothing of them: the protocols of the defaults, and no names.
+	config := namesBy(probing, probing)
 	config.Hostnames = Hostnames{}
 	instance := startInstance(t, a.namespace, config)
 	defer instance.stop()

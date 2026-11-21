@@ -21,7 +21,7 @@ import (
 type HostName struct {
 	Name string
 	// What said it, in the order they first did: a protocol of the local discovery, as "mdns"
-	// or "dhcp" (NameProtocols), or a plugin's name.
+	// or "dhcp" (ProtocolNames), or a plugin's name.
 	Sources []string
 	// When it was last said, and until when it stays without being said again.
 	Seen       time.Time

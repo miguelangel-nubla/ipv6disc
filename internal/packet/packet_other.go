@@ -11,6 +11,9 @@ import (
 	"golang.org/x/net/bpf"
 )
 
+// Supported tells whether the system has packet sockets: Linux only.
+const Supported = false
+
 // Conn is never there: Listen needs Linux's packet sockets.
 type Conn struct{}
 

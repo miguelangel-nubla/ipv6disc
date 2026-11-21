@@ -15,6 +15,9 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// Supported tells whether the system has packet sockets: Linux only.
+const Supported = true
+
 // Conn is a packet socket on an interface, of one protocol.
 type Conn struct {
 	file   *os.File

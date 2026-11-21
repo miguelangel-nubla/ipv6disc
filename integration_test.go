@@ -57,7 +57,7 @@ func TestLiveDiscovery(t *testing.T) {
 		return
 	}
 
-	w := NewWorker(zaptest.NewLogger(t).Sugar(), Config{Lifetime: 6 * time.Second, Rediscover: 2 * time.Second,
+	w := NewWorker(zaptest.NewLogger(t).Sugar(), Config{Protocols: DefaultProtocols(), Lifetime: 6 * time.Second, Rediscover: 2 * time.Second,
 		IPv6: Family{Enabled: true, Listen: true, Active: true}, IPv4: Family{Enabled: true, Listen: true, Active: true}})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -160,7 +160,7 @@ func TestLiveIPv4Solicit(t *testing.T) {
 		return
 	}
 
-	w := NewWorker(zaptest.NewLogger(t).Sugar(), Config{Lifetime: time.Minute, Rediscover: 2 * time.Second,
+	w := NewWorker(zaptest.NewLogger(t).Sugar(), Config{Protocols: DefaultProtocols(), Lifetime: time.Minute, Rediscover: 2 * time.Second,
 		IPv6: Family{Enabled: true, Listen: true, Active: true}, IPv4: Family{Enabled: true, Listen: true}})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -178,7 +178,7 @@ func TestLiveIPv4Solicit(t *testing.T) {
 		t.Fatalf("a prefix off the link: found %d, %v", found, err)
 	}
 	// Nor the interfaces the configuration leaves out.
-	excluding := NewWorker(zaptest.NewLogger(t).Sugar(), Config{Lifetime: time.Minute, Rediscover: time.Minute,
+	excluding := NewWorker(zaptest.NewLogger(t).Sugar(), Config{Protocols: DefaultProtocols(), Lifetime: time.Minute, Rediscover: time.Minute,
 		IPv4: Family{Enabled: true}, ExcludeInterfaces: []string{"veth-*"}})
 	if found, err := excluding.SolicitIPv4(ctx, []IPv4Target{{MAC: mustMAC(peerMAC)}}); err != nil || found != 0 {
 		t.Fatalf("an interface left out: found %d, %v", found, err)
@@ -205,7 +205,7 @@ func TestLiveNDPHopLimit(t *testing.T) {
 		return
 	}
 
-	w := NewWorker(zaptest.NewLogger(t).Sugar(), Config{Lifetime: time.Minute, Rediscover: 2 * time.Second,
+	w := NewWorker(zaptest.NewLogger(t).Sugar(), Config{Protocols: DefaultProtocols(), Lifetime: time.Minute, Rediscover: 2 * time.Second,
 		IPv6: Family{Enabled: true, Listen: true, Active: true}})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -345,7 +345,7 @@ func TestLiveTwoNetworksOneWire(t *testing.T) {
 		return
 	}
 
-	w := NewWorker(zaptest.NewLogger(t).Sugar(), Config{Lifetime: time.Minute, Rediscover: 2 * time.Second,
+	w := NewWorker(zaptest.NewLogger(t).Sugar(), Config{Protocols: DefaultProtocols(), Lifetime: time.Minute, Rediscover: 2 * time.Second,
 		IPv6: Family{Enabled: true, Listen: true, Active: true}, IPv4: Family{Enabled: true, Listen: true}})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -41,6 +41,8 @@ type nameAsker interface {
 type NameProtocol struct {
 	Name   string
 	Worker worker
+	// Whether it only hears, though it could ask: mDNS told not to.
+	silent bool
 }
 
 // nameProcesses are the protocols of the naming layer on an interface.
@@ -61,24 +63,17 @@ func (k nameKey) compare(other nameKey) int {
 	return cmp.Or(cmp.Compare(k.index, other.index), cmp.Compare(k.name, other.name), cmp.Compare(k.hw, other.hw))
 }
 
-// The protocols of the names, as Hostnames.Protocols has them, and as the sources of the names
-// they tell.
+// The sources of the names the protocols tell: of each, the name of its protocol.
 const (
-	NameMDNS    = "mdns"
-	NameDNS     = "dns"
-	NameNetBIOS = "netbios"
-	NameLLMNR   = "llmnr"
-	NameWSD     = "wsd"
-	NameSSDP    = "ssdp"
-	NameDHCP    = "dhcp"
-	NameLLDP    = "lldp"
+	NameMDNS    = ProtocolMDNS
+	NameDNS     = ProtocolDNS
+	NameNetBIOS = ProtocolNetBIOS
+	NameLLMNR   = ProtocolLLMNR
+	NameWSD     = ProtocolWSD
+	NameSSDP    = ProtocolSSDP
+	NameDHCP    = ProtocolDHCP
+	NameLLDP    = ProtocolLLDP
 )
-
-// NameProtocols are the protocols the local discovery can learn names by: all run unless
-// Hostnames.Protocols names some. The four first ask a host, in this order.
-func NameProtocols() []string {
-	return []string{NameMDNS, NameDNS, NameNetBIOS, NameLLMNR, NameWSD, NameSSDP, NameDHCP, NameLLDP}
-}
 
 // nameOrder is the order a host is asked in, by the protocols that can ask it: mDNS first, a
 // question to the host alone, which most devices answer; then the reverse DNS, a question to a
@@ -114,8 +109,11 @@ const (
 // only once the discovery found a host there: an address a packet tells is asked of the
 // discovery too, never registered on its word.
 type namer struct {
-	state      *State
-	logger     *zap.SugaredLogger
+	state  *State
+	logger *zap.SugaredLogger
+	// Whether names are kept. Without, the layer only has the discovery find the addresses its
+	// protocols hear of: nothing is asked, and what they say names nobody.
+	names      bool
 	lifetime   time.Duration
 	rediscover time.Duration
 	// The protocols running on an interface, or, for "", on none, and what has the discovery
@@ -197,6 +195,7 @@ func newNamer(state *State, logger *zap.SugaredLogger, config Config) *namer {
 	return &namer{
 		state:      state,
 		logger:     logger,
+		names:      config.Hostnames.Enabled,
 		lifetime:   config.Hostnames.Lifetime,
 		rediscover: config.Rediscover,
 		now:        time.Now,
@@ -263,7 +262,10 @@ func (n *namer) saidBy(source, iface string, from netip.Addr, name string, addr 
 // say settles a claim of saidBy, or has it wait for the discovery.
 func (n *namer) say(c claim, onLink bool) {
 	source, iface, from, addr := c.source, c.iface, c.from, c.addr
-	settled, hw := n.settle(c)
+	settled, hw := false, net.HardwareAddr(nil)
+	if n.names {
+		settled, hw = n.settle(c)
+	}
 	n.mutex.Lock()
 	defer n.mutex.Unlock()
 	if settled {
@@ -275,7 +277,9 @@ func (n *namer) say(c claim, onLink bool) {
 			n.want(iface, a)
 		}
 	}
-	n.wait(c)
+	if n.names {
+		n.wait(c)
+	}
 }
 
 // wait keeps a claim for when the discovery tells whose it is, unless it waits already, or too
@@ -300,7 +304,8 @@ func (n *namer) named(source, iface string, addr netip.Addr, name string) {
 // MAC the State has addr at. The address of a packet is whatever its sender wrote, and one who
 // writes another's, from its own MAC, names nobody.
 func (n *namer) namedFrom(source, iface string, addr netip.Addr, via net.HardwareAddr, name string) {
-	if _, ok := CleanName(name); !ok || len(via) == 0 {
+	// Without names kept, the address alone counts: a host to find.
+	if _, ok := CleanName(name); !ok && n.names || len(via) == 0 {
 		return
 	}
 	n.say(claim{source: source, iface: iface, from: addr, name: name, addr: addr, at: n.now(), via: via}, true)
@@ -313,6 +318,7 @@ func (n *namer) namedFrom(source, iface string, addr netip.Addr, via net.Hardwar
 // It returns whether the name is one a host can have.
 func (n *namer) claimed(source, iface string, hw net.HardwareAddr, name string, addrs []netip.Addr) bool {
 	_, clean := CleanName(name)
+	clean = clean && n.names
 	c := claim{source: source, iface: iface, name: name, at: n.now(), hw: hw, addrs: addrs}
 	settled := false
 	if clean {
@@ -487,6 +493,9 @@ func (n *namer) resolve() (waiting bool) {
 // sent one question, and one that answers nothing one by each protocol, in a rediscovery
 // interval. It returns whether hosts are left to ask, for the second that follows.
 func (n *namer) lookups() (backlog bool) {
+	if !n.names {
+		return false
+	}
 	n.mutex.Lock()
 	defer n.mutex.Unlock()
 	now := n.now()
@@ -646,7 +655,7 @@ func (n *namer) candidates(collection *AddrCollection) []candidate {
 		for _, iface := range slices.Concat(addr.Interfaces(), []string{""}) {
 			for _, protocol := range n.askers(iface) {
 				asker, ok := protocol.Worker.(nameAsker)
-				if !ok || !asker.Asks(ip) || slices.ContainsFunc(result, func(c candidate) bool { return c.asker == asker && c.addr == ip }) {
+				if !ok || protocol.silent || !asker.Asks(ip) || slices.ContainsFunc(result, func(c candidate) bool { return c.asker == asker && c.addr == ip }) {
 					continue
 				}
 				result = append(result, candidate{iface, ip, protocol.Name, asker})
@@ -728,7 +737,8 @@ func (w *Worker) discoverAddr(ctx context.Context, iface string, addr netip.Addr
 		return false
 	}
 
-	if !w.config.listensIPv4() {
+	// By what tells the answer: the neighbor table, or the ARP heard.
+	if !w.config.runs(ProtocolARP) && !w.config.runs(ProtocolARPListen) {
 		return false
 	}
 	for _, local := range w.ipv4Interfaces()[iface].prefixes {
@@ -822,10 +832,11 @@ func (w *Worker) checkNameInterfaces(ctx context.Context) {
 	}
 }
 
-// startInterfaceNames runs the naming protocols on an interface until ctx is done: those of
-// Hostnames.Protocols, each over the families it has and the interface listens over. mDNS also
-// probes, at every rediscovery, with the other probes. DHCP and LLDP only hear, where the system
-// lets them: a protocol that can't run is told, once, and the others run without it.
+// startInterfaceNames runs the naming protocols on an interface until ctx is done: those enabled,
+// each over the families it has and the interface listens over. mDNS also probes, at every
+// rediscovery, with the other probes, unless it is told not to ask. DHCP and LLDP only hear,
+// where they are let: one that can't run, for want of the privilege, is told, once, and the
+// others run without it.
 func (w *Worker) startInterfaceNames(ctx context.Context, iface net.Interface, key nameKey) {
 	fields := []any{zap.String("interface", iface.Name)}
 	onError := func(protocol string) func(error) {
@@ -835,8 +846,10 @@ func (w *Worker) startInterfaceNames(ctx context.Context, iface net.Interface, k
 	running := func(name string, conn interface {
 		worker
 		Close() error
-	}) {
-		processes.Protocols = append(processes.Protocols, &NameProtocol{Name: name, Worker: conn})
+	}) *NameProtocol {
+		protocol := &NameProtocol{Name: name, Worker: conn}
+		processes.Protocols = append(processes.Protocols, protocol)
+		return protocol
 	}
 	defer func() {
 		for _, protocol := range processes.Protocols {
@@ -845,10 +858,12 @@ func (w *Worker) startInterfaceNames(ctx context.Context, iface net.Interface, k
 	}()
 
 	var mdnsConn *mdns.Conn
-	if w.config.names(NameMDNS) {
+	// Whether mDNS asks: told to, and its questions to a host are for a name.
+	asks := w.config.Protocols.MDNS.Ask
+	if w.config.runs(ProtocolMDNS) {
 		conn, err := mdns.Listen(&iface, mdns.Options{
 			IPv4: key.ipv4, IPv6: key.ipv6,
-			ActiveIPv4: w.config.probesIPv4(), ActiveIPv6: w.config.probesIPv6(),
+			ActiveIPv4: asks && w.config.probesIPv4(), ActiveIPv6: asks && w.config.probesIPv6(),
 		}, mdns.Handler{
 			Heard: func(from netip.Addr) bool { return w.naming.heard(iface.Name, from) },
 			Said: func(from netip.Addr, name string, addr netip.Addr, onLink bool) {
@@ -862,9 +877,9 @@ func (w *Worker) startInterfaceNames(ctx context.Context, iface net.Interface, k
 			return
 		}
 		mdnsConn = conn
-		running(NameMDNS, conn)
+		running(NameMDNS, conn).silent = !asks
 	}
-	if w.config.names(NameNetBIOS) && key.ipv4 {
+	if w.config.runs(ProtocolNetBIOS) && key.ipv4 {
 		conn, err := netbios.Listen(&iface, netbios.Handler{
 			Answered: func(asked netip.Addr, name string) {
 				w.naming.answeredBy(NameNetBIOS, iface.Name, asked, name)
@@ -877,7 +892,7 @@ func (w *Worker) startInterfaceNames(ctx context.Context, iface net.Interface, k
 		}
 		running(NameNetBIOS, conn)
 	}
-	if w.config.names(NameLLMNR) {
+	if w.config.runs(ProtocolLLMNR) {
 		conn, err := llmnr.Listen(&iface, llmnr.Options{IPv4: key.ipv4, IPv6: key.ipv6}, llmnr.Handler{
 			Answered: func(asked, from netip.Addr, name string) {
 				if from == asked {
@@ -896,7 +911,7 @@ func (w *Worker) startInterfaceNames(ctx context.Context, iface net.Interface, k
 		}
 		running(NameLLMNR, conn)
 	}
-	if w.config.names(NameDHCP) {
+	if w.config.runs(ProtocolDHCP) {
 		conn, err := dhcp.Listen(&iface, dhcp.Handler{
 			Client4: func(m dhcp.Message4) bool {
 				// The address it asks for, when the IPv4 discovery can look for it.
@@ -910,11 +925,12 @@ func (w *Worker) startInterfaceNames(ctx context.Context, iface net.Interface, k
 				return w.naming.claimed(NameDHCP, iface.Name, m.MAC, m.Name, addrs)
 			},
 			Client6: func(from netip.Addr, hw net.HardwareAddr, m dhcp.Message6) bool {
-				if _, ok := CleanName(m.Name); !ok {
-					return false
+				_, named := CleanName(m.Name)
+				named = named && w.config.Hostnames.Enabled
+				if named || !w.config.Hostnames.Enabled {
+					w.naming.namedFrom(NameDHCP, iface.Name, from, hw, m.Name)
 				}
-				w.naming.namedFrom(NameDHCP, iface.Name, from, hw, m.Name)
-				return true
+				return named
 			},
 			Error: onError("DHCP"),
 		})
@@ -924,7 +940,7 @@ func (w *Worker) startInterfaceNames(ctx context.Context, iface net.Interface, k
 			w.cantHear("DHCP", err)
 		}
 	}
-	if w.config.names(NameLLDP) {
+	if w.config.runs(ProtocolLLDP) {
 		conn, err := lldp.Listen(&iface, func(neighbor lldp.Neighbor) bool {
 			return w.naming.neighbor(iface.Name, neighbor.Source, neighbor.Chassis, neighbor.Name, neighbor.Addrs)
 		}, onError("LLDP"))
@@ -952,7 +968,7 @@ func (w *Worker) startInterfaceNames(ctx context.Context, iface net.Interface, k
 	}()
 
 	probe := func() {
-		if mdnsConn != nil && (w.config.probesIPv4() && key.ipv4 || w.config.probesIPv6() && key.ipv6) {
+		if mdnsConn != nil && asks && (w.config.probesIPv4() && key.ipv4 || w.config.probesIPv6() && key.ipv6) {
 			startMulticast("mDNS", mdnsConn.DiscoverMulticast, iface.Name, w.logger)
 		}
 	}
@@ -1007,10 +1023,10 @@ func (w *Worker) cantHear(protocol string, err error) {
 // startNameServers opens what asks the DNS servers of the configuration the names of the
 // addresses, until ctx is done: a protocol of the naming layer of no interface.
 func (w *Worker) startNameServers(ctx context.Context) {
-	if !w.config.names(NameDNS) || len(w.config.Hostnames.DNS) == 0 {
+	if !w.config.runs(ProtocolDNS) {
 		return
 	}
-	conn, err := rdns.Dial(w.config.Hostnames.DNS, rdns.Handler{
+	conn, err := rdns.Dial(w.config.Protocols.DNS.Servers, rdns.Handler{
 		Answered: func(asked netip.Addr, name string) { w.naming.answeredBy(NameDNS, "", asked, name) },
 		Error:    func(err error) { w.logger.Errorw("DNS error", zap.Error(err)) },
 	})

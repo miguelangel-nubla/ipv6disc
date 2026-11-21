@@ -25,21 +25,25 @@ var (
 
 // discoverIPv4 reads the kernel's IPv4 neighbor table every interfaceCheckInterval and, with active
 // discovery, sweeps the local subnets at every rediscovery first, so that the hosts there that
-// stay quiet are in it too. Each time it registers the interfaces' own addresses, and takes out
-// those they no longer have, which is all it does where the system has no table to read: nothing
-// is swept there. The naming layer has it read the table sooner, for an address it heard of. It
+// stay quiet are in it too: each of the three when its protocol is enabled, arp, arp-sweep, and
+// arp-listen for the ARP heard. Each time it registers the interfaces' own addresses, and takes
+// out those they no longer have, which is all it does where the system has no table to read:
+// nothing is swept there. The naming layer has it read the table sooner, for an address it heard of. It
 // returns when ctx is done.
 func (w *Worker) discoverIPv4(ctx context.Context) {
 	ticker := time.NewTicker(interfaceCheckInterval)
 	defer ticker.Stop()
 
-	// Asked before the first sweep, which is for the table.
-	_, err := arpTable()
-	neighbors := !w.tableUnsupported(err)
+	// The table, when it is to be read: asked before the first sweep, which is for it.
+	neighbors := w.config.runs(ProtocolARP)
+	if neighbors {
+		_, err := arpTable()
+		neighbors = !w.tableUnsupported(err)
+	}
 
-	// The ARP of the interfaces is heard too, where the system lets it be: until it is known
-	// not to.
-	passive := true
+	// The ARP of the interfaces is heard too, when it is to be, where the system lets it be:
+	// until it is known not to.
+	passive := w.config.runs(ProtocolARPListen)
 	defer w.stopARPListeners()
 
 	var lastSweep time.Time
@@ -47,7 +51,14 @@ func (w *Worker) discoverIPv4(ctx context.Context) {
 	for {
 		// The start of the sweep this reading follows, if it follows one.
 		var swept time.Time
-		if neighbors && w.config.probesIPv4() && time.Since(lastSweep) >= w.config.Rediscover {
+		// Swept for what tells the answers: the table, or the ARP heard.
+		if (neighbors || passive) && w.config.runs(ProtocolARPSweep) && time.Since(lastSweep) >= w.config.Rediscover {
+			// Without the table, the answers are told by the ARP heard alone: from before the
+			// sweep, then, not from the reading after it, as there is none.
+			if passive && !neighbors {
+				interfaces, err := w.listIPv4Interfaces()
+				passive = w.syncARPListeners(ctx, interfaces, err == nil)
+			}
 			lastSweep = time.Now()
 			swept = lastSweep
 			settle := w.sweepIPv4(ctx)
@@ -282,7 +293,7 @@ func (w *Worker) ipv4Probes(target IPv4Target, interfaces map[string]ipv4Interfa
 	for _, name := range names {
 		i := interfaces[name]
 		for _, local := range i.prefixes {
-			if asked := probeTargets(local, target.Prefixes); len(asked) > 0 {
+			if asked := probeTargets(local, target.Prefixes, w.config.sweepPrefix()); len(asked) > 0 {
 				probes = append(probes, ipv4Probe{name: name, iface: i, local: local, asked: asked})
 			}
 		}
@@ -290,11 +301,11 @@ func (w *Worker) ipv4Probes(target IPv4Target, interfaces map[string]ipv4Interfa
 	return probes
 }
 
-// probeTargets returns the addresses of the subnet of local to ask, in one of the prefixes: all of
-// them without prefixes.
-func probeTargets(local netip.Prefix, prefixes []netip.Prefix) []netip.Addr {
+// probeTargets returns the addresses of the subnet of local to ask, in one of the prefixes: without
+// prefixes, those a sweep would ask, of a subnet no larger than a /maxPrefix.
+func probeTargets(local netip.Prefix, prefixes []netip.Prefix, maxPrefix int) []netip.Addr {
 	if len(prefixes) == 0 {
-		return arp.ProbeTargets(local, netip.Prefix{})
+		return arp.SweepTargetsWithin(local, maxPrefix)
 	}
 	seen := make(map[netip.Addr]bool)
 	var targets []netip.Addr
@@ -387,7 +398,7 @@ func (w *Worker) sweepIPv4(ctx context.Context) time.Duration {
 			settle = max(settle, arpSettle(i.iface.Name))
 		}
 		for _, prefix := range i.prefixes {
-			targets := arp.SweepTargets(prefix)
+			targets := arp.SweepTargetsWithin(prefix, w.config.sweepPrefix())
 			w.logger.Debugw("IPv4 sweep",
 				zap.String("interface", i.iface.Name),
 				zap.String("prefix", prefix.String()),

@@ -153,6 +153,12 @@ func (w *Worker) RegisterPlugin(p Plugin) {
 func (w *Worker) PrettyPrintStats(prefix string) string {
 	var result strings.Builder
 
+	// What the configuration runs, then what of it is running, on each interface.
+	running := "none"
+	if protocols := w.config.running(); len(protocols) > 0 {
+		running = strings.Join(protocols, ", ")
+	}
+	result.WriteString(prefix + "Protocols: " + running + "\n")
 	result.WriteString(prefix + "Protocol Workers:\n")
 	w.pcMutex.RLock()
 	// Group by interface
@@ -218,7 +224,7 @@ func (w *Worker) PrettyPrintStats(prefix string) string {
 		}
 		if listener, ok := ipv4[name]; ok {
 			fmt.Fprintf(&result, "%s        ipv4:\n", prefix)
-			printStats("arp", listener.Stats())
+			printStats(ProtocolARPListen, listener.Stats())
 		}
 		if len(names[name]) > 0 {
 			fmt.Fprintf(&result, "%s        names:\n", prefix)
@@ -260,7 +266,8 @@ func (w *Worker) PrettyPrintStats(prefix string) string {
 }
 
 // Start runs the plugins and, when listening is enabled, the discovery on every interface address,
-// which it keeps in step with the addresses the system has.
+// which it keeps in step with the addresses the system has: by the protocols enabled, which the
+// log names.
 // The discovery stops when ctx is done: Wait waits for it to. A worker starts once: a second
 // Start is an error, also after the first stopped.
 func (w *Worker) Start(ctx context.Context) error {
@@ -275,6 +282,11 @@ func (w *Worker) Start(ctx context.Context) error {
 	}
 	for _, warning := range w.config.warnings() {
 		w.logger.Warn(warning)
+	}
+	if protocols := w.config.running(); len(protocols) > 0 {
+		w.logger.Infof("protocols of the local discovery: %s", strings.Join(protocols, ", "))
+	} else {
+		w.logger.Info("protocols of the local discovery: none")
 	}
 
 	for _, p := range w.plugins {
@@ -316,8 +328,8 @@ func (w *Worker) Start(ctx context.Context) error {
 		}()
 	}
 
-	// The names, after the discovery they need: of the interfaces it runs on, for the families
-	// it listens over.
+	// The protocols of the naming layer, after the discovery they need: on the interfaces it
+	// runs on, for the families it listens over.
 	if w.config.namesLocally() {
 		w.naming.discover = func(iface string, addr netip.Addr) bool { return w.discoverAddr(ctx, iface, addr) }
 		w.running.Add(1)
@@ -336,9 +348,9 @@ func (w *Worker) Start(ctx context.Context) error {
 			}
 		}()
 	}
-	// And what asks: of the hosts the local discovery found, and, by the DNS servers given, of
-	// those the plugins did too.
-	if w.config.asksNames() {
+	// And the layer itself, which has the discovery find what they heard of, and asks: the hosts
+	// the local discovery found, and, by the DNS servers given, those the plugins did too.
+	if w.config.naming() {
 		w.startNameServers(ctx)
 		w.running.Add(1)
 		go func() {
@@ -559,6 +571,9 @@ func (w *Worker) syncWorkers(ctx context.Context, found map[workerKey]net.Interf
 	}
 }
 
+// StartInterfaceAddr runs the IPv6 discovery on an address of an interface until ctx is done: the
+// protocols of it that are enabled, each with its listener, and the address itself, registered
+// as this machine's. NDP tells the MACs, and asks the MAC of whatever the others hear.
 func (w *Worker) StartInterfaceAddr(ctx context.Context, iface net.Interface, addr netip.Addr) {
 	var err error
 	var ndpConn *ndp.Conn
@@ -588,58 +603,65 @@ func (w *Worker) StartInterfaceAddr(ctx context.Context, iface net.Interface, ad
 			zap.Error(err),
 		)
 	}
-
-	ndpConn, err = ndp.ListenForNDP(&iface, addr, processNDP, onError("NDP"))
-	if err != nil {
-		listenFailed("NDP", err)
-		return
+	processes := &InterfaceProcesses{InterfaceName: iface.Name, Address: addr}
+	running := func(name string, conn worker) {
+		processes.Protocols = append(processes.Protocols, &DiscoveryProtocol{Name: name, Worker: conn})
 	}
-	defer ndpConn.Close()
 
-	// The other protocols only tell an address: a neighbor solicitation asks its MAC.
-	pingConn, err = ping.ListenForICMP(&iface, addr, onFoundAddrFunc(ndpConn, &iface, w.logger, "ICMP echo response"), onError("ICMP"))
-	if err != nil {
-		listenFailed("ICMP", err)
-		return
+	if w.config.runs(ProtocolNDP) {
+		ndpConn, err = ndp.ListenForNDP(&iface, addr, processNDP, onError("NDP"))
+		if err != nil {
+			listenFailed("NDP", err)
+			return
+		}
+		defer ndpConn.Close()
+		running(ProtocolNDP, ndpConn)
 	}
-	defer pingConn.Close()
 
-	// With names, the two that follow also fetch the name of each host that answers their
+	// The other protocols only tell an address: a neighbor solicitation asks its MAC. They are
+	// not enabled without NDP.
+	if w.config.runs(ProtocolPing) {
+		pingConn, err = ping.ListenForICMP(&iface, addr, onFoundAddrFunc(ndpConn, &iface, w.logger, "ICMP echo response"), onError("ICMP"))
+		if err != nil {
+			listenFailed("ICMP", err)
+			return
+		}
+		defer pingConn.Close()
+		running(ProtocolPing, pingConn)
+	}
+
+	// With their names, the two that follow also fetch the name of each host that answers their
 	// probe, from that host: without, nothing is fetched.
-	if w.config.names(NameSSDP) {
-		wants, named := w.nameFetches(NameSSDP, iface.Name)
-		ssdpConn, err = ssdp.ListenForSSDPNames(&iface, addr, onFoundAddrFunc(ndpConn, &iface, w.logger, "SSDP announcement"), ssdp.Names{Wants: wants, Named: named}, onError("SSDP"))
-	} else {
-		ssdpConn, err = ssdp.ListenForSSDP(&iface, addr, onFoundAddrFunc(ndpConn, &iface, w.logger, "SSDP announcement"), onError("SSDP"))
+	if w.config.runs(ProtocolSSDP) {
+		if w.config.fetchesNames(ProtocolSSDP) {
+			wants, named := w.nameFetches(NameSSDP, iface.Name)
+			ssdpConn, err = ssdp.ListenForSSDPNames(&iface, addr, onFoundAddrFunc(ndpConn, &iface, w.logger, "SSDP announcement"), ssdp.Names{Wants: wants, Named: named}, onError("SSDP"))
+		} else {
+			ssdpConn, err = ssdp.ListenForSSDP(&iface, addr, onFoundAddrFunc(ndpConn, &iface, w.logger, "SSDP announcement"), onError("SSDP"))
+		}
+		if err != nil {
+			listenFailed("SSDP", err)
+			return
+		}
+		defer ssdpConn.Close()
+		running(ProtocolSSDP, ssdpConn)
 	}
-	if err != nil {
-		listenFailed("SSDP", err)
-		return
-	}
-	defer ssdpConn.Close()
 
-	if w.config.names(NameWSD) {
-		wants, named := w.nameFetches(NameWSD, iface.Name)
-		wsdConn, err = wsd.ListenForWSDNames(&iface, addr, onFoundAddrFunc(ndpConn, &iface, w.logger, "WSD message"), wsd.Names{Wants: wants, Named: named}, onError("WSD"))
-	} else {
-		wsdConn, err = wsd.ListenForWSD(&iface, addr, onFoundAddrFunc(ndpConn, &iface, w.logger, "WSD message"), onError("WSD"))
+	if w.config.runs(ProtocolWSD) {
+		if w.config.fetchesNames(ProtocolWSD) {
+			wants, named := w.nameFetches(NameWSD, iface.Name)
+			wsdConn, err = wsd.ListenForWSDNames(&iface, addr, onFoundAddrFunc(ndpConn, &iface, w.logger, "WSD message"), wsd.Names{Wants: wants, Named: named}, onError("WSD"))
+		} else {
+			wsdConn, err = wsd.ListenForWSD(&iface, addr, onFoundAddrFunc(ndpConn, &iface, w.logger, "WSD message"), onError("WSD"))
+		}
+		if err != nil {
+			listenFailed("WSD", err)
+			return
+		}
+		defer wsdConn.Close()
+		running(ProtocolWSD, wsdConn)
 	}
-	if err != nil {
-		listenFailed("WSD", err)
-		return
-	}
-	defer wsdConn.Close()
 
-	processes := &InterfaceProcesses{
-		InterfaceName: iface.Name,
-		Address:       addr,
-		Protocols: []*DiscoveryProtocol{
-			{Name: "ndp", Worker: ndpConn},
-			{Name: "ping", Worker: pingConn},
-			{Name: "ssdp", Worker: ssdpConn},
-			{Name: "wsd", Worker: wsdConn},
-		},
-	}
 	key := keyOf(&iface, addr)
 	w.pcMutex.Lock()
 	w.protocolConns[key] = processes
@@ -671,14 +693,20 @@ func (w *Worker) StartInterfaceAddr(ctx context.Context, iface net.Interface, ad
 		w.State.RegisterSelf(iface.HardwareAddr, addr, iface.Name, temporaryAddrs()[addr], w.config.Lifetime, w.pingBeforeExpiration)
 	}
 	probe := func() {
-		if !w.config.probesIPv6() {
+		if !w.config.probesIPv6() || pingConn == nil && ssdpConn == nil && wsdConn == nil {
 			return
 		}
 
 		w.logger.Infof("active discovery started on %s %s", iface.Name, addr.String())
-		startMulticast("PING", pingConn.DiscoverMulticast, pingConn.GetListenAddr().String(), w.logger)
-		startMulticast("SSDP", ssdpConn.DiscoverMulticast, ssdpConn.GetListenAddrPort().String(), w.logger)
-		startMulticast("WSD", wsdConn.DiscoverMulticast, wsdConn.GetListenAddrPort().String(), w.logger)
+		if pingConn != nil {
+			startMulticast("PING", pingConn.DiscoverMulticast, pingConn.GetListenAddr().String(), w.logger)
+		}
+		if ssdpConn != nil {
+			startMulticast("SSDP", ssdpConn.DiscoverMulticast, ssdpConn.GetListenAddrPort().String(), w.logger)
+		}
+		if wsdConn != nil {
+			startMulticast("WSD", wsdConn.DiscoverMulticast, wsdConn.GetListenAddrPort().String(), w.logger)
+		}
 	}
 
 	// Bootstrap discovery

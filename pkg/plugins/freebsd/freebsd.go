@@ -15,7 +15,7 @@ import (
 )
 
 func init() {
-	plugins.Describe("freebsd", "A FreeBSD host, as pfSense or OPNsense, over SSH: `ndp -an` for IPv6, `arp -an` for IPv4, and with `-hostnames` the names of the DHCP leases of ISC dhcpd, Kea and dnsmasq.")
+	plugins.Describe("freebsd", "A FreeBSD host, as pfSense or OPNsense, over SSH: `ndp -an` for IPv6, `arp -an` for IPv4, and with `hostnames` the names of the DHCP leases of ISC dhcpd, Kea and dnsmasq.")
 	plugins.Register("freebsd", func(name string, config string, lifetime time.Duration) (ipv6disc.Plugin, error) {
 		cfg, err := ParseConfig(config)
 		if err != nil {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -45,36 +46,82 @@ func command(t *testing.T, prepare func(*exec.Cmd), args ...string) (code int, s
 	return cmd.ProcessState.ExitCode(), out.String(), errOut.String()
 }
 
+// writeConfig writes a configuration file of the test's, and returns its path.
+func writeConfig(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "discovery.yaml")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 // What the command can't run with ends it at once, with the reason: nothing is left out, or
 // taken as something else, without a word.
 func TestCommandRejects(t *testing.T) {
 	for _, tt := range []struct {
-		args string
-		code int
-		want string
+		args, config string
+		code         int
+		want         string
 	}{
 		// A word that is no flag: the flags after it would not be read.
-		{"-ipv6 false -ipv4", 2, `unexpected argument "false"`},
-		{"-ipv6=false -ipv4 -ipv4_active=false typo", 2, `unexpected argument "typo"`},
-		{"-plugin nonsense", 2, "expected: name=type:params"},
-		{"-plugin router=nosuch:60s", 1, "can't create plugin nosuch"},
-		// The worker's own checks, of the config the flags make.
-		{"-ipv6=false", 1, "nothing to do"},
-		{"-lifetime 0", 1, "they must be positive"},
-		{"-rediscover=-1s", 1, "they must be positive"},
-		{"-ipv4_lifetime=-1s", 1, "invalid family lifetime"},
-		// The names' flags reach the config: off unless given.
-		{"-hostnames -hostnames_lifetime=-1s", 1, "invalid names' lifetime"},
-		{"-hostnames=maybe", 2, "invalid boolean value"},
-		{"-interfaces=[", 1, "invalid interface pattern"},
-		{"-log_level=loud", 1, "invalid log level"},
+		{args: "-live false -version", code: 2, want: `unexpected argument "false"`},
+		{args: "-live=false typo", code: 2, want: `unexpected argument "typo"`},
+		// What was a flag, and any other there is none of.
+		{args: "-ipv4", code: 2, want: "flag provided but not defined: -ipv4"},
+		{args: "-hostnames -live", code: 2, want: "flag provided but not defined: -hostnames"},
+		{args: "-plugin router=linux:60s", code: 2, want: "flag provided but not defined: -plugin"},
+		{args: "-log_level=debug", code: 2, want: "flag provided but not defined: -log_level"},
+		{args: "-lifetime 1h", code: 2, want: "flag provided but not defined: -lifetime"},
+		{args: "-live=maybe", code: 2, want: "invalid boolean value"},
+		// A file that isn't there, and one that says what can't be: each error of it.
+		{args: "-config_file /no/such/file.yaml", code: 1, want: "/no/such/file.yaml: no such file or directory"},
+		{config: "ipv4: true", code: 1, want: "ipv4: true is not its settings: it is written ipv4: {enabled: true}"},
+		{config: "protocols: {bonjour: {enabled: true}}", code: 1, want: "protocols.bonjour: no such protocol: they are ndp, ping,"},
+		{config: "protocols: {mdns: {asks: true}}", code: 1, want: "protocols.mdns.asks: no such option of mdns: it has enabled, ask"},
+		{config: "protocols: {mdns: {ask: 3}}", code: 1, want: "protocols.mdns.ask: 3 is not true or false"},
+		{config: "hostnames: {enabled: true}\nprotocols: {dns: {enabled: true}}", code: 1, want: "the dns protocol is enabled without servers"},
+		{config: "protocols: {llmnr: {enabled: true}}", code: 1, want: "the llmnr protocol is enabled, and it only learns names, which hostnames, off, doesn't keep"},
+		{config: "protocols: {arp-sweep: {max_prefix: 8}}", code: 1, want: "invalid max_prefix of the arp-sweep protocol, 8: it is from 16 to 30"},
+		{config: "plugins: {router: {type: nosuch}}", code: 1, want: `plugins.router.type: no such type of plugin, "nosuch"`},
+		{config: "lifetime: 0", code: 1, want: "they must be positive"},
+		{config: "rediscover: -1s", code: 1, want: "they must be positive"},
+		{config: "ipv4: {lifetime: -1s}", code: 1, want: "invalid family lifetime"},
+		{config: "hostnames: {enabled: true, lifetime: -1s}", code: 1, want: "invalid names' lifetime"},
+		{config: "interfaces: \"[\"", code: 1, want: "invalid interface pattern"},
+		{config: "log_level: loud", code: 1, want: `log_level: "loud" is no level of the log`},
+		// The worker's own check, of a valid configuration that does nothing.
+		{config: "ipv6: {enabled: false}", code: 1, want: "nothing to do"},
 	} {
-		code, stdout, stderr := command(t, nil, strings.Fields(tt.args)...)
+		args := strings.Fields(tt.args)
+		if tt.config != "" {
+			args = append(args, "-config_file", writeConfig(t, tt.config))
+		}
+		code, stdout, stderr := command(t, nil, args...)
 		if code != tt.code || !strings.Contains(stdout+stderr, tt.want) {
-			t.Errorf("ipv6disc %s: exit %d, want %d with %q:\n%s%s", tt.args, code, tt.code, tt.want, stdout, stderr)
+			t.Errorf("ipv6disc %s (%s): exit %d, want %d with %q:\n%s%s", tt.args, tt.config, code, tt.code, tt.want, stdout, stderr)
 		}
 		if tt.code == 2 && !strings.Contains(stderr, "Usage of") {
 			t.Errorf("ipv6disc %s: no usage:\n%s", tt.args, stderr)
+		}
+		// The errors of the file come before anything is logged, in plain words.
+		if tt.config != "" && tt.want != "nothing to do" && (stdout != "" || !strings.HasPrefix(stderr, "ipv6disc: the configuration can't be used:\n")) {
+			t.Errorf("ipv6disc (%s): the error of the file:\n%s%s", tt.config, stdout, stderr)
+		}
+	}
+}
+
+// -version says the version and exits, whatever else is given, and -h the flags and where the
+// configuration file's keys are.
+func TestCommandVersionAndHelp(t *testing.T) {
+	code, stdout, stderr := command(t, nil, "-version", "-config_file", "/no/such/file.yaml")
+	if code != 0 || !strings.HasPrefix(stdout, "ipv6disc ") || strings.TrimSpace(strings.TrimPrefix(stdout, "ipv6disc ")) == "" || stderr != "" {
+		t.Errorf("-version: exit %d:\n%s%s", code, stdout, stderr)
+	}
+	for _, help := range []string{"-h", "-help"} {
+		code, stdout, stderr = command(t, nil, help)
+		if code != 0 || stdout != "" || !strings.Contains(stderr, "-config_file string") || !strings.Contains(stderr, reference) {
+			t.Errorf("%s: exit %d:\n%s%s", help, code, stdout, stderr)
 		}
 	}
 }

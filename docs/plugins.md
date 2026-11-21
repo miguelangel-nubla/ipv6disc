@@ -1,16 +1,23 @@
 # Plugins
 
-A plugin reads the neighbor table of another host, a router usually, every `interval`, and registers its entries, and with `-hostnames` the [names](#names) of its DHCP leases: it finds the hosts of networks the local discovery doesn't reach, as other VLANs, or all of them where the local discovery can't run.
+A plugin reads the neighbor table of another host, a router usually, every `interval`, and registers its entries, and with `hostnames` the [names](#names) of its DHCP leases: it finds the hosts of networks the local discovery doesn't reach, as other VLANs, or all of them where the local discovery can't run.
 
-```
-ipv6disc -plugin "router=linux:interval=60s,address=192.168.1.1,username=root,identity_file=/key,host_key=SHA256:..."
+```yaml
+plugins:
+  router:
+    type: linux
+    interval: 60s
+    address: 192.168.1.1
+    username: root
+    identity_file: /key
+    host_key: SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 ```
 
-`-plugin` can be given several times, for several hosts. The spaces around a param are dropped, so there can be one after each comma, but those of the password, which are its own; the names are case-insensitive. The types, `linux`, `freebsd` and `mikrotik`, their params, and how to write them, are in the [plugins reference](reference/plugins.md).
+Each key of `plugins`, in the [configuration file](reference/configuration.md#plugins), is a plugin by its name, which is the source of what it finds: any number of them, for several hosts. Each has its `type`, `linux`, `freebsd` or `mikrotik`, and the fields of that type, which are in the [plugins reference](reference/plugins.md). A field the type doesn't have, and one of the wrong type, are errors at start. A password is taken as written, its spaces too: in quotes when YAML would read it as something else, as one of digits alone.
 
 ## What they register
 
-The tables of the families on: IPv6 neighbors, and with `-ipv4` the ARP tables too. Only the entries confirmed recently: a router can keep an entry long after its host left, and the addresses of hosts that left must expire. Each address is registered with the plugin's name as its source.
+The tables of the families on: IPv6 neighbors, and with `ipv4` enabled the ARP tables too. Only the entries confirmed recently: a router can keep an entry long after its host left, and the addresses of hosts that left must expire. Each address is registered with the plugin's name as its source.
 
 Only hosts: the multicast groups a Mikrotik router lists among its neighbors are left out. A link-local address comes from the other host with that host's interface as its zone, `fe80::1%em0`: the zone is dropped, never taken for an interface of this machine.
 
@@ -18,7 +25,7 @@ A poll takes 30 seconds at most, connecting included: a host that doesn't answer
 
 ## Names
 
-With `-hostnames`, a plugin also reads the host names of its router's DHCP leases, in the same poll, and registers each as a [name](discovery.md#names) of the lease's MAC, with the plugin's name as its source. A name is the host's whatever the family of the lease: one of a DHCPv4 lease names the host for its IPv6 addresses too. A lease registers no address, only the name.
+With `hostnames` enabled, a plugin also reads the host names of its router's DHCP leases, whatever [protocols](discovery.md#protocols) are, in the same poll, and registers each as a [name](discovery.md#names) of the lease's MAC, with the plugin's name as its source. A name is the host's whatever the family of the lease: one of a DHCPv4 lease names the host for its IPv6 addresses too. A lease registers no address, only the name.
 
 | | |
 |---|---|
@@ -51,9 +58,9 @@ The plugin only reads, so give it a user of its own, with the `read` and `api` p
 /user add name=ipv6disc group=ipv6disc address=192.168.88.10/32 password=...
 ```
 
-The `api` service, or `api-ssl` with `use_tls=true`, must be on, under `/ip/service`. Without `use_tls=true` the password crosses the network in the clear. `use_tls` is `true` or `false`, anything else is an error, and so is a `tls_fingerprint` without `use_tls=true`: it would not be checked.
+The `api` service, or `api-ssl` with `use_tls: true`, must be on, under `/ip/service`. Without `use_tls: true` the password crosses the network in the clear. `use_tls` is `true` or `false`, anything else is an error, and so is a `tls_fingerprint` without `use_tls: true`: it would not be checked.
 
-With `use_tls=true` alone, the router's certificate is verified with the system's CAs, for the name or address in `address`. The certificate RouterOS makes for itself is self-signed, and the Docker image has no CAs at all: there, give its `tls_fingerprint`, which is then all that is checked:
+With `use_tls: true` alone, the router's certificate is verified with the system's CAs, for the name or address in `address`. The certificate RouterOS makes for itself is self-signed, and the Docker image has no CAs at all: there, give its `tls_fingerprint`, which is then all that is checked:
 
 ```
 openssl s_client -connect 192.168.88.1:8729 </dev/null 2>/dev/null | openssl x509 -noout -fingerprint -sha256
@@ -63,6 +70,6 @@ In the image, a certificate of a public CA is verified with the host's CAs mount
 
 ## Writing one
 
-A plugin implements `ipv6disc.Plugin`, and registers its type in `init` with `plugins.Register`, its params with their descriptions: the flags take them, the [reference](reference/plugins.md) is made of them, and `plugins.FieldParams` builds the params of programs that have them as fields. The plugins of [`pkg/plugins`](../pkg/plugins) are the examples. `plugins.Describe` only gives a type its description: it is `plugins.Register` that makes it one.
+A plugin implements `ipv6disc.Plugin`, and registers its type in `init` with `plugins.Register`, its params as fields, each with its description and, when it is no string, its type: the configuration file takes them, the [reference](reference/plugins.md) is made of them, and `plugins.FieldParams` builds the params of programs that have them as fields. The [schema](../pkg/config/schema.json) of the configuration lists the fields of each type too: a test fails when it is behind the plugins. The plugins of [`pkg/plugins`](../pkg/plugins) are the examples. `plugins.Describe` only gives a type its description: it is `plugins.Register` that makes it one.
 
 `plugins.Poller` runs the polls and keeps their stats: its `Run` needs a positive interval, and returns an error otherwise, as `Start` of the plugins here does for a config built by hand without one.

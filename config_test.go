@@ -148,7 +148,7 @@ func TestConfigDefaults(t *testing.T) {
 	probing := Family{Enabled: true, Listen: true, Active: true}
 	ipv4 := probing
 	ipv4.Lifetime = 3 * time.Minute
-	c := Config{Lifetime: time.Hour, IPv6: probing, IPv4: ipv4}.withDefaults()
+	c := Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, IPv6: probing, IPv4: ipv4}.withDefaults()
 	if c.IPv6.Lifetime != time.Hour || c.IPv4.Lifetime != 3*time.Minute {
 		t.Errorf("family lifetimes: %s, %s", c.IPv6.Lifetime, c.IPv4.Lifetime)
 	}
@@ -158,13 +158,13 @@ func TestConfigDefaults(t *testing.T) {
 	}
 	// Of the families that don't probe, off or listening only, none counts.
 	for _, ipv4 := range []Family{{Lifetime: time.Minute}, {Enabled: true, Listen: true, Lifetime: time.Minute}} {
-		c = Config{Lifetime: time.Hour, IPv6: probing, IPv4: ipv4}.withDefaults()
+		c = Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, IPv6: probing, IPv4: ipv4}.withDefaults()
 		if c.Rediscover != 20*time.Minute {
 			t.Errorf("rediscover, IPv4 %+v: %s", ipv4, c.Rediscover)
 		}
 	}
 	// Given, it stays.
-	if c := (Config{Lifetime: time.Hour, Rediscover: time.Second}).withDefaults(); c.Rediscover != time.Second {
+	if c := (Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, Rediscover: time.Second}).withDefaults(); c.Rediscover != time.Second {
 		t.Errorf("rediscover given: %s", c.Rediscover)
 	}
 }
@@ -192,10 +192,10 @@ func TestSelfRefreshIsWithinTheLifetime(t *testing.T) {
 	}{
 		{"the default", DefaultConfig(), 80 * time.Minute},
 		// Listening only, the rediscovery interval comes from the global lifetime.
-		{"a short IPv6 lifetime, listening only", Config{Lifetime: 4 * time.Hour, IPv6: Family{Enabled: true, Listen: true, Lifetime: 10 * time.Minute}}, 10 * time.Minute / 3},
-		{"a rediscovery interval longer than the lifetime", Config{Lifetime: time.Hour, Rediscover: 80 * time.Minute, IPv6: Family{Enabled: true, Listen: true, Active: true}}, 20 * time.Minute},
-		{"a short rediscovery interval", Config{Lifetime: time.Hour, Rediscover: time.Minute, IPv6: Family{Enabled: true, Listen: true, Active: true}}, time.Minute},
-		{"a lifetime of a second", Config{Lifetime: time.Second, IPv6: Family{Enabled: true, Listen: true}}, time.Second},
+		{"a short IPv6 lifetime, listening only", Config{Protocols: DefaultProtocols(), Lifetime: 4 * time.Hour, IPv6: Family{Enabled: true, Listen: true, Lifetime: 10 * time.Minute}}, 10 * time.Minute / 3},
+		{"a rediscovery interval longer than the lifetime", Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, Rediscover: 80 * time.Minute, IPv6: Family{Enabled: true, Listen: true, Active: true}}, 20 * time.Minute},
+		{"a short rediscovery interval", Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, Rediscover: time.Minute, IPv6: Family{Enabled: true, Listen: true, Active: true}}, time.Minute},
+		{"a lifetime of a second", Config{Protocols: DefaultProtocols(), Lifetime: time.Second, IPv6: Family{Enabled: true, Listen: true}}, time.Second},
 	} {
 		c := tt.c.withDefaults()
 		if err := c.validate(); err != nil {
@@ -216,12 +216,12 @@ func TestConfigWarnings(t *testing.T) {
 		want int
 	}{
 		{"the default", DefaultConfig(), 0},
-		{"rediscovering less often than the lifetime", Config{Lifetime: time.Hour, Rediscover: 80 * time.Minute, IPv6: probing}, 1},
-		{"the same, of both families", Config{Lifetime: time.Hour, Rediscover: time.Hour, IPv6: probing, IPv4: probing}, 2},
-		{"the same, listening only: nothing is probed", Config{Lifetime: time.Hour, Rediscover: 80 * time.Minute, IPv6: Family{Enabled: true, Listen: true}}, 0},
-		{"an IPv4 lifetime of the interval of the table", Config{Lifetime: time.Hour, IPv6: probing, IPv4: Family{Enabled: true, Listen: true, Lifetime: time.Minute}}, 1},
-		{"the same, IPv4 not listening", Config{Lifetime: time.Hour, IPv6: probing, IPv4: Family{Enabled: true, Lifetime: time.Minute}}, 0},
-		{"an IPv4 lifetime of two minutes", Config{Lifetime: time.Hour, IPv6: probing, IPv4: Family{Enabled: true, Listen: true, Lifetime: 2 * time.Minute}}, 0},
+		{"rediscovering less often than the lifetime", Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, Rediscover: 80 * time.Minute, IPv6: probing}, 1},
+		{"the same, of both families", Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, Rediscover: time.Hour, IPv6: probing, IPv4: probing}, 2},
+		{"the same, listening only: nothing is probed", Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, Rediscover: 80 * time.Minute, IPv6: Family{Enabled: true, Listen: true}}, 0},
+		{"an IPv4 lifetime of the interval of the table", Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, IPv6: probing, IPv4: Family{Enabled: true, Listen: true, Lifetime: time.Minute}}, 1},
+		{"the same, IPv4 not listening", Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, IPv6: probing, IPv4: Family{Enabled: true, Lifetime: time.Minute}}, 0},
+		{"an IPv4 lifetime of two minutes", Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, IPv6: probing, IPv4: Family{Enabled: true, Listen: true, Lifetime: 2 * time.Minute}}, 0},
 	} {
 		c := tt.c.withDefaults()
 		if err := c.validate(); err != nil {
@@ -242,7 +242,7 @@ func TestIPv4SelfAddressesWithoutANeighborTable(t *testing.T) {
 		return nil, fmt.Errorf("reading the neighbor table: %w", errors.ErrUnsupported)
 	}
 
-	w := NewWorker(zap.NewNop().Sugar(), Config{Lifetime: time.Hour, IPv4: Family{Enabled: true, Listen: true, Active: true}})
+	w := NewWorker(zap.NewNop().Sugar(), Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, IPv4: Family{Enabled: true, Listen: true, Active: true}})
 	mac, _ := net.ParseMAC("00:1a:2b:3c:4d:13")
 	interfaces := map[string]ipv4Interface{"eth0": {
 		iface:    net.Interface{Index: 2, Name: "eth0", HardwareAddr: mac},
@@ -274,7 +274,7 @@ func TestIPv4SelfAddressesWithoutANeighborTable(t *testing.T) {
 // An IPv4 address an interface no longer has leaves the state when the interfaces are next read,
 // not a lifetime later: unless they couldn't all be read, when what is missing isn't known gone.
 func TestIPv4SelfAddressesGone(t *testing.T) {
-	w := NewWorker(zap.NewNop().Sugar(), Config{Lifetime: time.Hour, IPv4: Family{Enabled: true, Listen: true}})
+	w := NewWorker(zap.NewNop().Sugar(), Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, IPv4: Family{Enabled: true, Listen: true}})
 	defer w.State.Close()
 	mac, _ := net.ParseMAC("00:1a:2b:3c:4d:1f")
 	eth0 := func(prefixes ...string) map[string]ipv4Interface {
@@ -318,7 +318,7 @@ func TestAddressTakesTheLatestLifetime(t *testing.T) {
 
 // A plugin named as a local interface doesn't make its hosts seen on that interface.
 func TestInterfacesOfAMACAreLocalOnly(t *testing.T) {
-	w := NewWorker(zap.NewNop().Sugar(), Config{Lifetime: time.Hour, IPv4: Family{Enabled: true}})
+	w := NewWorker(zap.NewNop().Sugar(), Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, IPv4: Family{Enabled: true}})
 	mac, _ := net.ParseMAC("00:1a:2b:3c:4d:0c")
 	other, _ := net.ParseMAC("00:1a:2b:3c:4d:0d")
 	interfaces := map[string]ipv4Interface{"eth0": {}, "eth1": {}}
@@ -439,7 +439,7 @@ func TestSelfAddresses(t *testing.T) {
 // was seen, as a host heard over IPv6 on one interface and with its IPv4 address on another, two
 // networks of one wire; without, only where it was seen.
 func TestIPv4ProbesFollowThePrefixes(t *testing.T) {
-	w := NewWorker(zap.NewNop().Sugar(), Config{Lifetime: time.Hour, IPv6: Family{Enabled: true}, IPv4: Family{Enabled: true}})
+	w := NewWorker(zap.NewNop().Sugar(), Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, IPv6: Family{Enabled: true}, IPv4: Family{Enabled: true}})
 	mac, _ := net.ParseMAC("00:1a:2b:3c:4d:0f")
 	interfaces := map[string]ipv4Interface{
 		"eth0": {prefixes: []netip.Prefix{netip.MustParsePrefix("10.2.3.75/24")}},  // lan-ipv4
@@ -506,7 +506,7 @@ func TestReadIPv4TableConfirmed(t *testing.T) {
 	}
 
 	for _, lifetime := range []time.Duration{6 * time.Second, time.Hour} {
-		w := NewWorker(zap.NewNop().Sugar(), Config{Lifetime: lifetime, IPv4: Family{Enabled: true, Listen: true, Active: true}})
+		w := NewWorker(zap.NewNop().Sugar(), Config{Protocols: DefaultProtocols(), Lifetime: lifetime, IPv4: Family{Enabled: true, Listen: true, Active: true}})
 		if err := w.readIPv4Table(interfaces, swept); err != nil {
 			t.Fatal(err)
 		}
@@ -523,7 +523,7 @@ func TestReadIPv4TableConfirmed(t *testing.T) {
 		}
 	}
 
-	w := NewWorker(zap.NewNop().Sugar(), Config{Lifetime: time.Hour, IPv4: Family{Enabled: true, Listen: true}})
+	w := NewWorker(zap.NewNop().Sugar(), Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, IPv4: Family{Enabled: true, Listen: true}})
 	if err := w.readIPv4Table(interfaces, time.Time{}); err != nil {
 		t.Fatal(err)
 	}

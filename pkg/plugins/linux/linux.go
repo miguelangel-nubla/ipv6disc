@@ -14,7 +14,7 @@ import (
 )
 
 func init() {
-	plugins.Describe("linux", "A Linux host, as OpenWrt, over SSH: `ip neigh`, and with `-hostnames` the names of the DHCP leases of dnsmasq and odhcpd.")
+	plugins.Describe("linux", "A Linux host, as OpenWrt, over SSH: `ip neigh`, and with `hostnames` the names of the DHCP leases of dnsmasq and odhcpd.")
 	plugins.Register("linux", func(name string, config string, lifetime time.Duration) (ipv6disc.Plugin, error) {
 		cfg, err := ParseConfig(config)
 		if err != nil {

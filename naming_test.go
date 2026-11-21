@@ -69,7 +69,7 @@ func newTestNamer(t *testing.T) *testNamer {
 	t.Cleanup(state.Close)
 	state.SetFamilies(true, true)
 	state.SetNames(true, 0)
-	config := Config{Lifetime: time.Hour, Rediscover: 10 * time.Minute, Hostnames: Hostnames{Enabled: true}}.withDefaults()
+	config := Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, Rediscover: 10 * time.Minute, Hostnames: Hostnames{Enabled: true}}.withDefaults()
 	n := &testNamer{namer: newNamer(state, zap.NewNop().Sugar(), config), clock: time.Now(), listening: true,
 		asker: &fakeAsker{nets: []netip.Prefix{netip.MustParsePrefix("192.168.1.0/24"), netip.MustParsePrefix("2001:db8::/64"), netip.MustParsePrefix("fe80::/10")}}}
 	n.now = func() time.Time { return n.clock }
@@ -455,7 +455,7 @@ func TestWorkerNaming(t *testing.T) {
 	arpTable = func() ([]arp.Neighbor, error) { return nil, nil }
 	before := runtime.NumGoroutine()
 
-	config := Config{Lifetime: time.Hour, IPv6: Family{Enabled: true, Listen: true, Active: true}, IPv4: Family{Enabled: true, Listen: true},
+	config := Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, IPv6: Family{Enabled: true, Listen: true, Active: true}, IPv4: Family{Enabled: true, Listen: true},
 		Interfaces: []string{"no-such-interface"}}
 	run := func(config Config) (*Worker, int) {
 		w := NewWorker(zap.NewNop().Sugar(), config)
@@ -480,10 +480,22 @@ func TestWorkerNaming(t *testing.T) {
 	if off.State.Names() || off.naming.discover != nil {
 		t.Error("the naming layer runs without names asked for")
 	}
+	// Names kept, and nothing that learns them: the plugins' alone, and no layer.
 	config.Hostnames.Enabled = true
+	kept, keeping := run(config)
+	if !kept.State.Names() || kept.naming.discover != nil || keeping != without {
+		t.Errorf("%d goroutines with names kept and no protocol of them, %d without", keeping, without)
+	}
+	config.Protocols.MDNS = MDNSProtocol{Enabled: true, Ask: true}
 	on, with := run(config)
 	if !on.State.Names() || with != without+2 {
-		t.Errorf("%d goroutines with names, %d without: want the two of the naming layer more", with, without)
+		t.Errorf("%d goroutines with mDNS, %d without: want the two of the naming layer more", with, without)
+	}
+	// And mDNS without names kept: it finds hosts, by the same layer, which asks nothing.
+	config.Hostnames.Enabled = false
+	finding, found := run(config)
+	if finding.State.Names() || finding.naming.discover == nil || finding.naming.names || found != with {
+		t.Errorf("%d goroutines with mDNS and no names, %d with names", found, with)
 	}
 	// The subscription of the naming layer is gone with it.
 	on.State.subscribersMutex.Lock()
@@ -516,12 +528,17 @@ func TestWorkerNaming(t *testing.T) {
 // one not longer than the rediscovery interval is warned of, when the local discovery asks.
 func TestConfigHostnames(t *testing.T) {
 	config := DefaultConfig()
-	if config.Hostnames.Enabled || config.namesLocally() {
+	if config.Hostnames.Enabled || config.namesLocally() || config.naming() {
 		t.Error("names on by default")
 	}
+	// Names kept: no protocol learns them until one is enabled.
 	config.Hostnames.Enabled = true
-	if got := config.withDefaults(); got.Hostnames.Lifetime != config.Lifetime || !got.namesLocally() || len(got.warnings()) != 0 {
+	if got := config.withDefaults(); got.Hostnames.Lifetime != config.Lifetime || got.namesLocally() || got.asksNames() || len(got.warnings()) != 0 {
 		t.Errorf("defaults: %+v, warnings %v", got.Hostnames, got.warnings())
+	}
+	config.Protocols.MDNS.Enabled = true
+	if got := config.withDefaults(); !got.namesLocally() || !got.asksNames() || len(got.warnings()) != 0 {
+		t.Errorf("with mDNS: names locally %v, asked %v, warnings %v", got.namesLocally(), got.asksNames(), got.warnings())
 	}
 	config.Hostnames.Lifetime = 30 * time.Minute
 	if got := config.withDefaults(); got.Hostnames.Lifetime != 30*time.Minute || got.Rediscover != config.Lifetime/3 {
@@ -529,6 +546,12 @@ func TestConfigHostnames(t *testing.T) {
 	}
 	if warnings := config.withDefaults().warnings(); len(warnings) != 1 || !strings.Contains(warnings[0], "names' lifetime, 30m0s") {
 		t.Errorf("a names' lifetime shorter than the rediscovery interval: %v", warnings)
+	}
+	// mDNS that only listens asks nobody: nothing to warn of.
+	listening := config
+	listening.Protocols.MDNS.Ask = false
+	if warnings := listening.withDefaults().warnings(); len(warnings) != 0 || !listening.namesLocally() || listening.asksNames() {
+		t.Errorf("mDNS that only listens: %v", warnings)
 	}
 	// Only the plugins read names: nothing asks, so nothing to warn of.
 	plugins := config
@@ -542,7 +565,7 @@ func TestConfigHostnames(t *testing.T) {
 	}
 
 	// The worker gives the state the names' own lifetime, as given: without, each registration's.
-	w := NewWorker(zap.NewNop().Sugar(), Config{Lifetime: time.Hour, IPv6: Family{Enabled: true}, Hostnames: Hostnames{Enabled: true}})
+	w := NewWorker(zap.NewNop().Sugar(), Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, IPv6: Family{Enabled: true}, Hostnames: Hostnames{Enabled: true}})
 	defer w.State.Close()
 	w.State.RegisterName(namedMAC, "printer", "router", time.Minute)
 	if names := w.State.NamesOf(namedMAC); len(names) != 1 || time.Until(names[0].Expiration) > time.Minute {
@@ -583,8 +606,8 @@ func TestDiscoveryPageNamesBounds(t *testing.T) {
 			t.Errorf("docs/discovery.md doesn't have %q as the protocol %d to ask: the code has %s", order[i], i+1, nameOrder[i])
 		}
 	}
-	// And every protocol is in its table, with its source.
-	for _, protocol := range NameProtocols() {
+	// And every protocol that tells names is in its table, with its source.
+	for _, protocol := range []string{NameMDNS, NameDNS, NameNetBIOS, NameLLMNR, NameWSD, NameSSDP, NameDHCP, NameLLDP} {
 		if !strings.Contains(string(page), "| `"+protocol+"` |") {
 			t.Errorf("docs/discovery.md has no row of the source %q", protocol)
 		}
@@ -603,7 +626,7 @@ func TestNamingManyHosts(t *testing.T) {
 	state := NewState()
 	state.SetFamilies(true, true)
 	state.SetNames(true, 0)
-	config := Config{Lifetime: time.Hour, Rediscover: 20 * time.Millisecond, Hostnames: Hostnames{Enabled: true, Lifetime: 60 * time.Millisecond}}.withDefaults()
+	config := Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, Rediscover: 20 * time.Millisecond, Hostnames: Hostnames{Enabled: true, Lifetime: 60 * time.Millisecond}}.withDefaults()
 	n := newNamer(state, zap.NewNop().Sugar(), config)
 	asker := &fakeAsker{nets: []netip.Prefix{netip.MustParsePrefix("192.168.0.0/16"), netip.MustParsePrefix("fe80::/10")}}
 	n.askers = func(iface string) []*NameProtocol {

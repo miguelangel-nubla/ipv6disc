@@ -5,10 +5,9 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"net/netip"
 	"os"
 	"os/signal"
-	"strings"
+	"runtime/debug"
 	"syscall"
 	"time"
 
@@ -16,104 +15,22 @@ import (
 	"go.uber.org/zap/zapcore"
 
 	"github.com/miguelangel-nubla/ipv6disc"
-	"github.com/miguelangel-nubla/ipv6disc/pkg/plugins"
-	_ "github.com/miguelangel-nubla/ipv6disc/pkg/plugins/all"
+	"github.com/miguelangel-nubla/ipv6disc/pkg/config"
 	"github.com/miguelangel-nubla/ipv6disc/pkg/terminal"
 )
 
+// The flags: the rest is the configuration file's.
 var (
-	logLevel   string
-	lifetime   time.Duration
-	rediscover time.Duration
-	live       bool
-
-	ipv6, ipv6Listen, ipv6Active bool
-	ipv4, ipv4Listen, ipv4Active bool
-
-	ipv6Lifetime, ipv4Lifetime    time.Duration
-	hostnames                     bool
-	hostnamesLifetime             time.Duration
-	hostnamesProtocols            listFlag
-	hostnamesDNS                  serversFlag
-	interfaces, excludeInterfaces listFlag
-
-	pluginsFlags pluginsFlag
+	configFile  string
+	live        bool
+	showVersion bool
 )
 
-// listFlag is a comma separated list, which the flag can also be given several times for.
-type listFlag []string
+// version is the release's, which its build sets: without, the module's, when it is known.
+var version string
 
-func (l *listFlag) String() string { return strings.Join(*l, ",") }
-
-func (l *listFlag) Set(value string) error {
-	for _, v := range strings.Split(value, ",") {
-		if v = strings.TrimSpace(v); v != "" {
-			*l = append(*l, v)
-		}
-	}
-	return nil
-}
-
-// serversFlag is a comma separated list of DNS servers, each an address, alone or with its port.
-type serversFlag []netip.AddrPort
-
-func (l *serversFlag) String() string {
-	servers := make([]string, len(*l))
-	for i, server := range *l {
-		servers[i] = server.String()
-	}
-	return strings.Join(servers, ",")
-}
-
-func (l *serversFlag) Set(value string) error {
-	for _, v := range strings.Split(value, ",") {
-		if v = strings.TrimSpace(v); v != "" {
-			server, err := ipv6disc.ParseNameServer(v)
-			if err != nil {
-				return err
-			}
-			*l = append(*l, server)
-		}
-	}
-	return nil
-}
-
-type pluginsFlag []struct {
-	Name   string
-	Type   string
-	Params string
-}
-
-func (p *pluginsFlag) String() string {
-	return fmt.Sprint(*p)
-}
-
-func (p *pluginsFlag) Set(value string) error {
-	var name string
-	idx := strings.Index(value, "=")
-	if idx == -1 {
-		return fmt.Errorf("invalid plugin format, expected: name=type:params")
-	}
-
-	name = value[:idx]
-	value = value[idx+1:]
-
-	if name == "" {
-		return fmt.Errorf("plugin name cannot be empty")
-	}
-
-	parts := strings.SplitN(value, ":", 2)
-	if len(parts) < 2 {
-		return fmt.Errorf("invalid plugin format, expected: name=type:params")
-	}
-
-	*p = append(*p, struct {
-		Name   string
-		Type   string
-		Params string
-	}{name, parts[0], parts[1]})
-	return nil
-}
+// reference is where every key of the configuration file is told.
+const reference = "https://github.com/miguelangel-nubla/ipv6disc/blob/main/docs/reference/configuration.md"
 
 func init() {
 	defineFlags()
@@ -122,107 +39,39 @@ func init() {
 // defineFlags defines the flags on flag.CommandLine, each with its default: the tests define them
 // again on a new one, as a flag set can't forget what it was given.
 func defineFlags() {
-	interfaces, excludeInterfaces, pluginsFlags = nil, nil, nil
-	hostnamesProtocols, hostnamesDNS = nil, nil
-	flag.StringVar(&logLevel, "log_level", "info", "The logging level: debug, info, warn, error")
-	flag.DurationVar(&lifetime, "lifetime", 4*time.Hour, "How long an address stays after it was last seen")
-	flag.DurationVar(&rediscover, "rediscover", 0, "How often the active discovery probes every host. Without it: a third of the shortest lifetime of the families that probe")
+	flag.StringVar(&configFile, "config_file", "", "The configuration file, YAML: the families, the protocols, the names and the plugins. Without it no file is read, and the defaults discover IPv6")
 	flag.BoolVar(&live, "live", false, "Show the state in the terminal, updating, instead of the log")
-
-	flag.BoolVar(&ipv6, "ipv6", true, "Discover IPv6 addresses")
-	flag.BoolVar(&ipv6Listen, "ipv6_listen", true, "IPv6: listen for NDP and the discovery protocols on the interfaces")
-	flag.BoolVar(&ipv6Active, "ipv6_active", true, "IPv6: probe the links, by multicast ping, SSDP and WS-Discovery")
-	flag.DurationVar(&ipv6Lifetime, "ipv6_lifetime", 0, "IPv6: how long an address stays after it was last seen, in place of -lifetime")
-	flag.BoolVar(&ipv4, "ipv4", false, "Discover IPv4 addresses: the plugins read their routers' ARP tables too")
-	flag.BoolVar(&ipv4Listen, "ipv4_listen", true, "IPv4: read the kernel's neighbor table, and on Linux hear the ARP the hosts send")
-	flag.BoolVar(&ipv4Active, "ipv4_active", true, "IPv4: sweep the local subnets, which broadcasts an ARP request for each address")
-	flag.DurationVar(&ipv4Lifetime, "ipv4_lifetime", 0, "IPv4: how long an address stays after it was last seen, in place of -lifetime")
-	flag.BoolVar(&hostnames, "hostnames", false, "Learn the names of the hosts: listen for mDNS, DHCP and LLDP, ask each host its name, by mDNS, NetBIOS and LLMNR, and the computers and devices that answer WS-Discovery and SSDP theirs, where the families listen, and the plugins read the names of their routers' DHCP leases")
-	flag.Var(&hostnamesProtocols, "hostnames_protocols", "The names only by these protocols of the local discovery, comma separated: "+strings.Join(ipv6disc.NameProtocols(), ", ")+". Without it: all")
-	flag.Var(&hostnamesDNS, "hostnames_dns", "DNS servers to ask the name of each address, its PTR record, comma separated, as the router's: 192.168.1.1, or with a port, 192.168.1.1:5353, [fd00::1]:53. Without it: none. Never the system's resolver")
-	flag.DurationVar(&hostnamesLifetime, "hostnames_lifetime", 0, "How long a name stays after it was last said, in place of -lifetime")
-	flag.Var(&interfaces, "interfaces", "The local discovery only on these interfaces, comma separated: names, or patterns as en*. Without it: all")
-	flag.Var(&excludeInterfaces, "exclude_interfaces", "No local discovery on these interfaces, comma separated: names, or patterns as docker*,veth*")
-
-	flag.Var(&pluginsFlags, "plugin", "A plugin, name=type:params, as docs/reference/plugins.md says. Given several times, several plugins")
-
-	// The names from before, as the flags they became. Those from before the families set both.
-	for old, current := range deprecatedFlags {
-		var value flag.Value = flag.Lookup(current).Value
-		if old == "discovery-listen" || old == "discovery-active" {
-			ipv4Flag := strings.Replace(current, "ipv6", "ipv4", 1)
-			value = bothValues{value, flag.Lookup(ipv4Flag).Value}
-		}
-		flag.Var(value, old, "Deprecated: -"+current)
-	}
+	flag.BoolVar(&showVersion, "version", false, "Show the version, and exit")
 	flag.Usage = usage
 }
 
-// deprecatedFlags are the names flags had, and the flags they are now.
-var deprecatedFlags = map[string]string{
-	// These set the IPv4 ones too, as they did.
-	"discovery-listen":   "ipv6_listen",
-	"discovery-active":   "ipv6_active",
-	"ipv6-listen":        "ipv6_listen",
-	"ipv6-active":        "ipv6_active",
-	"ipv6-lifetime":      "ipv6_lifetime",
-	"ipv4-listen":        "ipv4_listen",
-	"ipv4-active":        "ipv4_active",
-	"ipv4-lifetime":      "ipv4_lifetime",
-	"exclude-interfaces": "exclude_interfaces",
-}
-
-// bothValues sets two flags at once.
-type bothValues [2]flag.Value
-
-func (b bothValues) String() string { return b[0].String() }
-func (b bothValues) Set(v string) error {
-	if err := b[0].Set(v); err != nil {
-		return err
-	}
-	return b[1].Set(v)
-}
-
-// IsBoolFlag lets it be given without a value, as the flags it sets.
-func (b bothValues) IsBoolFlag() bool { return true }
-
-// usage lists the flags, as flag does, without the deprecated names.
+// usage lists the flags, as flag does, and tells where the rest is.
 func usage() {
-	listed := flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
-	listed.SetOutput(flag.CommandLine.Output())
-	flag.VisitAll(func(f *flag.Flag) {
-		if _, deprecated := deprecatedFlags[f.Name]; !deprecated {
-			listed.Var(f.Value, f.Name, f.Usage)
-			// The default, rather than the value given: usage can come after a parse error.
-			listed.Lookup(f.Name).DefValue = f.DefValue
-		}
-	})
-	fmt.Fprintf(listed.Output(), "Usage of %s:\n", os.Args[0])
-	listed.PrintDefaults()
-}
-
-// deprecatedFlagsGiven tells what to use in place of the deprecated names given.
-func deprecatedFlagsGiven() []string {
-	var warnings []string
-	flag.Visit(func(f *flag.Flag) {
-		if current, ok := deprecatedFlags[f.Name]; ok {
-			if f.Name == "discovery-listen" || f.Name == "discovery-active" {
-				current += " and -" + strings.Replace(current, "ipv6", "ipv4", 1)
-			}
-			warnings = append(warnings, fmt.Sprintf("-%s is deprecated: it is -%s", f.Name, current))
-		}
-	})
-	return warnings
+	fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n", os.Args[0])
+	flag.PrintDefaults()
+	fmt.Fprintf(flag.CommandLine.Output(), "\nEverything else is in the configuration file, whose keys are at:\n  %s\n", reference)
 }
 
 // unexpectedArgs is the error of the words left after the flags. There are none to give: flag
-// stops at the first, so that the flags after it would be left out without a word, as -ipv4 and
-// -plugin after "-ipv6 false".
+// stops at the first, so that the flags after it would be left out without a word, as -live after
+// "-version false".
 func unexpectedArgs(args []string) error {
 	if len(args) == 0 {
 		return nil
 	}
 	return fmt.Errorf("unexpected argument %q: the flags take no separate words, and a boolean one is turned off as -name=false", args[0])
+}
+
+// versionString is the version of the command: the release's, or the module's as the build has
+// it, of one made by go install.
+func versionString() string {
+	if version != "" {
+		return version
+	}
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" {
+		return info.Main.Version
+	}
+	return "(devel)"
 }
 
 func main() {
@@ -232,33 +81,36 @@ func main() {
 		flag.Usage()
 		os.Exit(2)
 	}
+	if showVersion {
+		fmt.Println("ipv6disc", versionString())
+		return
+	}
 
 	startUpdater()
 }
 
 func startUpdater() {
-	sugar := initializeLogger()
-	for _, warning := range deprecatedFlagsGiven() {
-		sugar.Warn(warning)
-	}
-
-	worker := ipv6disc.NewWorker(sugar, ipv6disc.Config{
-		Lifetime:   lifetime,
-		Rediscover: rediscover,
-		IPv6:       ipv6disc.Family{Enabled: ipv6, Listen: ipv6Listen, Active: ipv6Active, Lifetime: ipv6Lifetime},
-		IPv4:       ipv6disc.Family{Enabled: ipv4, Listen: ipv4Listen, Active: ipv4Active, Lifetime: ipv4Lifetime},
-		Hostnames:  ipv6disc.Hostnames{Enabled: hostnames, Lifetime: hostnamesLifetime, Protocols: hostnamesProtocols, DNS: hostnamesDNS},
-
-		Interfaces:        interfaces,
-		ExcludeInterfaces: excludeInterfaces,
-	})
-
-	// The plugins get -lifetime: a family's own, when given, is the state's to put in its place.
-	for _, pCfg := range pluginsFlags {
-		p, err := plugins.Create(pCfg.Type, pCfg.Name, pCfg.Params, lifetime)
-		if err != nil {
-			sugar.Fatalf("can't create plugin %s: %s", pCfg.Type, err)
+	// Without a file, the defaults: IPv6, by the protocols that find hosts.
+	file := config.Default()
+	if configFile != "" {
+		var err error
+		if file, err = config.Load(configFile); err != nil {
+			// Not by the logger, whose level the file says.
+			fmt.Fprintf(os.Stderr, "ipv6disc: the configuration can't be used:\n%s\n", err)
+			os.Exit(1)
 		}
+	}
+	sugar := initializeLogger(file.LogLevel)
+
+	worker := ipv6disc.NewWorker(sugar, file.Config())
+
+	// The plugins get the lifetime of all: a family's own, when given, is the state's to put in
+	// its place.
+	plugins, err := file.NewPlugins()
+	if err != nil {
+		sugar.Fatalf("can't create the plugins: %s", err)
+	}
+	for _, p := range plugins {
 		worker.RegisterPlugin(p)
 	}
 
@@ -276,8 +128,7 @@ func startUpdater() {
 		}
 	}
 
-	err := worker.Start(ctx)
-	if err != nil {
+	if err := worker.Start(ctx); err != nil {
 		if live {
 			terminal.Close()
 		}
@@ -316,10 +167,10 @@ func startUpdater() {
 	worker.State.Close()
 }
 
-func initializeLogger() *zap.SugaredLogger {
-	zapLevel, err := getLogLevel(logLevel)
+func initializeLogger(level string) *zap.SugaredLogger {
+	zapLevel, err := getLogLevel(level)
 	if err != nil {
-		log.Fatalf("invalid log level: %s", logLevel)
+		log.Fatalf("invalid log level: %s", level)
 	}
 
 	if live {

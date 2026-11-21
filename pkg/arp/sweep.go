@@ -7,20 +7,29 @@ import (
 	"time"
 )
 
-// MaxSweepBits bounds a sweep: a subnet larger than a /22, 1022 addresses, is swept in the /24
-// of the address.
-const MaxSweepBits = 10
+// DefaultSweepPrefix bounds a sweep, unless it is told: a subnet larger than a /22, 1022
+// addresses, is swept in the /24 of the address. MaxSweepBits is the same, in bits of host.
+const (
+	DefaultSweepPrefix = 22
+	MaxSweepBits       = 32 - DefaultSweepPrefix
+)
 
 // SweepTargets returns the addresses a sweep from local, on its subnet, sends to: every one but
 // the network's, the broadcast and local's own. A subnet larger than a /22 is swept in the /24 of
 // local only.
 func SweepTargets(local netip.Prefix) []netip.Addr {
+	return SweepTargetsWithin(local, DefaultSweepPrefix)
+}
+
+// SweepTargetsWithin is SweepTargets with another bound than a /22: a subnet larger than a
+// /maxPrefix is swept in the /24 of local only, or in its /maxPrefix when that is smaller.
+func SweepTargetsWithin(local netip.Prefix, maxPrefix int) []netip.Addr {
 	if !local.Addr().Is4() {
 		return nil
 	}
 	prefix := local.Masked()
-	if 32-prefix.Bits() > MaxSweepBits {
-		prefix = netip.PrefixFrom(local.Addr(), 24).Masked()
+	if prefix.Bits() < maxPrefix {
+		prefix = netip.PrefixFrom(local.Addr(), max(24, min(maxPrefix, 32))).Masked()
 	}
 	first, last := prefix.Addr(), lastAddr(prefix)
 	// A /31 is two hosts, a /32 none but itself.

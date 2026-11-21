@@ -481,11 +481,11 @@ func twoOnOneHost(t *testing.T, startFirst, startSecond func(*testing.T, Config)
 	every := Family{Enabled: true, Listen: true, Active: true}
 	// The second sweeps, and so the machine's neighbor table has the peer's IPv4 address, just
 	// confirmed, when the first starts: one that listened for IPv4 would read it there at once.
-	second := startSecond(t, Config{Lifetime: 9 * time.Second, Rediscover: 3 * time.Second,
+	second := startSecond(t, Config{Protocols: DefaultProtocols(), Lifetime: 9 * time.Second, Rediscover: 3 * time.Second,
 		IPv6: every, IPv4: Family{Enabled: true, Listen: true, Active: true, Lifetime: 2 * time.Minute}})
 	waitFor(t, 30*time.Second, "the peer's IPv4 address, by the second", func() bool { return second.report().has(peerMAC, peerIPv4) })
 	// The first takes IPv4 addresses, but only those it solicits, and leaves lan2 out.
-	first := startFirst(t, Config{Lifetime: 6 * time.Second, Rediscover: 2 * time.Second,
+	first := startFirst(t, Config{Protocols: DefaultProtocols(), Lifetime: 6 * time.Second, Rediscover: 2 * time.Second,
 		IPv6: every, IPv4: Family{Enabled: true}, ExcludeInterfaces: []string{"lan2"}})
 	instances := []struct {
 		name string
@@ -642,9 +642,10 @@ func TestLiveTwoCommands(t *testing.T) {
 	}
 	workerMAC := iface.HardwareAddr.String()
 
-	// One of IPv6 alone, on every interface; one of both families, without lan2.
-	first := startCommand(t, binary, "-lifetime=6s", "-rediscover=2s")
-	second := startCommand(t, binary, "-ipv4", "-ipv4_lifetime=2m", "-lifetime=9s", "-rediscover=3s", "-exclude_interfaces=lan2")
+	// One of IPv6 alone, on every interface; one of both families, without lan2: each by its
+	// configuration file.
+	first := startCommand(t, binary, "lifetime: 6s\nrediscover: 2s\n")
+	second := startCommand(t, binary, "lifetime: 9s\nrediscover: 3s\nexclude_interfaces: [lan2]\nipv4:\n  enabled: true\n  lifetime: 2m\n")
 
 	for _, c := range []*command{first, second} {
 		waitFor(t, 30*time.Second, "the peer's address, by "+c.name, func() bool { return c.identified(peerMAC, peerAddr) })
@@ -690,9 +691,23 @@ type host struct {
 	ip  netip.Addr
 }
 
-func startCommand(t *testing.T, binary string, flags ...string) *command {
+// startCommand runs the command with the configuration given, in a file, and any flags after it.
+func startCommand(t *testing.T, binary, config string, flags ...string) *command {
 	t.Helper()
-	c := &command{t: t, name: "ipv6disc " + strings.Join(flags, " "), cmd: exec.Command(binary, flags...), exited: make(chan struct{})}
+	file := filepath.Join(t.TempDir(), "discovery.yaml")
+	if err := os.WriteFile(file, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	flags = append([]string{"-config_file", file}, flags...)
+	c := &command{t: t, name: "ipv6disc with " + strings.Join(strings.Fields(config), " "), cmd: exec.Command(binary, flags...), exited: make(chan struct{})}
+	c.start()
+	return c
+}
+
+// start runs the command, and reads its log.
+func (c *command) start() {
+	t := c.t
+	t.Helper()
 	c.cmd.Stderr = &c.errors
 	output, err := c.cmd.StdoutPipe()
 	if err != nil {
@@ -719,7 +734,6 @@ func startCommand(t *testing.T, binary string, flags ...string) *command {
 			c.mutex.Unlock()
 		}
 	}()
-	return c
 }
 
 func (c *command) hosts() []host {
@@ -813,8 +827,8 @@ func TestLiveTwoHosts(t *testing.T) {
 	every := Family{Enabled: true, Listen: true, Active: true}
 	// The IPv4 lifetime is longer than the minute between two readings of the neighbor table.
 	configs := map[string]Config{
-		"a": {Lifetime: 9 * time.Second, Rediscover: 3 * time.Second, IPv6: every, IPv4: Family{Enabled: true, Listen: true, Active: true, Lifetime: ipv4Lifetime}},
-		"b": {Lifetime: 12 * time.Second, Rediscover: 4 * time.Second, IPv6: every, IPv4: Family{Enabled: true, Listen: true, Active: true, Lifetime: ipv4Lifetime}},
+		"a": {Protocols: DefaultProtocols(), Lifetime: 9 * time.Second, Rediscover: 3 * time.Second, IPv6: every, IPv4: Family{Enabled: true, Listen: true, Active: true, Lifetime: ipv4Lifetime}},
+		"b": {Protocols: DefaultProtocols(), Lifetime: 12 * time.Second, Rediscover: 4 * time.Second, IPv6: every, IPv4: Family{Enabled: true, Listen: true, Active: true, Lifetime: ipv4Lifetime}},
 	}
 	wire := startCapture(t, "port-a", "port-b", "port-p", "port-q")
 
@@ -1280,7 +1294,7 @@ func TestLiveIPv4HostLeaves(t *testing.T) {
 	}
 	const lifetime = 90 * time.Second
 	// A rediscovery shorter than the minute between two reads: a sweep before each.
-	a := startInstance(t, lan["a"].namespace, Config{Lifetime: 9 * time.Second, Rediscover: 20 * time.Second,
+	a := startInstance(t, lan["a"].namespace, Config{Protocols: DefaultProtocols(), Lifetime: 9 * time.Second, Rediscover: 20 * time.Second,
 		IPv6: Family{Enabled: true, Listen: true}, IPv4: Family{Enabled: true, Listen: true, Active: true, Lifetime: lifetime}})
 	defer a.stop()
 	q := lan["q"]

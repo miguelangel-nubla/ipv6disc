@@ -16,9 +16,18 @@ type Factory func(name string, config string, lifetime time.Duration) (ipv6disc.
 type Field struct {
 	Name     string
 	Required bool
+	// What a configuration file writes it as: a string unless it says, FieldDuration or
+	// FieldBoolean. In the params, all are text.
+	Type string
 	// What it is, for the documentation.
 	Description string
 }
+
+// The types of a Field that is no string: a duration, as 60s, and true or false.
+const (
+	FieldDuration = "duration"
+	FieldBoolean  = "boolean"
+)
 
 type registered struct {
 	factory     Factory

@@ -79,6 +79,10 @@ archives:
       - LICENSE*
       - README*
       - CHANGELOG*
+      # The configuration, by example, and what each key of it is.
+      - cmd/ipv6disc/example.config.yaml
+      - docs/*.md
+      - docs/reference/*.md
     formats: [tar.gz]
     name_template: >-
       {{ .ProjectName }}_

@@ -1,0 +1,86 @@
+# An example of the configuration of ipv6disc: ipv6disc -config_file config.yaml
+#
+# Every key is optional, and what is left out is its default: without a file at all, IPv6 is
+# discovered, by the protocols that find hosts. This one also discovers IPv4, and learns the names
+# of the hosts. Every key is in docs/reference/configuration.md, and what each does in
+# docs/discovery.md. A key there is none of is an error at start.
+
+# How long an address stays after it was last seen.
+lifetime: 4h
+# How often every host is probed. Without it: a third of the shortest lifetime.
+# rediscover: 80m
+
+# The local discovery on these interfaces only, and not on those: names, or patterns.
+# interfaces: [eth0, en*]
+exclude_interfaces: [docker*, br-*, veth*]
+
+# The families: the switches of all their protocols at once. listen is the local discovery,
+# active the probes of every host.
+ipv6:
+  enabled: true
+  listen: true
+  active: true
+ipv4:
+  enabled: true     # off by default
+  listen: true
+  active: true      # the sweep broadcasts an ARP request for each address
+  # lifetime: 1h    # of the family's addresses, in place of lifetime
+
+# The names of the hosts: kept, for the protocols enabled below to learn them, and the plugins to
+# read those of their routers' DHCP leases.
+hostnames:
+  enabled: true     # off by default
+  # lifetime: 4h
+
+# The protocols of the local discovery: each a mapping, with its switch and its options. One runs
+# when it is enabled, and its family is, and listens, or for the sweep is active.
+protocols:
+  # IPv6. On by default.
+  ndp: {enabled: true}
+  ping: {enabled: true}
+  ssdp:
+    enabled: true
+    names: false    # ask the devices that answer their friendly name, over HTTP
+  wsd:
+    enabled: true
+    names: true     # ask the computers that answer their name, over HTTP: off by default
+  # IPv4. On by default.
+  arp: {enabled: true}
+  arp-sweep:
+    enabled: true
+    max_prefix: 22  # the largest subnet swept whole
+  # The ARP the hosts send, heard: on by default on Linux, and an error to enable elsewhere.
+#  arp-listen: {enabled: true}
+  # Either family. Off by default.
+  mdns:
+    enabled: true
+    ask: true       # false: only listen
+  # What DHCP clients and LLDP neighbors say, heard: Linux only.
+  dhcp: {enabled: false}
+  lldp: {enabled: false}
+  # Names only: they need hostnames. Off by default.
+  netbios: {enabled: true}
+  llmnr: {enabled: false}  # its questions go to every host of the link
+  dns:
+    enabled: true
+    servers: [192.168.1.1]  # as the router's: needed when dns is enabled
+
+# The plugins read the neighbor tables of routers and other hosts, and with hostnames the names of
+# their DHCP leases: docs/reference/plugins.md has the fields of each type.
+# plugins:
+#   router:
+#     type: mikrotik
+#     interval: 60s
+#     address: 192.168.88.1
+#     username: ipv6disc
+#     password: "secret"
+#   ap:
+#     type: linux
+#     interval: 60s
+#     address: 192.168.1.2
+#     username: root
+#     identity_file: /key
+#     host_key: SHA256:...
+
+# The level of the log: debug, info, warn or error.
+log_level: info

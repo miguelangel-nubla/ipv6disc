@@ -38,7 +38,7 @@ func TestGetAll(t *testing.T) {
 }
 
 func TestWorkerPrefixesAndSolicitWithoutListeners(t *testing.T) {
-	w := NewWorker(zap.NewNop().Sugar(), Config{Lifetime: time.Minute, Rediscover: time.Minute, IPv6: Family{Enabled: true}})
+	w := NewWorker(zap.NewNop().Sugar(), Config{Protocols: DefaultProtocols(), Lifetime: time.Minute, Rediscover: time.Minute, IPv6: Family{Enabled: true}})
 	listen(w, 2, "eth0", "2001:db8:1::5")
 	listen(w, 2, "eth0", "2001:db8:1::6")
 	listen(w, 3, "eth1", "fd00:2::7")
@@ -79,7 +79,7 @@ func (c *fakeConn) SendPing(*netip.Addr) error                 { return c.send()
 // One solicitation per link, whatever addresses of the interface share the /64, as its stable and
 // its temporary one; a listener that fails leaves it to another of the interface.
 func TestWorkerSolicitOncePerInterface(t *testing.T) {
-	w := NewWorker(zap.NewNop().Sugar(), Config{Lifetime: time.Minute, IPv6: Family{Enabled: true}})
+	w := NewWorker(zap.NewNop().Sugar(), Config{Protocols: DefaultProtocols(), Lifetime: time.Minute, IPv6: Family{Enabled: true}})
 	stable, temporary, other, elsewhere := &fakeConn{}, &fakeConn{}, &fakeConn{}, &fakeConn{}
 	listen(w, 2, "eth0", "2001:db8:1::5", &DiscoveryProtocol{Name: "ndp", Worker: stable})
 	listen(w, 2, "eth0", "2001:db8:1::6", &DiscoveryProtocol{Name: "ndp", Worker: temporary})

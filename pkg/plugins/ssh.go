@@ -32,7 +32,7 @@ const sshConfigFormat = "interval,address,username,password[,identity_file[,host
 // SSHFields are the params of the plugins over SSH, by name. A password or an identity file is
 // needed, which ParseSSHConfig checks.
 var SSHFields = []Field{
-	{Name: "interval", Required: true, Description: "How often the table is read: 60s, 5m."},
+	{Name: "interval", Required: true, Type: FieldDuration, Description: "How often the table is read: 60s, 5m."},
 	{Name: "address", Required: true, Description: "The host, with its port unless 22: 192.168.1.1, [2001:db8::1]:2222."},
 	{Name: "username", Required: true, Description: "The SSH user."},
 	{Name: "password", Description: "Its password. Or an identity_file, or both."},
