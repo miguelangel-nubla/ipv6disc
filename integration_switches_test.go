@@ -420,7 +420,7 @@ func TestLiveCommandConfigFile(t *testing.T) {
 	if err := os.WriteFile(bad, []byte("protocols:\n  mdns: true\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := refused("-config_file", bad); err == nil || !strings.Contains(out, "protocols.mdns: true is not its settings: it is written mdns: {enabled: true}") {
+	if out, err := refused("-config_file", bad); err == nil || !strings.Contains(out, "protocols.mdns: true is not its settings: it is written as mdns, with enabled: true under it") {
 		t.Errorf("a file that can't be: %v\n%s", err, out)
 	}
 	if sent := wire.from(a.mac); len(sent) != 0 {
@@ -429,7 +429,7 @@ func TestLiveCommandConfigFile(t *testing.T) {
 
 	// With a file: IPv4 too, and of IPv6 the ping alone, beside NDP.
 	file := filepath.Join(t.TempDir(), "discovery.yaml")
-	content := fmt.Sprintf("lifetime: 1m\nrediscover: 3s\nipv4: {enabled: true}\nprotocols:\n  ssdp: {enabled: false}\n  wsd: {enabled: false}\n  arp-sweep: {enabled: false}\nlog_level: info\n# p is %s\n", p.ipv4)
+	content := fmt.Sprintf("lifetime: 1m\nrediscover: 3s\nipv4:\n  enabled: true\nprotocols:\n  ssdp:\n    enabled: false\n  wsd:\n    enabled: false\n  arp-sweep:\n    enabled: false\nlog_level: info\n# p is %s\n", p.ipv4)
 	if err := os.WriteFile(file, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -689,7 +689,7 @@ func TestLiveCommandDefaults(t *testing.T) {
 	}
 
 	// IPv4 enabled, and no more: as -ipv4 was.
-	sent, c, log := run("with IPv4 enabled", ptrTo("ipv4: {enabled: true}\n"))
+	sent, c, log := run("with IPv4 enabled", ptrTo("ipv4:\n  enabled: true\n"))
 	if sent["discard"] == 0 || sent["arp"] == 0 || !c.identified(p.mac, p.ipv4) {
 		t.Errorf("with IPv4 enabled: no sweep, or p not found by it: %v, %v", sent, c.hosts())
 	}

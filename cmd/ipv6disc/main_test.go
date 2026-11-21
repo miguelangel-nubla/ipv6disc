@@ -76,22 +76,22 @@ func TestCommandRejects(t *testing.T) {
 		{args: "-live=maybe", code: 2, want: "invalid boolean value"},
 		// A file that isn't there, and one that says what can't be: each error of it.
 		{args: "-config_file /no/such/file.yaml", code: 1, want: "/no/such/file.yaml: no such file or directory"},
-		{config: "ipv4: true", code: 1, want: "ipv4: true is not its settings: it is written ipv4: {enabled: true}"},
-		{config: "protocols: {bonjour: {enabled: true}}", code: 1, want: "protocols.bonjour: no such protocol: they are ndp, ping,"},
-		{config: "protocols: {mdns: {asks: true}}", code: 1, want: "protocols.mdns.asks: no such option of mdns: it has enabled, ask"},
-		{config: "protocols: {mdns: {ask: 3}}", code: 1, want: "protocols.mdns.ask: 3 is not true or false"},
-		{config: "hostnames: {enabled: true}\nprotocols: {dns: {enabled: true}}", code: 1, want: "the dns protocol is enabled without servers"},
-		{config: "protocols: {llmnr: {enabled: true}}", code: 1, want: "the llmnr protocol is enabled, and it only learns names, which hostnames, off, doesn't keep"},
-		{config: "protocols: {arp-sweep: {max_prefix: 8}}", code: 1, want: "invalid max_prefix of the arp-sweep protocol, 8: it is from 16 to 30"},
-		{config: "plugins: {router: {type: nosuch}}", code: 1, want: `plugins.router.type: no such type of plugin, "nosuch"`},
+		{config: "ipv4: true", code: 1, want: "ipv4: true is not its settings: it is written as ipv4, with enabled: true under it"},
+		{config: "protocols:\n  bonjour:\n    enabled: true", code: 1, want: "protocols.bonjour: no such protocol: they are ndp, ping,"},
+		{config: "protocols:\n  mdns:\n    asks: true", code: 1, want: "protocols.mdns.asks: no such option of mdns: it has enabled, ask"},
+		{config: "protocols:\n  mdns:\n    ask: 3", code: 1, want: "protocols.mdns.ask: 3 is not true or false"},
+		{config: "hostnames:\n  enabled: true\nprotocols:\n  dns:\n    enabled: true", code: 1, want: "the dns protocol is enabled without servers"},
+		{config: "protocols:\n  llmnr:\n    enabled: true", code: 1, want: "the llmnr protocol is enabled, and it only learns names, which hostnames, off, doesn't keep"},
+		{config: "protocols:\n  arp-sweep:\n    max_prefix: 8", code: 1, want: "invalid max_prefix of the arp-sweep protocol, 8: it is from 16 to 30"},
+		{config: "plugins:\n  router:\n    type: nosuch", code: 1, want: `plugins.router.type: no such type of plugin, "nosuch"`},
 		{config: "lifetime: 0", code: 1, want: "they must be positive"},
 		{config: "rediscover: -1s", code: 1, want: "they must be positive"},
-		{config: "ipv4: {lifetime: -1s}", code: 1, want: "invalid family lifetime"},
-		{config: "hostnames: {enabled: true, lifetime: -1s}", code: 1, want: "invalid names' lifetime"},
+		{config: "ipv4:\n  lifetime: -1s", code: 1, want: "invalid family lifetime"},
+		{config: "hostnames:\n  enabled: true\n  lifetime: -1s", code: 1, want: "invalid names' lifetime"},
 		{config: "interfaces: \"[\"", code: 1, want: "invalid interface pattern"},
 		{config: "log_level: loud", code: 1, want: `log_level: "loud" is no level of the log`},
 		// The worker's own check, of a valid configuration that does nothing.
-		{config: "ipv6: {enabled: false}", code: 1, want: "nothing to do"},
+		{config: "ipv6:\n  enabled: false", code: 1, want: "nothing to do"},
 	} {
 		args := strings.Fields(tt.args)
 		if tt.config != "" {

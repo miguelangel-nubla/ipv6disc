@@ -191,7 +191,7 @@ func configPage() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	fmt.Fprintf(&b, "\n## Protocols\n\n`protocols`\n\n%s\n\n```yaml\nprotocols:\n  mdns:\n    enabled: true\n    ask: false\n  arp-sweep: {enabled: false}\n```\n", protocols.Description)
+	fmt.Fprintf(&b, "\n## Protocols\n\n`protocols`\n\n%s\n\n```yaml\nprotocols:\n  mdns:\n    enabled: true\n    ask: false\n  arp-sweep:\n    enabled: false\n```\n", protocols.Description)
 	for _, name := range protocols.Properties.keys {
 		var p property
 		if err := json.Unmarshal(protocols.Properties.values[name], &p); err != nil || p.Properties == nil {

@@ -145,7 +145,7 @@ func TestSchemaBounds(t *testing.T) {
 	sweep := at("properties", "protocols", "properties", "arp-sweep", "properties", "max_prefix")
 	for bound, in := range map[float64]bool{15: false, 16: true, 30: true, 31: false} {
 		within := bound >= sweep["minimum"].(float64) && bound <= sweep["maximum"].(float64)
-		_, err := Parse(fmt.Appendf(nil, "protocols: {arp-sweep: {max_prefix: %v}}", bound))
+		_, err := Parse(fmt.Appendf(nil, "protocols:\n  arp-sweep:\n    max_prefix: %v", bound))
 		if within != in || (err == nil) != in {
 			t.Errorf("a max_prefix of %v: in the schema's range %v, read %v", bound, within, err)
 		}

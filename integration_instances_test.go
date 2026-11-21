@@ -645,7 +645,7 @@ func TestLiveTwoCommands(t *testing.T) {
 	// One of IPv6 alone, on every interface; one of both families, without lan2: each by its
 	// configuration file.
 	first := startCommand(t, binary, "lifetime: 6s\nrediscover: 2s\n")
-	second := startCommand(t, binary, "lifetime: 9s\nrediscover: 3s\nexclude_interfaces: [lan2]\nipv4:\n  enabled: true\n  lifetime: 2m\n")
+	second := startCommand(t, binary, "lifetime: 9s\nrediscover: 3s\nexclude_interfaces:\n  - lan2\nipv4:\n  enabled: true\n  lifetime: 2m\n")
 
 	for _, c := range []*command{first, second} {
 		waitFor(t, 30*time.Second, "the peer's address, by "+c.name, func() bool { return c.identified(peerMAC, peerAddr) })

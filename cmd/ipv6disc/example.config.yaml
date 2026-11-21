@@ -11,8 +11,13 @@ lifetime: 4h
 # rediscover: 80m
 
 # The local discovery on these interfaces only, and not on those: names, or patterns.
-# interfaces: [eth0, en*]
-exclude_interfaces: [docker*, br-*, veth*]
+# interfaces:
+#   - eth0
+#   - en*
+exclude_interfaces:
+  - docker*
+  - br-*
+  - veth*
 
 # The families: the switches of all their protocols at once. listen is the local discovery,
 # active the probes of every host.
@@ -36,8 +41,10 @@ hostnames:
 # when it is enabled, and its family is, and listens, or for the sweep is active.
 protocols:
   # IPv6. On by default.
-  ndp: {enabled: true}
-  ping: {enabled: true}
+  ndp:
+    enabled: true
+  ping:
+    enabled: true
   ssdp:
     enabled: true
     names: false    # ask the devices that answer their friendly name, over HTTP
@@ -45,25 +52,32 @@ protocols:
     enabled: true
     names: true     # ask the computers that answer their name, over HTTP: off by default
   # IPv4. On by default.
-  arp: {enabled: true}
+  arp:
+    enabled: true
   arp-sweep:
     enabled: true
     max_prefix: 22  # the largest subnet swept whole
   # The ARP the hosts send, heard: on by default on Linux, and an error to enable elsewhere.
-#  arp-listen: {enabled: true}
+#  arp-listen:
+#    enabled: true
   # Either family. Off by default.
   mdns:
     enabled: true
     ask: true       # false: only listen
   # What DHCP clients and LLDP neighbors say, heard: Linux only.
-  dhcp: {enabled: false}
-  lldp: {enabled: false}
+  dhcp:
+    enabled: false
+  lldp:
+    enabled: false
   # Names only: they need hostnames. Off by default.
-  netbios: {enabled: true}
-  llmnr: {enabled: false}  # its questions go to every host of the link
+  netbios:
+    enabled: true
+  llmnr:                   # its questions go to every host of the link
+    enabled: false
   dns:
     enabled: true
-    servers: [192.168.1.1]  # as the router's: needed when dns is enabled
+    servers:                # as the router's: needed when dns is enabled
+      - 192.168.1.1
 
 # The plugins read the neighbor tables of routers and other hosts, and with hostnames the names of
 # their DHCP leases: docs/reference/plugins.md has the fields of each type.

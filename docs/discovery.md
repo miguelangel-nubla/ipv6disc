@@ -50,17 +50,21 @@ ipv4:
 hostnames:
   enabled: true
 protocols:
-  arp-sweep: {enabled: false}   # nothing broadcast
-  ssdp: {enabled: false}
-  mdns: {enabled: true}
+  arp-sweep:                    # nothing broadcast
+    enabled: false
+  ssdp:
+    enabled: false
+  mdns:
+    enabled: true
   dns:
     enabled: true
-    servers: [192.168.1.1]
+    servers:
+      - 192.168.1.1
 ```
 
 What can't run is an error at start, which says what and where, not a protocol left out without a word:
 
-- A protocol there is none of, an option its protocol doesn't have, and a value of another type than its key takes: `mdns: true` is `mdns: {enabled: true}`.
+- A protocol there is none of, an option its protocol doesn't have, and a value of another type than its key takes: `mdns: true` is written as `enabled: true` under `mdns`.
 - `ping`, `ssdp` or `wsd` enabled without `ndp`: they hear an address, and only NDP tells its MAC, so they would find no host. And `arp-sweep` without both `arp` and `arp-listen`, which tell the hosts that answer it.
 - `arp-listen`, `dhcp` or `lldp` enabled where the system can't run them, which is anywhere but Linux. `arp-listen` is on by default on Linux and off elsewhere, so a configuration that doesn't name it runs everywhere.
 - `dns` enabled without `servers`.
@@ -104,9 +108,12 @@ With `hostnames` enabled, a host has names too: what it calls itself, what the D
 hostnames:
   enabled: true
 protocols:
-  mdns: {enabled: true}
-  netbios: {enabled: true}
-  wsd: {names: true}
+  mdns:
+    enabled: true
+  netbios:
+    enabled: true
+  wsd:
+    names: true
 ```
 
 A name is the host's, its MAC's, not an address's: one learned over IPv4 is the host's for its IPv6 addresses too. A host can have several at once, when its sources disagree or it was renamed, each with what said it: the protocol, as `mdns` or `dhcp`, or a plugin's name.
@@ -198,7 +205,10 @@ A name is whatever a device claims: nothing proves it, two hosts can claim the s
 The local discovery runs on every interface that is up, not a loopback and has a MAC, with multicast for IPv6, with broadcast for IPv4, unless `interfaces` names those it runs on, and `exclude_interfaces` those it doesn't: names, or patterns as `docker*`, `veth*`. On a host running containers, leaving their bridges out keeps the containers out of the state, and the probes off their networks. The plugins aren't concerned.
 
 ```yaml
-exclude_interfaces: [docker*, br-*, veth*]
+exclude_interfaces:
+  - docker*
+  - br-*
+  - veth*
 ```
 
 The interfaces without a MAC, as PPP links and tunnels, are left out, and their own addresses not registered: a host is its MAC, and NDP tells none there.

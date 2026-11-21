@@ -65,7 +65,8 @@ A worker starts once, and its plugins are registered before `Start`. A program c
 ipv4:
   enabled: true
 protocols:
-  arp-sweep: {enabled: false}
+  arp-sweep:
+    enabled: false
 plugins:
   router:
     type: mikrotik

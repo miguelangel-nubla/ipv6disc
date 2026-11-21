@@ -18,7 +18,7 @@ import (
 func TestLiveNeedsATerminal(t *testing.T) {
 	// A session of its own has no controlling terminal, wherever the tests run.
 	noTerminal := func(cmd *exec.Cmd) { cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true} }
-	config := writeConfig(t, "ipv6: {enabled: false}\nipv4: {enabled: true, active: false}\n")
+	config := writeConfig(t, "ipv6:\n  enabled: false\nipv4:\n  enabled: true\n  active: false\n")
 	code, stdout, stderr := command(t, noTerminal, "-live", "-config_file", config)
 	if code != 1 || !strings.Contains(stderr, "-live needs a terminal") || strings.Contains(stderr, "panic") || stdout != "" {
 		t.Errorf("exit %d, want 1 and the reason alone:\n%s%s", code, stdout, stderr)
@@ -47,7 +47,7 @@ func (o *output) String() string {
 // of a family with no protocol, and says at info which protocols run. It sends nothing: IPv4
 // alone, with none of its protocols.
 func TestLogLevelOfTheFile(t *testing.T) {
-	const quiet = "ipv6: {enabled: false}\nipv4: {enabled: true}\nprotocols: {arp: {enabled: false}, arp-sweep: {enabled: false}, arp-listen: {enabled: false}}\n"
+	const quiet = "ipv6:\n  enabled: false\nipv4:\n  enabled: true\nprotocols:\n  arp:\n    enabled: false\n  arp-sweep:\n    enabled: false\n  arp-listen:\n    enabled: false\n"
 	for _, tt := range []struct {
 		level      string
 		warn, info bool

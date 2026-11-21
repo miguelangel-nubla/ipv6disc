@@ -97,7 +97,9 @@ func TestParse(t *testing.T) {
 	file, err := Parse([]byte(`
 lifetime: 2h
 rediscover: 600        # seconds
-interfaces: [eth0, "en*"]
+interfaces:
+  - eth0
+  - "en*"
 exclude_interfaces: docker*, veth*
 ipv6:
   active: false
@@ -111,21 +113,35 @@ hostnames:
   enabled: true
   lifetime: 90m
 protocols:
-  ndp: {enabled: true}
-  ping: {enabled: false}
-  ssdp: {enabled: true, names: true}
+  ndp:
+    enabled: true
+  ping:
+    enabled: false
+  ssdp:
+    enabled: true
+    names: true
   wsd:
     enabled: false
     names: true
-  mdns: {enabled: true, ask: false}
-  arp: {enabled: true}
-  arp-sweep: {enabled: true, max_prefix: 24}
-  arp-listen: {enabled: false}
-  netbios: {enabled: true}
-  llmnr: {enabled: true}
+  mdns:
+    enabled: true
+    ask: false
+  arp:
+    enabled: true
+  arp-sweep:
+    enabled: true
+    max_prefix: 24
+  arp-listen:
+    enabled: false
+  netbios:
+    enabled: true
+  llmnr:
+    enabled: true
   dns:
     enabled: true
-    servers: [192.168.1.1, "[fd00::1]:5353"]
+    servers:
+      - 192.168.1.1
+      - "[fd00::1]:5353"
 plugins:
   router:
     type: mikrotik
@@ -200,77 +216,77 @@ func TestParseErrors(t *testing.T) {
 		what, file string
 		want       []string
 	}{
-		{"a protocol there is none of", "protocols: {bonjour: {enabled: true}}",
+		{"a protocol there is none of", "protocols:\n  bonjour:\n    enabled: true",
 			[]string{"protocols.bonjour: no such protocol: they are " + protocols}},
-		{"an option its protocol doesn't have", "protocols: {mdns: {enabled: true, asks: false}}",
+		{"an option its protocol doesn't have", "protocols:\n  mdns:\n    enabled: true\n    asks: false",
 			[]string{"protocols.mdns.asks: no such option of mdns: it has enabled, ask"}},
-		{"an option of another protocol", "protocols:\n  ndp: {names: true}\n  arp-sweep: {servers: [192.168.1.1]}",
+		{"an option of another protocol", "protocols:\n  ndp:\n    names: true\n  arp-sweep:\n    servers:\n      - 192.168.1.1",
 			[]string{"protocols.arp-sweep.servers: no such option of arp-sweep: it has enabled, max_prefix", "protocols.ndp.names: no such option of ndp: it has enabled"}},
-		{"a switch in place of the settings", "protocols: {mdns: true, lldp: false}",
-			[]string{"protocols.lldp: false is not its settings: it is written lldp: {enabled: false}", "protocols.mdns: true is not its settings: it is written mdns: {enabled: true}"}},
-		{"a family as a switch", "ipv4: true", []string{"ipv4: true is not its settings: it is written ipv4: {enabled: true}"}},
-		{"the names as a switch", "hostnames: true", []string{"hostnames: true is not its settings: it is written hostnames: {enabled: true}"}},
-		{"a list in place of the protocols", "protocols: [mdns, dhcp]", []string{`protocols: ["mdns","dhcp"] is not a mapping of its keys`}},
+		{"a switch in place of the settings", "protocols:\n  mdns: true\n  lldp: false",
+			[]string{"protocols.lldp: false is not its settings: it is written as lldp, with enabled: false under it", "protocols.mdns: true is not its settings: it is written as mdns, with enabled: true under it"}},
+		{"a family as a switch", "ipv4: true", []string{"ipv4: true is not its settings: it is written as ipv4, with enabled: true under it"}},
+		{"the names as a switch", "hostnames: true", []string{"hostnames: true is not its settings: it is written as hostnames, with enabled: true under it"}},
+		{"a list in place of the protocols", "protocols:\n  - mdns\n  - dhcp", []string{`protocols: ["mdns","dhcp"] is not a mapping of its keys`}},
 		{"a switch of the wrong type", `protocols: {mdns: {enabled: "sometimes"}}`, []string{`protocols.mdns.enabled: "sometimes" is not true or false`}},
-		{"an option of the wrong type: a boolean", "protocols: {ssdp: {names: 1}, mdns: {ask: [true]}}",
+		{"an option of the wrong type: a boolean", "protocols:\n  ssdp:\n    names: 1\n  mdns:\n    ask:\n      - true",
 			[]string{"protocols.mdns.ask: [true] is not true or false", "protocols.ssdp.names: 1 is not true or false"}},
 		{"an option of the wrong type: a number", `protocols: {arp-sweep: {max_prefix: "/24"}}`, []string{`protocols.arp-sweep.max_prefix: "/24" is not a whole number`}},
-		{"a number that is not whole", "protocols: {arp-sweep: {max_prefix: 22.5}}", []string{"protocols.arp-sweep.max_prefix: 22.5 is not a whole number"}},
-		{"an option of the wrong type: the servers", "hostnames: {enabled: true}\nprotocols: {dns: {enabled: true, servers: {a: 1}}}", []string{`protocols.dns.servers: {"a":1} is not a string, nor a list of them`}},
-		{"a server by its name", "hostnames: {enabled: true}\nprotocols: {dns: {enabled: true, servers: [router.lan, 192.168.1.1]}}", []string{`protocols.dns.servers: invalid DNS server "router.lan": an address, as 192.168.1.1, or one with its port, as 192.168.1.1:5353 or [fd00::1]:53`}},
-		{"the reverse DNS without servers", "hostnames: {enabled: true}\nprotocols: {dns: {enabled: true}}",
+		{"a number that is not whole", "protocols:\n  arp-sweep:\n    max_prefix: 22.5", []string{"protocols.arp-sweep.max_prefix: 22.5 is not a whole number"}},
+		{"an option of the wrong type: the servers", "hostnames:\n  enabled: true\nprotocols:\n  dns:\n    enabled: true\n    servers:\n      a: 1", []string{`protocols.dns.servers: {"a":1} is not a string, nor a list of them`}},
+		{"a server by its name", "hostnames:\n  enabled: true\nprotocols:\n  dns:\n    enabled: true\n    servers:\n      - router.lan\n      - 192.168.1.1", []string{`protocols.dns.servers: invalid DNS server "router.lan": an address, as 192.168.1.1, or one with its port, as 192.168.1.1:5353 or [fd00::1]:53`}},
+		{"the reverse DNS without servers", "hostnames:\n  enabled: true\nprotocols:\n  dns:\n    enabled: true",
 			[]string{"the dns protocol is enabled without servers: it asks only those it is given"}},
-		{"a protocol of names alone, without the names", "protocols: {netbios: {enabled: true}}",
+		{"a protocol of names alone, without the names", "protocols:\n  netbios:\n    enabled: true",
 			[]string{"the netbios protocol is enabled, and it only learns names, which hostnames, off, doesn't keep: enable hostnames, or disable netbios"}},
-		{"the names of a protocol, without the names", "protocols: {wsd: {names: true}}",
+		{"the names of a protocol, without the names", "protocols:\n  wsd:\n    names: true",
 			[]string{"the names of the wsd protocol are on, and hostnames, off, doesn't keep them: enable hostnames, or turn the names of wsd off"}},
-		{"a subnet too large to sweep", "protocols: {arp-sweep: {max_prefix: 8}}", []string{"invalid max_prefix of the arp-sweep protocol, 8: it is from 16 to 30"}},
-		{"a sweep of no subnet at all", "protocols: {arp-sweep: {max_prefix: 0}}", []string{"invalid max_prefix of the arp-sweep protocol, 0: it is from 16 to 30"}},
-		{"a negative one", "protocols: {arp-sweep: {max_prefix: -24}}", []string{"invalid max_prefix of the arp-sweep protocol, -24: it is from 16 to 30"}},
-		{"a subnet of no host to sweep", "protocols: {arp-sweep: {max_prefix: 31}}", []string{"invalid max_prefix of the arp-sweep protocol, 31: it is from 16 to 30"}},
-		{"the protocols of IPv6 without NDP", "protocols: {ndp: {enabled: false}, ping: {enabled: false}, ssdp: {enabled: false}}",
+		{"a subnet too large to sweep", "protocols:\n  arp-sweep:\n    max_prefix: 8", []string{"invalid max_prefix of the arp-sweep protocol, 8: it is from 16 to 30"}},
+		{"a sweep of no subnet at all", "protocols:\n  arp-sweep:\n    max_prefix: 0", []string{"invalid max_prefix of the arp-sweep protocol, 0: it is from 16 to 30"}},
+		{"a negative one", "protocols:\n  arp-sweep:\n    max_prefix: -24", []string{"invalid max_prefix of the arp-sweep protocol, -24: it is from 16 to 30"}},
+		{"a subnet of no host to sweep", "protocols:\n  arp-sweep:\n    max_prefix: 31", []string{"invalid max_prefix of the arp-sweep protocol, 31: it is from 16 to 30"}},
+		{"the protocols of IPv6 without NDP", "protocols:\n  ndp:\n    enabled: false\n  ping:\n    enabled: false\n  ssdp:\n    enabled: false",
 			[]string{"the wsd protocol is enabled without ndp, which tells the MAC of the hosts it hears: it would find none"}},
 
-		{"a key there is none of", "hostname: {enabled: true}\nlive: true", []string{
+		{"a key there is none of", "hostname:\n  enabled: true\nlive: true", []string{
 			"hostname: no such key: the configuration has lifetime, rediscover, interfaces, exclude_interfaces, ipv6, ipv4, hostnames, protocols, plugins, log_level",
 			"live: no such key: the configuration has lifetime, rediscover, interfaces, exclude_interfaces, ipv6, ipv4, hostnames, protocols, plugins, log_level"}},
-		{"a key a family doesn't have", "ipv6: {solicit: true}", []string{"ipv6.solicit: no such key: ipv6 has enabled, listen, active, lifetime"}},
-		{"the protocols of the names, where they were", "hostnames: {enabled: true, protocols: [mdns]}", []string{"hostnames.protocols: no such key: hostnames has enabled, lifetime"}},
-		{"a duration that is none", "lifetime: soon\nipv4: {lifetime: [1]}\nrediscover: 1e300", []string{
+		{"a key a family doesn't have", "ipv6:\n  solicit: true", []string{"ipv6.solicit: no such key: ipv6 has enabled, listen, active, lifetime"}},
+		{"the protocols of the names, where they were", "hostnames:\n  enabled: true\n  protocols:\n    - mdns", []string{"hostnames.protocols: no such key: hostnames has enabled, lifetime"}},
+		{"a duration that is none", "lifetime: soon\nipv4:\n  lifetime:\n    - 1\nrediscover: 1e300", []string{
 			"ipv4.lifetime: [1] is not a duration, as 90s or 4h, nor a number of seconds",
 			`lifetime: "soon" is not a duration, as 90s or 4h, nor a number of seconds`,
 			"rediscover: 1e+300 is not a duration, as 90s or 4h, nor a number of seconds"}},
 		{"a lifetime of nothing", "lifetime: 0", []string{"invalid lifetime 0s or rediscovery interval 0s: they must be positive"}},
-		{"a negative lifetime of a family", "ipv4: {lifetime: -1s}", []string{"invalid family lifetime: IPv6 4h0m0s, IPv4 -1s"}},
+		{"a negative lifetime of a family", "ipv4:\n  lifetime: -1s", []string{"invalid family lifetime: IPv6 4h0m0s, IPv4 -1s"}},
 		{"a pattern that is none", `interfaces: "["`, []string{`invalid interface pattern "[": syntax error in pattern`}},
-		{"interfaces that are no names", "interfaces: [eth0, 3]", []string{"interfaces: 3 is not a string, nor a list of them"}},
+		{"interfaces that are no names", "interfaces:\n  - eth0\n  - 3", []string{"interfaces: 3 is not a string, nor a list of them"}},
 		{"a level of the log there is none of", "log_level: loud", []string{`log_level: "loud" is no level of the log: they are debug, info, warn, error`}},
 		{"a level that is no string", "log_level: 3", []string{"log_level: 3 is not a string"}},
 		{"a file that is no mapping", "- ipv6", []string{`the configuration is ["ipv6"], not a mapping of its keys`}},
-		{"a key twice", "ipv4: {enabled: true}\nipv4: {enabled: false}", []string{`not YAML: yaml: unmarshal errors:`, `  line 2: key "ipv4" already set in map`}},
+		{"a key twice", "ipv4:\n  enabled: true\nipv4:\n  enabled: false", []string{`not YAML: yaml: unmarshal errors:`, `  line 4: key "ipv4" already set in map`}},
 		{"an option twice", "protocols:\n  mdns:\n    enabled: true\n    enabled: false", []string{`not YAML: yaml: unmarshal errors:`, `  line 4: key "enabled" already set in map`}},
-		{"a key there is none of, at every depth", "protocols: {mdns: {ask: {often: true}}}\nplugins: {router: {type: linux, interval: 60s, address: 192.168.1.1, username: root, password: x, port: 22}}\nhostnames: {names: true}", []string{
+		{"a key there is none of, at every depth", "protocols:\n  mdns:\n    ask:\n      often: true\nplugins:\n  router:\n    type: linux\n    interval: 60s\n    address: 192.168.1.1\n    username: root\n    password: x\n    port: 22\nhostnames:\n  names: true", []string{
 			"hostnames.names: no such key: hostnames has enabled, lifetime",
 			"plugins.router.port: no such field of a linux plugin: it has interval, address, username, password, identity_file, host_key",
 			`protocols.mdns.ask: {"often":true} is not true or false`}},
-		{"two documents", "ipv4: {enabled: true}\n---\nipv4: {enabled: false}\n", []string{"the configuration is more than one YAML document: it is one, without a --- after it"}},
+		{"two documents", "ipv4:\n  enabled: true\n---\nipv4:\n  enabled: false\n", []string{"the configuration is more than one YAML document: it is one, without a --- after it"}},
 		{"what is no YAML", "ipv4: {enabled", []string{"not YAML: yaml: line 1: did not find expected ',' or '}'"}},
 
-		{"a plugin without its type", "plugins: {router: {address: 192.168.1.1}}", []string{"plugins.router: a plugin has a type: one of freebsd, linux, mikrotik"}},
-		{"a plugin of a type there is none of", "plugins: {router: {type: cisco}}", []string{`plugins.router.type: no such type of plugin, "cisco": they are freebsd, linux, mikrotik`}},
-		{"a field its type doesn't have", "plugins: {router: {type: linux, interval: 60s, address: 192.168.1.1, username: root, password: x, use_tls: true}}",
+		{"a plugin without its type", "plugins:\n  router:\n    address: 192.168.1.1", []string{"plugins.router: a plugin has a type: one of freebsd, linux, mikrotik"}},
+		{"a plugin of a type there is none of", "plugins:\n  router:\n    type: cisco", []string{`plugins.router.type: no such type of plugin, "cisco": they are freebsd, linux, mikrotik`}},
+		{"a field its type doesn't have", "plugins:\n  router:\n    type: linux\n    interval: 60s\n    address: 192.168.1.1\n    username: root\n    password: x\n    use_tls: true",
 			[]string{"plugins.router.use_tls: no such field of a linux plugin: it has interval, address, username, password, identity_file, host_key"}},
-		{"a plugin without what it needs", "plugins: {router: {type: mikrotik, interval: 60s}}",
+		{"a plugin without what it needs", "plugins:\n  router:\n    type: mikrotik\n    interval: 60s",
 			[]string{"plugins.router: a mikrotik plugin needs its address", "plugins.router: a mikrotik plugin needs its username"}},
 		// A number is not taken for a string: YAML reads 012345 as 5349.
-		{"fields of the wrong type", "plugins: {router: {type: mikrotik, interval: often, address: 192.168.88.1, username: admin, password: 012345, use_tls: \"yes\"}}", []string{
+		{"fields of the wrong type", "plugins:\n  router:\n    type: mikrotik\n    interval: often\n    address: 192.168.88.1\n    username: admin\n    password: 012345\n    use_tls: \"yes\"", []string{
 			`plugins.router.interval: "often" is not a duration, as 90s or 4h, nor a number of seconds`,
 			"plugins.router.password: 5349 is not a string: write it in quotes",
 			`plugins.router.use_tls: "yes" is not true or false`}},
-		{"a plugin that is nothing", "plugins: {router: }", []string{"plugins.router: it is empty"}},
-		{"what the plugin itself refuses", "plugins: {router: {type: linux, interval: 60s, address: 192.168.1.1, username: root}}",
+		{"a plugin that is nothing", "plugins:\n  router:", []string{"plugins.router: it is empty"}},
+		{"what the plugin itself refuses", "plugins:\n  router:\n    type: linux\n    interval: 60s\n    address: 192.168.1.1\n    username: root",
 			[]string{"plugins.router: a linux plugin needs a password or an identity file"}},
-		{"a fingerprint without TLS", "plugins: {router: {type: mikrotik, interval: 60s, address: 192.168.88.1, username: admin, tls_fingerprint: \"" + strings.Repeat("ab", 32) + "\"}}",
+		{"a fingerprint without TLS", "plugins:\n  router:\n    type: mikrotik\n    interval: 60s\n    address: 192.168.88.1\n    username: admin\n    tls_fingerprint: \"" + strings.Repeat("ab", 32) + "\"",
 			[]string{"plugins.router: tls_fingerprint needs use_tls=true: without TLS there is no certificate to check"}},
 	} {
 		_, err := Parse([]byte(tt.file))
@@ -288,12 +304,12 @@ func TestParseErrors(t *testing.T) {
 // default it is on where it can be, and off elsewhere, with no error.
 func TestParseProtocolsOfLinux(t *testing.T) {
 	for _, protocol := range []string{"arp-listen", "dhcp", "lldp"} {
-		_, err := Parse([]byte("protocols: {" + protocol + ": {enabled: true}}"))
+		_, err := Parse([]byte("protocols:\n  " + protocol + ":\n    enabled: true"))
 		want := "the " + protocol + " protocol is enabled, and this system can't run it: it needs Linux"
 		if linux && err != nil || !linux && (err == nil || err.Error() != want) {
 			t.Errorf("%s enabled on %s: %v", protocol, runtime.GOOS, err)
 		}
-		if _, err := Parse([]byte("protocols: {" + protocol + ": {enabled: false}}")); err != nil {
+		if _, err := Parse([]byte("protocols:\n  " + protocol + ":\n    enabled: false")); err != nil {
 			t.Errorf("%s disabled: %v", protocol, err)
 		}
 	}
@@ -306,10 +322,10 @@ func TestParseProtocolsOfLinux(t *testing.T) {
 func TestLoad(t *testing.T) {
 	dir := t.TempDir()
 	good, bad := filepath.Join(dir, "good.yaml"), filepath.Join(dir, "bad.yaml")
-	if err := os.WriteFile(good, []byte("ipv4: {enabled: true}\n"), 0o600); err != nil {
+	if err := os.WriteFile(good, []byte("ipv4:\n  enabled: true\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(bad, []byte("ipv4: {enable: true}\n"), 0o600); err != nil {
+	if err := os.WriteFile(bad, []byte("ipv4:\n  enable: true\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if file, err := Load(good); err != nil || !file.IPv4.Enabled {
@@ -341,7 +357,7 @@ func TestDiscoveryAmongOtherSettings(t *testing.T) {
 	}
 	err := json.Unmarshal([]byte(`{"discovery": {"ipv4": true, "log_level": "debug", "protocols": {"mdns": {"asks": true}}}}`), &s)
 	for _, want := range []string{
-		"ipv4: true is not its settings: it is written ipv4: {enabled: true}",
+		"ipv4: true is not its settings: it is written as ipv4, with enabled: true under it",
 		"log_level: no such key: the configuration has lifetime, rediscover, interfaces, exclude_interfaces, ipv6, ipv4, hostnames, protocols, plugins",
 		"protocols.mdns.asks: no such option of mdns: it has enabled, ask",
 	} {
@@ -372,7 +388,7 @@ func TestDiscoveryAmongOtherSettings(t *testing.T) {
 
 // The plugins of a file are those the registry has, each field as its type writes it.
 func TestPluginWrittenAndRead(t *testing.T) {
-	file, err := Parse([]byte("plugins: {router: {type: mikrotik, interval: 60s, address: 192.168.88.1, username: admin, password: \" secret \", use_tls: true}}"))
+	file, err := Parse([]byte("plugins:\n  router:\n    type: mikrotik\n    interval: 60s\n    address: 192.168.88.1\n    username: admin\n    password: \" secret \"\n    use_tls: true"))
 	if err != nil {
 		t.Fatal(err)
 	}

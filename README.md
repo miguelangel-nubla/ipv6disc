@@ -36,7 +36,8 @@ ipv4:
 hostnames:
   enabled: true
 protocols:
-  mdns: {enabled: true}
+  mdns:
+    enabled: true
 plugins:
   router:
     type: mikrotik

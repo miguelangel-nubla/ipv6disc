@@ -108,7 +108,7 @@ func mapping(path string, raw json.RawMessage, typ reflect.Type) (map[string]jso
 	var on bool
 	if typ.Kind() == reflect.Struct && json.Unmarshal(raw, &on) == nil {
 		if _, ok := fieldsOf(typ).index["enabled"]; ok {
-			return nil, fmt.Errorf("%s: %s is not its settings: it is written %s: {enabled: %t}", path, raw, key, on)
+			return nil, fmt.Errorf("%s: %s is not its settings: it is written as %s, with enabled: %t under it", path, raw, key, on)
 		}
 	}
 	return nil, fmt.Errorf("%s: %s is not a mapping of its keys", path, raw)
