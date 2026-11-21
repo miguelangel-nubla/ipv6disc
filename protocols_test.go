@@ -411,7 +411,7 @@ func TestNamingWithoutNames(t *testing.T) {
 	n := newTestNamer(t)
 	n.names = false
 	n.state.SetNames(false, 0)
-	n.state.registerLocal(hostMAC(1), hostIPv4(1), "eth0", time.Hour, nil)
+	n.state.registerLocal(hostMAC(1), hostIPv4(1), Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, time.Hour, nil)
 
 	// A record of a host the state has, and one of an address it doesn't: the address is asked of
 	// the discovery, and nothing waits for it.
@@ -445,7 +445,7 @@ func TestNamingLeavesOutASilentProtocol(t *testing.T) {
 	n.askers = func(iface string) []*NameProtocol {
 		return []*NameProtocol{{Name: NameMDNS, Worker: n.asker, silent: true}, {Name: NameLLMNR, Worker: other}}
 	}
-	n.state.registerLocal(hostMAC(1), hostIPv4(1), "eth0", time.Hour, nil)
+	n.state.registerLocal(hostMAC(1), hostIPv4(1), Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, time.Hour, nil)
 	n.lookups()
 	if asked := n.asker.take(); len(asked) != 0 {
 		t.Errorf("mDNS, told not to ask, asked %v", asked)

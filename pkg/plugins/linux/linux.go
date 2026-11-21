@@ -155,7 +155,7 @@ func (p *LinuxPlugin) parseNeighbors(output string, state *ipv6disc.State) (int,
 		}
 
 		neighbors[ip.Unmap().WithZone("")] = hw
-		if _, existing := state.Register(hw, ip, p.Name(), p.lifetime, nil); !existing {
+		if _, existing := state.Report(hw, ip, p.Name(), "linux", ipv6disc.FromNeighbors, p.lifetime, nil); !existing {
 			count++
 		}
 	}

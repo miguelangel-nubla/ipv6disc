@@ -165,12 +165,12 @@ const arpNewMost = 1024
 // interface itself: its address, or its MAC, in a frame of another's. Nor the address of the
 // subnet itself, or its broadcast one, which the kernel resolves for nobody and so never had in
 // its table. It returns whether it is a host found.
-func (w *Worker) heardARP(i ipv4Interface) func(netip.Addr, net.HardwareAddr) bool {
+func (w *Worker) heardARP(i ipv4Interface) func(netip.Addr, net.HardwareAddr, string) bool {
 	name, own, prefixes := i.iface.Name, i.iface.HardwareAddr.String(), i.prefixes
 	// The listener calls it from its one reading.
 	var since time.Time
 	found := 0
-	return func(ip netip.Addr, mac net.HardwareAddr) bool {
+	return func(ip netip.Addr, mac net.HardwareAddr, way string) bool {
 		if !slices.ContainsFunc(prefixes, func(p netip.Prefix) bool { return hostOf(p, ip) }) ||
 			slices.ContainsFunc(prefixes, func(p netip.Prefix) bool { return p.Addr() == ip }) || mac.String() == own {
 			return false
@@ -184,7 +184,7 @@ func (w *Worker) heardARP(i ipv4Interface) func(netip.Addr, net.HardwareAddr) bo
 			}
 			found++
 		}
-		_, existing := w.State.registerLocal(mac, ip, name, w.config.Lifetime, nil)
+		_, existing := w.registerFound(mac, ip, Record{Protocol: ProtocolARP, Way: Way(way), On: name}, nil)
 		return !existing
 	}
 }
@@ -255,7 +255,7 @@ func (w *Worker) SolicitIPv4(ctx context.Context, targets []IPv4Target) (int, er
 			addrs, err := arp.Probe(ctx, &p.iface.iface, p.local.Addr(), target.MAC, p.asked)
 			// What was found before an error counts too.
 			for _, ip := range addrs {
-				w.State.registerLocal(target.MAC, ip, p.name, w.config.Lifetime, nil)
+				w.registerFound(target.MAC, ip, Record{Protocol: ProtocolARP, Way: Answered, On: p.name}, nil)
 				if !known[ip] {
 					found++
 				}
@@ -461,9 +461,13 @@ func (w *Worker) readIPv4Table(interfaces map[string]ipv4Interface, swept time.T
 			continue
 		}
 		if n.Confirmed.IsZero() || !swept.IsZero() && !n.Confirmed.Before(swept) || !n.Confirmed.Before(time.Now()) {
-			w.State.registerLocal(n.MAC, n.IP, n.Interface, w.config.Lifetime, nil)
+			w.registerFound(n.MAC, n.IP, Record{By: ReportedByKernel, From: FromNeighbors, On: n.Interface}, nil)
 		} else {
-			w.State.registerLocalSeen(n.MAC, n.IP, n.Interface, w.config.Lifetime, n.Confirmed)
+			if addr, _ := w.State.registerLocalSeen(n.MAC, n.IP, Record{By: ReportedByKernel, From: FromNeighbors, On: n.Interface}, w.config.Lifetime, n.Confirmed); addr != nil {
+				for _, k := range w.causes.take(n.Interface, n.IP, n.MAC, time.Now()) {
+					w.State.registerLocal(n.MAC, n.IP, Record{Protocol: k.protocol, Way: k.way, On: n.Interface}, w.config.Lifetime, nil)
+				}
+			}
 		}
 	}
 	return nil

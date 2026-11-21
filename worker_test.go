@@ -416,7 +416,7 @@ func TestPingerFor(t *testing.T) {
 	// The worker that first saw the address stopped: another of the interface pings it.
 	delete(w.protocolConns, workerKey{2, "eth0", netip.MustParseAddr("2001:db8:1::5"), ""})
 	mac, _ := net.ParseMAC("00:1a:2b:3c:4d:14")
-	a, _ := w.State.registerLocal(mac, netip.MustParseAddr("2001:db8:1::99"), "eth0", time.Hour, w.pingBeforeExpiration)
+	a, _ := w.State.registerLocal(mac, netip.MustParseAddr("2001:db8:1::99"), Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, time.Hour, w.pingBeforeExpiration)
 	defer a.Unwatch()
 	w.pingBeforeExpiration(a, 3)
 	if temporary.sent != 1 || stable.sent+ula.sent+other.sent != 0 {

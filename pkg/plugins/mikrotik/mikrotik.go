@@ -231,7 +231,7 @@ func (p *MikrotikPlugin) discover(ctx context.Context, state *ipv6disc.State) (i
 			// A link-local address comes with the router's interface as its zone, fe80::2%bridge:
 			// the state keys and shows addresses without their zone, so it is never taken for an
 			// interface of this machine.
-			if _, existing := state.Register(hw, ip, p.Name(), p.lifetime, nil); !existing {
+			if _, existing := state.Report(hw, ip, p.Name(), "mikrotik", ipv6disc.FromNeighbors, p.lifetime, nil); !existing {
 				found++
 			}
 		}

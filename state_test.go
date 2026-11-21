@@ -169,7 +169,7 @@ func TestExpirationCallbackOfALaterRegistration(t *testing.T) {
 	events := make(chan AddrExpirationRemainingEvents, 8)
 	callback := func(_ *Addr, remaining AddrExpirationRemainingEvents) { events <- remaining }
 	state.Register(mac, ip, "router", lifetime, nil)
-	a, existing := state.registerLocal(mac, ip, "eth0", lifetime, callback)
+	a, existing := state.registerLocal(mac, ip, Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, lifetime, callback)
 	if !existing {
 		t.Fatal("the second registration made a new address")
 	}
@@ -182,9 +182,9 @@ func TestExpirationCallbackOfALaterRegistration(t *testing.T) {
 	// The first given stays: a registration without, or with another, changes nothing.
 	state = NewState()
 	later := make(chan AddrExpirationRemainingEvents, 8)
-	state.registerLocal(mac, ip, "eth0", lifetime, callback)
+	state.registerLocal(mac, ip, Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, lifetime, callback)
 	state.Register(mac, ip, "router", lifetime, nil)
-	state.registerLocal(mac, ip, "eth1", lifetime, func(_ *Addr, remaining AddrExpirationRemainingEvents) { later <- remaining })
+	state.registerLocal(mac, ip, Record{Protocol: ProtocolNDP, Way: Heard, On: "eth1"}, lifetime, func(_ *Addr, remaining AddrExpirationRemainingEvents) { later <- remaining })
 	if warnings := expiration(events); warnings == 0 {
 		t.Error("the local discovery first, then a plugin: no event before the expiration")
 	}
@@ -355,7 +355,7 @@ func TestRemoveSelf(t *testing.T) {
 	state := NewState()
 	state.SetFamilies(true, true)
 	state.RegisterSelf(mac, ip, "eth0", false, time.Hour, nil)
-	n, _ := state.registerLocal(mac, neighbor, "eth0", time.Hour, nil)
+	n, _ := state.registerLocal(mac, neighbor, Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, time.Hour, nil)
 	defer n.Unwatch()
 	changes, cancel := state.Subscribe()
 	defer cancel()
@@ -529,7 +529,7 @@ func TestStateConcurrently(t *testing.T) {
 			case 0:
 				state.Register(mac, ip(i), "router", 2*time.Millisecond, onExpiration)
 			case 1:
-				state.registerLocal(mac, ip(i), "eth0", 3*time.Millisecond, onExpiration)
+				state.registerLocal(mac, ip(i), Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, 3*time.Millisecond, onExpiration)
 			case 2:
 				state.RegisterSelf(mac, ip(i), "eth1", false, 2*time.Millisecond, nil)
 			case 3:
@@ -600,7 +600,7 @@ func TestRegisterLocalSeen(t *testing.T) {
 	t.Run("new", func(t *testing.T) {
 		state := ipv4State()
 		seen := time.Now().Add(-10 * time.Second)
-		a, existing := state.registerLocalSeen(mac, ip, "eth0", time.Minute, seen)
+		a, existing := state.registerLocalSeen(mac, ip, Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, time.Minute, seen)
 		if a == nil || existing {
 			t.Fatalf("got %v, %v", a, existing)
 		}
@@ -613,7 +613,7 @@ func TestRegisterLocalSeen(t *testing.T) {
 
 	t.Run("too old", func(t *testing.T) {
 		state := ipv4State()
-		if a, _ := state.registerLocalSeen(mac, ip, "eth0", time.Minute, time.Now().Add(-61*time.Second)); a != nil {
+		if a, _ := state.registerLocalSeen(mac, ip, Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, time.Minute, time.Now().Add(-61*time.Second)); a != nil {
 			t.Errorf("registered %v", a)
 		}
 		assert.Empty(t, state.GetAll())
@@ -621,10 +621,10 @@ func TestRegisterLocalSeen(t *testing.T) {
 
 	t.Run("never shortens", func(t *testing.T) {
 		state := ipv4State()
-		a, _ := state.registerLocal(mac, ip, "eth0", time.Minute, nil)
+		a, _ := state.registerLocal(mac, ip, Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, time.Minute, nil)
 		defer a.Unwatch()
 		before := a.GetExpiration()
-		b, existing := state.registerLocalSeen(mac, ip, "eth1", time.Minute, time.Now().Add(-10*time.Second))
+		b, existing := state.registerLocalSeen(mac, ip, Record{Protocol: ProtocolNDP, Way: Heard, On: "eth1"}, time.Minute, time.Now().Add(-10*time.Second))
 		if b != a || !existing {
 			t.Fatalf("got %v, %v", b, existing)
 		}
@@ -634,18 +634,23 @@ func TestRegisterLocalSeen(t *testing.T) {
 
 	t.Run("extends", func(t *testing.T) {
 		state := ipv4State()
-		a, _ := state.registerLocal(mac, ip, "eth0", 5*time.Second, nil)
+		a, _ := state.registerLocal(mac, ip, Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, 5*time.Second, nil)
 		defer a.Unwatch()
+		// The same record, seen a second ago with a minute: it was seen now already, so it lasts a
+		// minute from now.
+		state.registerLocalSeen(mac, ip, Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, time.Minute, time.Now().Add(-time.Second))
+		near(t, a.GetExpiration(), time.Now().Add(time.Minute))
+		// Another, seen a second ago with a minute and a half: it lasts longest, from when it was seen.
 		seen := time.Now().Add(-time.Second)
-		state.registerLocalSeen(mac, ip, "eth0", time.Minute, seen)
-		near(t, a.GetExpiration(), seen.Add(time.Minute))
+		state.registerLocalSeen(mac, ip, Record{Protocol: ProtocolARP, Way: Answered, On: "eth0"}, 90*time.Second, seen)
+		near(t, a.GetExpiration(), seen.Add(90*time.Second))
 	})
 
 	t.Run("of the family's lifetime", func(t *testing.T) {
 		state := ipv4State()
 		state.SetLifetimes(0, 30*time.Second)
 		seen := time.Now().Add(-10 * time.Second)
-		a, _ := state.registerLocalSeen(mac, ip, "eth0", time.Hour, seen)
+		a, _ := state.registerLocalSeen(mac, ip, Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, time.Hour, seen)
 		defer a.Unwatch()
 		near(t, a.GetExpiration(), seen.Add(30*time.Second))
 	})
@@ -654,7 +659,7 @@ func TestRegisterLocalSeen(t *testing.T) {
 	t.Run("expires", func(t *testing.T) {
 		state := ipv4State()
 		start := time.Now()
-		if a, _ := state.registerLocalSeen(mac, ip, "eth0", 500*time.Millisecond, start.Add(-300*time.Millisecond)); a == nil {
+		if a, _ := state.registerLocalSeen(mac, ip, Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, 500*time.Millisecond, start.Add(-300*time.Millisecond)); a == nil {
 			t.Fatal("not registered")
 		}
 		assert.Eventually(t, func() bool { return len(state.GetAll()) == 0 }, 2*time.Second, 5*time.Millisecond)

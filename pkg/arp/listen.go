@@ -28,7 +28,10 @@ type Listener struct {
 //
 // A host is told at once by what it sends, as it asks for its router or announces its address,
 // where the kernel's table has only those this machine talked to.
-func Listen(iface *net.Interface, heard func(netip.Addr, net.HardwareAddr) bool, onError func(error)) (*Listener, error) {
+//
+// heard is told how, as ipv6disc's records say it: announced, of a gratuitous ARP, whose sender
+// and target are its own address; answered, of a reply; heard, of a request.
+func Listen(iface *net.Interface, heard func(netip.Addr, net.HardwareAddr, string) bool, onError func(error)) (*Listener, error) {
 	c, err := packet.Listen(iface, etherARP, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen for ARP on %s: %w", iface.Name, err)
@@ -36,7 +39,7 @@ func Listen(iface *net.Interface, heard func(netip.Addr, net.HardwareAddr) bool,
 	l := &Listener{conn: c}
 	go c.Run(func(payload []byte, from net.HardwareAddr) {
 		l.PacketsReceived.Add(1)
-		if mac, ip, ok := parseSender(payload, from); ok && heard(ip, mac) {
+		if mac, ip, ok := parseSender(payload, from); ok && heard(ip, mac, wayOf(payload)) {
 			l.HostsFound.Add(1)
 		}
 	}, func(err error) {
@@ -73,6 +76,19 @@ func parseSender(b []byte, source net.HardwareAddr) (net.HardwareAddr, netip.Add
 		return nil, netip.Addr{}, false
 	}
 	return mac, ip, true
+}
+
+// wayOf is how an ARP packet that parseSender took tells its sender: a gratuitous one, of the sender
+// announcing its own address to all, a request or a reply for it; a reply, of an answer; any other
+// request, of a host that uses the address.
+func wayOf(b []byte) string {
+	if netip.AddrFrom4([4]byte(b[14:18])) == netip.AddrFrom4([4]byte(b[24:28])) {
+		return "announced"
+	}
+	if binary.BigEndian.Uint16(b[6:8]) == opReply {
+		return "answered"
+	}
+	return "heard"
 }
 
 // Stats are the counters: nothing is sent, nor probed.

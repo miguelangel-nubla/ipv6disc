@@ -96,7 +96,7 @@ func (p *FreeBSDPlugin) discover(ctx context.Context, state *ipv6disc.State, onE
 	found, neighbors := p.parseNeighbors(ndpOutput, state)
 	for _, n := range arp.ParseBSD(arpOutput) {
 		neighbors[n.IP] = n.MAC
-		if _, existing := state.Register(n.MAC, n.IP, p.Name(), p.lifetime, nil); !existing {
+		if _, existing := state.Report(n.MAC, n.IP, p.Name(), "freebsd", ipv6disc.FromNeighbors, p.lifetime, nil); !existing {
 			found++
 		}
 	}
@@ -169,7 +169,7 @@ func (p *FreeBSDPlugin) parseNeighbors(output string, state *ipv6disc.State) (in
 		}
 
 		neighbors[ip.WithZone("")] = hw
-		if _, existing := state.Register(hw, ip, p.Name(), p.lifetime, nil); !existing {
+		if _, existing := state.Report(hw, ip, p.Name(), "freebsd", ipv6disc.FromNeighbors, p.lifetime, nil); !existing {
 			count++
 		}
 	}

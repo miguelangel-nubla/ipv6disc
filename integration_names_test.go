@@ -89,8 +89,14 @@ const sayEnv = "IPV6DISC_TEST_SAY"
 // namespace.
 func sayName(t *testing.T, namespace string, from netip.Addr, name string, to netip.AddrPort) {
 	t.Helper()
+	sayNameOf(t, namespace, from, name, from, to)
+}
+
+// sayNameOf is sayName of a record of another address than the sender's, as a proxy sends.
+func sayNameOf(t *testing.T, namespace string, from netip.Addr, name string, of netip.Addr, to netip.AddrPort) {
+	t.Helper()
 	cmd := exec.Command("ip", "netns", "exec", namespace, os.Args[0], "-test.run=^TestSayName$")
-	cmd.Env = append(os.Environ(), sayEnv+"="+from.String()+" "+name+" "+to.String())
+	cmd.Env = append(os.Environ(), sayEnv+"="+from.String()+" "+name+" "+to.String()+" "+of.String())
 	if out, err := cmd.CombinedOutput(); err != nil || !strings.Contains(string(out), "SAID") {
 		t.Fatalf("saying %s from %s to %s: %v\n%s", name, from, to, err, out)
 	}
@@ -99,10 +105,10 @@ func sayName(t *testing.T, namespace string, from netip.Addr, name string, to ne
 // TestSayName is no test, but what sayName runs in a namespace.
 func TestSayName(t *testing.T) {
 	fields := strings.Fields(os.Getenv(sayEnv))
-	if len(fields) != 3 {
+	if len(fields) != 4 {
 		t.Skip("run by sayName, in a namespace")
 	}
-	from, to := netip.MustParseAddr(fields[0]), netip.MustParseAddrPort(fields[2])
+	from, to, of := netip.MustParseAddr(fields[0]), netip.MustParseAddrPort(fields[2]), netip.MustParseAddr(fields[3])
 	name, err := dnsmessage.NewName(fields[1])
 	if err != nil {
 		t.Fatal(err)
@@ -116,9 +122,11 @@ func TestSayName(t *testing.T) {
 	network := "udp6"
 	if from.Is4() {
 		network = "udp4"
-		err = b.AResource(header, dnsmessage.AResource{A: from.As4()})
+	}
+	if of.Is4() {
+		err = b.AResource(header, dnsmessage.AResource{A: of.As4()})
 	} else {
-		err = b.AAAAResource(header, dnsmessage.AAAAResource{AAAA: from.As16()})
+		err = b.AAAAResource(header, dnsmessage.AAAAResource{AAAA: of.As16()})
 	}
 	if err != nil {
 		t.Fatal(err)

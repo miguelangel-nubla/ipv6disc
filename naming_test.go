@@ -100,13 +100,13 @@ func hostIPv4(i int) netip.Addr {
 // nor a host no local interface saw, nor one at an address no protocol asks.
 func TestNamingAsksTheHostsWithoutAName(t *testing.T) {
 	n := newTestNamer(t)
-	n.state.registerLocal(hostMAC(1), hostIPv4(1), "eth0", time.Hour, nil)
-	n.state.Register(hostMAC(2), hostIPv4(2), "router", time.Hour, nil)                            // a plugin's
-	n.state.registerLocal(hostMAC(3), netip.MustParseAddr("10.0.0.3"), "eth0", time.Hour, nil)     // off the asker's link
-	n.state.registerLocal(hostMAC(4), hostIPv4(4), "eth1", time.Hour, nil)                         // an interface with no protocol
-	n.state.RegisterSelf(hostMAC(5), hostIPv4(5), "eth0", false, time.Hour, nil)                   // this machine
-	n.state.registerLocal(hostMAC(5), netip.MustParseAddr("192.168.1.55"), "eth0", time.Hour, nil) // another address of it
-	n.state.registerLocal(hostMAC(6), hostIPv4(6), "eth0", time.Hour, nil)                         // named already
+	n.state.registerLocal(hostMAC(1), hostIPv4(1), Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, time.Hour, nil)
+	n.state.Register(hostMAC(2), hostIPv4(2), "router", time.Hour, nil)                                                                           // a plugin's
+	n.state.registerLocal(hostMAC(3), netip.MustParseAddr("10.0.0.3"), Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, time.Hour, nil)     // off the asker's link
+	n.state.registerLocal(hostMAC(4), hostIPv4(4), Record{Protocol: ProtocolNDP, Way: Heard, On: "eth1"}, time.Hour, nil)                         // an interface with no protocol
+	n.state.RegisterSelf(hostMAC(5), hostIPv4(5), "eth0", false, time.Hour, nil)                                                                  // this machine
+	n.state.registerLocal(hostMAC(5), netip.MustParseAddr("192.168.1.55"), Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, time.Hour, nil) // another address of it
+	n.state.registerLocal(hostMAC(6), hostIPv4(6), Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, time.Hour, nil)                         // named already
 	n.state.RegisterName(hostMAC(6), "named", "router", time.Hour)
 	n.state.RegisterName(hostMAC(2), "elsewhere", "router", time.Hour)
 
@@ -170,7 +170,7 @@ func (n *testNamer) sayAgain(hw net.HardwareAddr, lifetime, left time.Duration) 
 // when it has less than three rediscovery intervals left, and then once in each.
 func TestNamingAsksBeforeANameExpires(t *testing.T) {
 	n := newTestNamer(t)
-	n.state.registerLocal(hostMAC(1), hostIPv4(1), "eth0", 24*time.Hour, nil)
+	n.state.registerLocal(hostMAC(1), hostIPv4(1), Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, 24*time.Hour, nil)
 	// The state's clock is the machine's: the namer's follows it.
 	n.state.RegisterName(hostMAC(1), "printer", "mdns", 2*time.Hour)
 	expiration := n.state.NamesOf(hostMAC(1))[0].Expiration
@@ -192,7 +192,7 @@ func TestNamingAsksBeforeANameExpires(t *testing.T) {
 
 	// A name with a lifetime shorter than that: from half of it.
 	short := newTestNamer(t)
-	short.state.registerLocal(hostMAC(1), hostIPv4(1), "eth0", 24*time.Hour, nil)
+	short.state.registerLocal(hostMAC(1), hostIPv4(1), Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, 24*time.Hour, nil)
 	short.state.RegisterName(hostMAC(1), "printer", "mdns", 12*time.Minute)
 	expiration = short.state.NamesOf(hostMAC(1))[0].Expiration
 	short.clock = expiration.Add(-7 * time.Minute)
@@ -213,7 +213,7 @@ func TestNamingRate(t *testing.T) {
 	n := newTestNamer(t)
 	const hosts = 3*namingRate + 5
 	for i := 1; i <= hosts; i++ {
-		n.state.registerLocal(hostMAC(i), hostIPv4(i), "eth0", time.Hour, nil)
+		n.state.registerLocal(hostMAC(i), hostIPv4(i), Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, time.Hour, nil)
 	}
 	asked := make(map[netip.Addr]int)
 	var perSecond []int
@@ -250,7 +250,7 @@ func TestNamingAsksWhereTheHostAnswers(t *testing.T) {
 	n := newTestNamer(t)
 	ipv4, global, linkLocal := hostIPv4(1), netip.MustParseAddr("2001:db8::1"), netip.MustParseAddr("fe80::1")
 	for _, addr := range []netip.Addr{linkLocal, global, ipv4} {
-		n.state.registerLocal(hostMAC(1), addr, "eth0", time.Hour, nil)
+		n.state.registerLocal(hostMAC(1), addr, Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, time.Hour, nil)
 	}
 	next := func() netip.Addr {
 		t.Helper()
@@ -297,9 +297,9 @@ func TestNamingTakesOnlyTheSendersOwnRecords(t *testing.T) {
 	n := newTestNamer(t)
 	proxy, sleeper := hostMAC(1), hostMAC(2)
 	proxy4, proxy6, sleeper4 := hostIPv4(1), netip.MustParseAddr("2001:db8::1"), hostIPv4(2)
-	n.state.registerLocal(proxy, proxy4, "eth0", time.Hour, nil)
-	n.state.registerLocal(proxy, proxy6, "eth0", time.Hour, nil)
-	n.state.registerLocal(sleeper, sleeper4, "eth0", time.Hour, nil)
+	n.state.registerLocal(proxy, proxy4, Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, time.Hour, nil)
+	n.state.registerLocal(proxy, proxy6, Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, time.Hour, nil)
+	n.state.registerLocal(sleeper, sleeper4, Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, time.Hour, nil)
 
 	// The proxy's response: its own records, and the sleeper's.
 	n.said("eth0", proxy4, "proxy.local.", proxy4, true)
@@ -368,13 +368,13 @@ func TestNamingWaitsForTheDiscovery(t *testing.T) {
 	}
 
 	// The discovery answers: the sender's address only, so far.
-	n.state.registerLocal(host, from, "eth0", time.Hour, nil)
+	n.state.registerLocal(host, from, Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, time.Hour, nil)
 	n.resolve()
 	if got := n.state.AllNames(); len(got) != 0 {
 		t.Errorf("named before its other address is known to be its own: %v", got)
 	}
-	n.state.registerLocal(host, own, "eth0", time.Hour, nil)
-	n.state.registerLocal(other, others, "eth0", time.Hour, nil)
+	n.state.registerLocal(host, own, Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, time.Hour, nil)
+	n.state.registerLocal(other, others, Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, time.Hour, nil)
 	n.resolve()
 	if got := namesOf(n.state, host); !slices.Equal(got, []string{"printer (mdns)"}) {
 		t.Errorf("the names of the sender: %v", got)
@@ -434,7 +434,7 @@ func TestNamingAsksTheDiscoveryWhenItCan(t *testing.T) {
 // nobody when it has it at none.
 func TestNamingAnswered(t *testing.T) {
 	n := newTestNamer(t)
-	n.state.registerLocal(hostMAC(1), hostIPv4(1), "eth0", time.Hour, nil)
+	n.state.registerLocal(hostMAC(1), hostIPv4(1), Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, time.Hour, nil)
 	n.answered("eth0", hostIPv4(9), "ghost.local.")
 	n.answered("eth0", hostIPv4(1), "*")
 	if got := n.state.AllNames(); len(got) != 0 {
@@ -668,9 +668,9 @@ func TestNamingManyHosts(t *testing.T) {
 	// The discovery: the hosts come, with addresses that last a moment, some seen again.
 	loop(func(round int) {
 		i := round % hosts
-		state.registerLocal(hostMAC(i), addr4(i), "eth0", 30*time.Millisecond, nil)
+		state.registerLocal(hostMAC(i), addr4(i), Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, 30*time.Millisecond, nil)
 		if round%3 == 0 {
-			state.registerLocal(hostMAC(i), addr6(i), "eth0", 50*time.Millisecond, nil)
+			state.registerLocal(hostMAC(i), addr6(i), Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, 50*time.Millisecond, nil)
 		}
 		if i == 0 {
 			time.Sleep(time.Millisecond)

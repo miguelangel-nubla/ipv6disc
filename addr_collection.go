@@ -40,12 +40,27 @@ func (c *AddrCollection) Seen(addr *Addr, source ...string) (*Addr, bool) {
 	return addr, existing
 }
 
-// seen is Seen, telling also whether source is new to an address already there.
+// seen is Seen, telling also whether source is new to an address already there. A source given is
+// a record of newAddr's, reported by it, when newAddr has none of it.
 func (c *AddrCollection) seen(newAddr *Addr, source ...string) (*Addr, bool, bool) {
+	if len(source) > 0 && source[0] != "" {
+		newAddr.mutex.Lock()
+		has := false
+		for _, r := range newAddr.records {
+			if r.source() == source[0] {
+				has = true
+			}
+		}
+		if !has {
+			now := time.Now()
+			newAddr.addRecord(Record{By: source[0], FirstSeen: now, LastSeen: now, Lifetime: newAddr.lifetime})
+		}
+		newAddr.mutex.Unlock()
+	}
 	addr, existing := c.Add(newAddr)
 	newSource := false
 	if existing {
-		newSource = addr.seenBy(newAddr, source...)
+		newSource = addr.seenBy(newAddr)
 	}
 	return addr, existing, newSource
 }

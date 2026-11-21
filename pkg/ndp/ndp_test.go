@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"strings"
 	"testing"
 
 	"github.com/mdlayher/ndp"
@@ -37,7 +38,7 @@ func TestProcessNDPPacket(t *testing.T) {
 	}
 	for _, tt := range tests {
 		var got []netip.Addr
-		processNDPPacket(tt.msg, tt.from, func(addr netip.Addr, gotHw net.HardwareAddr) {
+		processNDPPacket(tt.msg, tt.from, func(addr netip.Addr, gotHw net.HardwareAddr, _ string) {
 			if gotHw.String() != hw.String() {
 				t.Errorf("%s: got MAC %s, want %s", tt.name, gotHw, hw)
 			}
@@ -82,5 +83,34 @@ func TestIsSocketError(t *testing.T) {
 	_, err := ndp.ParseMessage([]byte{135, 0})
 	if err == nil || isSocketError(err) {
 		t.Errorf("a message cut short: %v, taken as of the socket", err)
+	}
+}
+
+// How a message tells an address: an advertisement's target, answered when solicited, announced
+// when not; its sender, of another address, and a solicitation's, heard.
+func TestProcessNDPPacketWays(t *testing.T) {
+	hw, _ := net.ParseMAC("00:1a:2b:3c:4d:5e")
+	target := netip.MustParseAddr("2001:db8::1")
+	linkLocal := netip.MustParseAddr("fe80::1")
+	targetLLA := []ndp.Option{&ndp.LinkLayerAddress{Direction: ndp.Target, Addr: hw}}
+	for _, c := range []struct {
+		name string
+		msg  ndp.Message
+		from netip.Addr
+		want []string
+	}{
+		{"a solicited advertisement", &ndp.NeighborAdvertisement{Override: true, Solicited: true, TargetAddress: target, Options: targetLLA}, target, []string{"2001:db8::1 answered"}},
+		{"an unsolicited one", &ndp.NeighborAdvertisement{Override: true, TargetAddress: target, Options: targetLLA}, target, []string{"2001:db8::1 announced"}},
+		{"one from another address", &ndp.NeighborAdvertisement{Override: true, Solicited: true, TargetAddress: target, Options: targetLLA}, linkLocal, []string{"2001:db8::1 answered", "fe80::1 heard"}},
+		{"a proxy's", &ndp.NeighborAdvertisement{Solicited: true, TargetAddress: target, Options: targetLLA}, linkLocal, []string{"fe80::1 heard"}},
+		{"a solicitation", &ndp.NeighborSolicitation{TargetAddress: linkLocal, Options: []ndp.Option{&ndp.LinkLayerAddress{Direction: ndp.Source, Addr: hw}}}, target, []string{"2001:db8::1 heard"}},
+	} {
+		var got []string
+		processNDPPacket(c.msg, c.from, func(addr netip.Addr, _ net.HardwareAddr, way string) {
+			got = append(got, addr.String()+" "+way)
+		})
+		if strings.Join(got, ", ") != strings.Join(c.want, ", ") {
+			t.Errorf("%s: %v, want %v", c.name, got, c.want)
+		}
 	}
 }

@@ -305,12 +305,22 @@ func TestIPv4SelfAddressesGone(t *testing.T) {
 }
 
 // The latest registration says how long an address stays.
+// Each record has its lifetime: a later registration of the same one gives it its own, and the
+// address stays while the record that lasts longest does, whatever the others.
 func TestAddressTakesTheLatestLifetime(t *testing.T) {
 	mac, _ := net.ParseMAC("00:1a:2b:3c:4d:0b")
 	state := NewState()
-	a, _ := state.Register(mac, netip.MustParseAddr("2001:db8::1"), "router", time.Hour, nil)
+	ip := netip.MustParseAddr("2001:db8::1")
+	a, _ := state.Register(mac, ip, "router", time.Hour, nil)
 	defer a.Unwatch()
-	state.Register(mac, netip.MustParseAddr("2001:db8::1"), "eth0", time.Minute, nil)
+	// Another, shorter: the router's hour stays.
+	state.Register(mac, ip, "eth0", time.Minute, nil)
+	if until := time.Until(a.GetExpiration()); until < 59*time.Minute {
+		t.Errorf("expires in %s, want the router's hour", until)
+	}
+	// The router's again, of a minute: the latest says how long it stays, and the address goes
+	// with the longest left, a minute.
+	state.Register(mac, ip, "router", time.Minute, nil)
 	if until := time.Until(a.GetExpiration()); until > 2*time.Minute {
 		t.Errorf("expires in %s, want a minute", until)
 	}
@@ -328,7 +338,7 @@ func TestInterfacesOfAMACAreLocalOnly(t *testing.T) {
 	if got := w.interfacesOf(mac, interfaces); !slices.Equal(got, []string{"eth0", "eth1"}) {
 		t.Errorf("seen by a plugin only: %v, want every interface", got)
 	}
-	b, _ := w.State.registerLocal(mac, netip.MustParseAddr("192.0.2.1"), "eth1", time.Hour, nil)
+	b, _ := w.State.registerLocal(mac, netip.MustParseAddr("192.0.2.1"), Record{Protocol: ProtocolNDP, Way: Heard, On: "eth1"}, time.Hour, nil)
 	if b != a || !slices.Equal(a.Interfaces(), []string{"eth1"}) || !slices.Equal(a.Sources(), []string{"eth0", "eth1"}) {
 		t.Errorf("interfaces %v, sources %v", a.Interfaces(), a.Sources())
 	}
@@ -446,7 +456,7 @@ func TestIPv4ProbesFollowThePrefixes(t *testing.T) {
 		"eth1": {prefixes: []netip.Prefix{netip.MustParsePrefix("172.16.2.2/24")}}, // lan-ipv6, the IPv6 heard here
 		"eth2": {prefixes: []netip.Prefix{netip.MustParsePrefix("172.20.53.11/29")}},
 	}
-	a, _ := w.State.registerLocal(mac, netip.MustParseAddr("fd00::1"), "eth1", time.Hour, nil)
+	a, _ := w.State.registerLocal(mac, netip.MustParseAddr("fd00::1"), Record{Protocol: ProtocolNDP, Way: Heard, On: "eth1"}, time.Hour, nil)
 	if a == nil {
 		t.Fatal("the IPv6 address not taken")
 	}

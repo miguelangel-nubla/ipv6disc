@@ -865,8 +865,16 @@ func (w *Worker) startInterfaceNames(ctx context.Context, iface net.Interface, k
 			IPv4: key.ipv4, IPv6: key.ipv6,
 			ActiveIPv4: asks && w.config.probesIPv4(), ActiveIPv6: asks && w.config.probesIPv6(),
 		}, mdns.Handler{
-			Heard: func(from netip.Addr) bool { return w.naming.heard(iface.Name, from) },
+			Heard: func(from netip.Addr) bool {
+				w.saw(iface.Name, from, ProtocolMDNS, Heard, nil)
+				return w.naming.heard(iface.Name, from)
+			},
 			Said: func(from netip.Addr, name string, addr netip.Addr, onLink bool) {
+				// An address record of the sender's own: of the address it sent from, or of
+				// another at its MAC. Not another host's, which a proxy announces.
+				if onLink {
+					w.announcedBy(iface.Name, from, addr, ProtocolMDNS)
+				}
 				w.naming.said(iface.Name, from, name, addr, onLink)
 			},
 			Answered: func(asked netip.Addr, name string) { w.naming.answered(iface.Name, asked, name) },
@@ -882,6 +890,7 @@ func (w *Worker) startInterfaceNames(ctx context.Context, iface net.Interface, k
 	if w.config.runs(ProtocolNetBIOS) && key.ipv4 {
 		conn, err := netbios.Listen(&iface, netbios.Handler{
 			Answered: func(asked netip.Addr, name string) {
+				w.saw(iface.Name, asked, ProtocolNetBIOS, Answered, nil)
 				w.naming.answeredBy(NameNetBIOS, iface.Name, asked, name)
 			},
 			Error: onError("NetBIOS"),
@@ -895,6 +904,7 @@ func (w *Worker) startInterfaceNames(ctx context.Context, iface net.Interface, k
 	if w.config.runs(ProtocolLLMNR) {
 		conn, err := llmnr.Listen(&iface, llmnr.Options{IPv4: key.ipv4, IPv6: key.ipv6}, llmnr.Handler{
 			Answered: func(asked, from netip.Addr, name string) {
+				w.saw(iface.Name, from, ProtocolLLMNR, Answered, nil)
 				if from == asked {
 					w.naming.answeredBy(NameLLMNR, iface.Name, asked, name)
 					return
@@ -918,6 +928,8 @@ func (w *Worker) startInterfaceNames(ctx context.Context, iface net.Interface, k
 				var addrs []netip.Addr
 				if m.Addr.IsValid() && key.ipv4 {
 					addrs = append(addrs, m.Addr)
+					// The address the client asks for, its own: of its MAC alone.
+					w.saw(iface.Name, m.Addr, ProtocolDHCP, Announced, m.MAC)
 				}
 				if m.Name == "" && len(addrs) == 0 {
 					return false
@@ -925,6 +937,7 @@ func (w *Worker) startInterfaceNames(ctx context.Context, iface net.Interface, k
 				return w.naming.claimed(NameDHCP, iface.Name, m.MAC, m.Name, addrs)
 			},
 			Client6: func(from netip.Addr, hw net.HardwareAddr, m dhcp.Message6) bool {
+				w.saw(iface.Name, from, ProtocolDHCP, Heard, hw)
 				_, named := CleanName(m.Name)
 				named = named && w.config.Hostnames.Enabled
 				if named || !w.config.Hostnames.Enabled {
@@ -942,6 +955,10 @@ func (w *Worker) startInterfaceNames(ctx context.Context, iface net.Interface, k
 	}
 	if w.config.runs(ProtocolLLDP) {
 		conn, err := lldp.Listen(&iface, func(neighbor lldp.Neighbor) bool {
+			// Its management addresses, of the MAC the frame came from.
+			for _, addr := range neighbor.Addrs {
+				w.saw(iface.Name, addr, ProtocolLLDP, Announced, neighbor.Source)
+			}
 			return w.naming.neighbor(iface.Name, neighbor.Source, neighbor.Chassis, neighbor.Name, neighbor.Addrs)
 		}, onError("LLDP"))
 		if err == nil {

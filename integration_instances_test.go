@@ -68,6 +68,8 @@ type reportAddr struct {
 	IP         netip.Addr
 	Self       bool
 	Interfaces []string
+	// How it was seen, each as Record.String says it.
+	Records []string
 }
 
 func snapshot(w *Worker) report {
@@ -79,7 +81,11 @@ func snapshot(w *Worker) report {
 	}
 	for mac, collection := range w.GetAll() {
 		for _, a := range collection.Get() {
-			r.Hosts[mac] = append(r.Hosts[mac], reportAddr{IP: a.WithZone(""), Self: a.Self(), Interfaces: a.Interfaces()})
+			var records []string
+			for _, rec := range a.Records() {
+				records = append(records, rec.String())
+			}
+			r.Hosts[mac] = append(r.Hosts[mac], reportAddr{IP: a.WithZone(""), Self: a.Self(), Interfaces: a.Interfaces(), Records: records})
 		}
 	}
 	w.pcMutex.RLock()

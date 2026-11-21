@@ -26,11 +26,10 @@ type Addr struct {
 	expiration1    *time.Timer
 	expiration     *time.Timer
 	expirationTime time.Time
-	// Of a registration only: when what it registers was seen, past. Zero: now.
-	seenAt  time.Time
-	sources []string
-	// The local interfaces that saw it: sources too, but a plugin can have an interface's name.
-	interfaces []string
+	// How it was seen: by each protocol and way, or reported by each, each with its own times. The
+	// address expires with the last of them; lifetime is that one's.
+	records      map[recordKey]*Record
+	recordsAdded uint64
 	// An address of this machine, rather than of a neighbor; and, of those, one the kernel says is
 	// temporary, a privacy address of IPv6.
 	self, temporary bool
@@ -79,21 +78,34 @@ func (a *Addr) GetExpiration() time.Time {
 	return a.expirationTime
 }
 
-// Sources returns the names of what has seen the address: interfaces and plugins.
+// Sources returns the names of what has seen the address, of its records that count: the local
+// interfaces, and the plugins and others that reported it.
 func (a *Addr) Sources() []string {
 	a.mutex.RLock()
 	defer a.mutex.RUnlock()
 
-	return slices.Clone(a.sources)
+	var sources []string
+	for _, r := range a.liveRecords(time.Now()) {
+		if s := r.source(); s != "" && !slices.Contains(sources, s) {
+			sources = append(sources, s)
+		}
+	}
+	return sources
 }
 
-// Interfaces returns the local interfaces that have seen the address: of its sources, those of
-// the worker's own local discovery, not plugins nor other callers of State.Register.
+// Interfaces returns the local interfaces that have seen the address: of its records, those of the
+// worker's own local discovery, not plugins nor other callers of State.Register.
 func (a *Addr) Interfaces() []string {
 	a.mutex.RLock()
 	defer a.mutex.RUnlock()
 
-	return slices.Clone(a.interfaces)
+	var interfaces []string
+	for _, r := range a.liveRecords(time.Now()) {
+		if r.On != "" && !slices.Contains(interfaces, r.On) {
+			interfaces = append(interfaces, r.On)
+		}
+	}
+	return interfaces
 }
 
 // Self tells whether the address is one of this machine's own, rather than a neighbor's.
@@ -112,31 +124,38 @@ func (a *Addr) Temporary() bool {
 	return a.temporary
 }
 
-// Seen extends the address lifetime, and records the source if one is given.
+// Seen extends the address's lifetime: that of the record it has that lasts longest, seen again
+// now; with a source, a record of it, reported.
 func (a *Addr) Seen(source ...string) {
-	a.seenBy(&Addr{}, source...)
+	by := &Addr{}
+	if len(source) > 0 {
+		a.mutex.RLock()
+		lifetime := a.lifetime
+		a.mutex.RUnlock()
+		by.records = map[recordKey]*Record{}
+		r := Record{By: source[0], LastSeen: time.Now(), Lifetime: lifetime}
+		by.records[r.key()] = &r
+	}
+	a.seenBy(by)
 }
 
-// seenBy is Seen, by a registration of the same address, telling whether the source is new: its
-// lifetime, when not zero, replaces the address's from now on, as the latest registration says how
-// long it stays; it says whether the source is a local interface, and whether the address is this
-// machine's, and temporary. A registration of a sighting past, seenAt, counts from then, and only
-// when it lasts longer than what the address has: an older sighting never shortens it.
-func (a *Addr) seenBy(by *Addr, source ...string) bool {
-	local := len(by.interfaces) > 0
-	from := time.Now()
-	extends := true
+// seenBy is Seen, by a registration of the same address, telling whether it gave the address a
+// source it didn't have: its records are merged into the address's, each seen again or added, and
+// the address then expires with the one that lasts longest, however long the others. A record of a
+// sighting past counts from then: an older sighting never shortens what another gave. It says too
+// whether the address is this machine's, and temporary. Without records, the one that lasts
+// longest is seen again now.
+func (a *Addr) seenBy(by *Addr) bool {
+	now := time.Now()
 	a.mutex.Lock()
-	if !by.seenAt.IsZero() {
-		from = by.seenAt
-		lifetime := a.lifetime
-		if by.lifetime > 0 {
-			lifetime = by.lifetime
+	before := len(a.sourcesLocked(now))
+	if len(by.records) == 0 {
+		if r := a.lasting(now); r != nil {
+			r.LastSeen = now
 		}
-		extends = from.Add(lifetime).After(a.expirationTime)
 	}
-	if by.lifetime > 0 && extends {
-		a.lifetime = by.lifetime
+	for _, r := range by.records {
+		a.addRecord(*r)
 	}
 	if by.self {
 		a.self, a.temporary = true, by.temporary
@@ -144,23 +163,28 @@ func (a *Addr) seenBy(by *Addr, source ...string) bool {
 	if a.notify == nil {
 		a.notify = by.notify
 	}
+	newSource := len(a.sourcesLocked(now)) > before
+	lasting := a.lasting(now)
+	from, changed := time.Time{}, false
+	if lasting != nil && !lasting.Expiration().Equal(a.expirationTime) {
+		a.lifetime, from, changed = lasting.Lifetime, lasting.LastSeen, true
+	}
 	a.mutex.Unlock()
-	if extends {
+	if changed {
 		a.resetTimersFrom(from, true)
 	}
-	if len(source) == 0 {
-		return false
+	return newSource
+}
+
+// sourcesLocked is the sources of the records that count at now, with the mutex held.
+func (a *Addr) sourcesLocked(now time.Time) []string {
+	var sources []string
+	for _, r := range a.liveRecords(now) {
+		if s := r.source(); s != "" && !slices.Contains(sources, s) {
+			sources = append(sources, s)
+		}
 	}
-	a.mutex.Lock()
-	defer a.mutex.Unlock()
-	if local && !slices.Contains(a.interfaces, source[0]) {
-		a.interfaces = append(a.interfaces, source[0])
-	}
-	if slices.Contains(a.sources, source[0]) {
-		return false
-	}
-	a.sources = append(a.sources, source[0])
-	return true
+	return sources
 }
 
 // Watch calls onExpiration on each of the expiration events, until Unwatch is called. An address
@@ -211,25 +235,24 @@ func (a *Addr) watch(again bool) {
 func (a *Addr) leaves(iface string) (was, last bool) {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
-	if !a.self || !slices.Contains(a.interfaces, iface) {
+	if !a.self {
 		return false, false
 	}
-	differs := func(name string) bool { return name != iface }
-	a.interfaces = filterStrings(a.interfaces, differs)
-	a.sources = filterStrings(a.sources, differs)
-	return true, len(a.interfaces) == 0
-}
-
-// filterStrings returns a new slice of those keep accepts: Sources and Interfaces give copies, but
-// nothing is written in place of what a reader may hold.
-func filterStrings(values []string, keep func(string) bool) []string {
-	var result []string
-	for _, v := range values {
-		if keep(v) {
-			result = append(result, v)
+	for k, r := range a.records {
+		if r.On == iface {
+			delete(a.records, k)
+			was = true
 		}
 	}
-	return result
+	if !was {
+		return false, false
+	}
+	for _, r := range a.records {
+		if r.On != "" {
+			return true, false
+		}
+	}
+	return true, true
 }
 
 // Unwatch stops the expiration events. It can be called more than once.
@@ -255,17 +278,20 @@ func NewAddr(hw net.HardwareAddr, addr netip.Addr, source string, lifetime time.
 	if onExpiration == nil {
 		onExpiration = func(*Addr, AddrExpirationRemainingEvents) {}
 	}
+	now := time.Now()
+	r := Record{By: source, FirstSeen: now, LastSeen: now, Lifetime: lifetime, order: 1}
 	return &Addr{
 		Addr:           addr,
 		Hw:             hw,
-		sources:        []string{source},
+		records:        map[recordKey]*Record{r.key(): &r},
+		recordsAdded:   1,
 		lifetime:       lifetime,
 		onExpiration:   onExpiration,
 		expiration3:    time.NewTimer(lifetime / 3 * 2),
 		expiration2:    time.NewTimer(lifetime / 4 * 3),
 		expiration1:    time.NewTimer(lifetime / 5 * 4),
 		expiration:     time.NewTimer(lifetime),
-		expirationTime: time.Now().Add(lifetime),
+		expirationTime: now.Add(lifetime),
 		unwatch:        make(chan struct{}),
 	}
 }

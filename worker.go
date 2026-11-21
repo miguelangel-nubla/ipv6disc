@@ -47,6 +47,8 @@ type Worker struct {
 	nameCancels map[nameKey]context.CancelFunc
 	naming      *namer
 	ipv4Wake    chan struct{}
+	// What protocols saw of addresses whose MACs are being asked.
+	causes causes
 	// The naming protocols of no interface, as the reverse DNS, and the passive listeners of
 	// the IPv4 discovery, by interface: with the same lock too.
 	nameGlobal   []*NameProtocol
@@ -588,8 +590,8 @@ func (w *Worker) StartInterfaceAddr(ctx context.Context, iface net.Interface, ad
 	var ssdpConn *ssdp.Conn
 	var wsdConn *wsd.Conn
 
-	processNDP := func(receivedAddr netip.Addr, receivedNetHardwareAddr net.HardwareAddr) bool {
-		_, existing := w.State.registerLocal(receivedNetHardwareAddr, receivedAddr, iface.Name, w.config.Lifetime, w.pingBeforeExpiration)
+	processNDP := func(receivedAddr netip.Addr, receivedNetHardwareAddr net.HardwareAddr, way string) bool {
+		_, existing := w.registerFound(receivedNetHardwareAddr, receivedAddr, Record{Protocol: ProtocolNDP, Way: Way(way), On: iface.Name}, w.pingBeforeExpiration)
 		return !existing
 	}
 
@@ -628,7 +630,7 @@ func (w *Worker) StartInterfaceAddr(ctx context.Context, iface net.Interface, ad
 	// The other protocols only tell an address: a neighbor solicitation asks its MAC. They are
 	// not enabled without NDP.
 	if w.config.runs(ProtocolPing) {
-		pingConn, err = ping.ListenForICMP(&iface, addr, onFoundAddrFunc(ndpConn, &iface, w.logger, "ICMP echo response"), onError("ICMP"))
+		pingConn, err = ping.ListenForICMP(&iface, addr, w.onFoundAddrFunc(ndpConn, &iface, w.logger, ProtocolPing, "ICMP echo response"), onError("ICMP"))
 		if err != nil {
 			listenFailed("ICMP", err)
 			return
@@ -642,9 +644,9 @@ func (w *Worker) StartInterfaceAddr(ctx context.Context, iface net.Interface, ad
 	if w.config.runs(ProtocolSSDP) {
 		if w.config.fetchesNames(ProtocolSSDP) {
 			wants, named := w.nameFetches(NameSSDP, iface.Name)
-			ssdpConn, err = ssdp.ListenForSSDPNames(&iface, addr, onFoundAddrFunc(ndpConn, &iface, w.logger, "SSDP announcement"), ssdp.Names{Wants: wants, Named: named}, onError("SSDP"))
+			ssdpConn, err = ssdp.ListenForSSDPNames(&iface, addr, w.onFoundAddrFunc(ndpConn, &iface, w.logger, ProtocolSSDP, "SSDP announcement"), ssdp.Names{Wants: wants, Named: named}, onError("SSDP"))
 		} else {
-			ssdpConn, err = ssdp.ListenForSSDP(&iface, addr, onFoundAddrFunc(ndpConn, &iface, w.logger, "SSDP announcement"), onError("SSDP"))
+			ssdpConn, err = ssdp.ListenForSSDP(&iface, addr, w.onFoundAddrFunc(ndpConn, &iface, w.logger, ProtocolSSDP, "SSDP announcement"), onError("SSDP"))
 		}
 		if err != nil {
 			listenFailed("SSDP", err)
@@ -657,9 +659,9 @@ func (w *Worker) StartInterfaceAddr(ctx context.Context, iface net.Interface, ad
 	if w.config.runs(ProtocolWSD) {
 		if w.config.fetchesNames(ProtocolWSD) {
 			wants, named := w.nameFetches(NameWSD, iface.Name)
-			wsdConn, err = wsd.ListenForWSDNames(&iface, addr, onFoundAddrFunc(ndpConn, &iface, w.logger, "WSD message"), wsd.Names{Wants: wants, Named: named}, onError("WSD"))
+			wsdConn, err = wsd.ListenForWSDNames(&iface, addr, w.onFoundAddrFunc(ndpConn, &iface, w.logger, ProtocolWSD, "WSD message"), wsd.Names{Wants: wants, Named: named}, onError("WSD"))
 		} else {
-			wsdConn, err = wsd.ListenForWSD(&iface, addr, onFoundAddrFunc(ndpConn, &iface, w.logger, "WSD message"), onError("WSD"))
+			wsdConn, err = wsd.ListenForWSD(&iface, addr, w.onFoundAddrFunc(ndpConn, &iface, w.logger, ProtocolWSD, "WSD message"), onError("WSD"))
 		}
 		if err != nil {
 			listenFailed("WSD", err)
@@ -751,9 +753,10 @@ func isValidInterface(iface *net.Interface) error {
 	return &InvalidInterfaceError{iface}
 }
 
-// onFoundAddrFunc returns the callback for the addresses a protocol hears from: it asks their MAC,
-// as only NDP tells it, and ignores the interface's own addresses.
-func onFoundAddrFunc(ndpConn *ndp.Conn, iface *net.Interface, logger *zap.SugaredLogger, logString string) func(remoteIP netip.Addr) bool {
+// onFoundAddrFunc returns the callback for the addresses a protocol hears from, which answered its
+// probe: it asks their MAC, as only NDP tells it, and ignores the interface's own addresses. The
+// answer is a record of the protocol's, once the MAC is known.
+func (w *Worker) onFoundAddrFunc(ndpConn *ndp.Conn, iface *net.Interface, logger *zap.SugaredLogger, protocol, logString string) func(remoteIP netip.Addr) bool {
 	return func(remoteIP netip.Addr) bool {
 		if addrs, err := iface.Addrs(); err == nil {
 			for _, a := range addrs {
@@ -769,6 +772,7 @@ func onFoundAddrFunc(ndpConn *ndp.Conn, iface *net.Interface, logger *zap.Sugare
 			zap.String("remote", remoteIP.String()),
 			zap.String("interface", iface.Name),
 		)
+		w.saw(iface.Name, remoteIP, protocol, Answered, nil)
 		if err := ndpConn.SendNeighborSolicitation(&remoteIP); err != nil {
 			logger.Debugw("neighbor solicitation failed",
 				zap.String("remote", remoteIP.String()),

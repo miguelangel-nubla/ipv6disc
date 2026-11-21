@@ -75,7 +75,7 @@ func TestNamingRounds(t *testing.T) {
 	n := newProtocolsNamer(t)
 	ipv4, global, linkLocal := hostIPv4(1), netip.MustParseAddr("2001:db8::1"), netip.MustParseAddr("fe80::1")
 	for _, addr := range []netip.Addr{linkLocal, global, ipv4} {
-		n.state.registerLocal(hostMAC(1), addr, "eth0", 24*time.Hour, nil)
+		n.state.registerLocal(hostMAC(1), addr, Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, 24*time.Hour, nil)
 	}
 
 	// The first asks at once, and hosts are left to ask until the last did.
@@ -130,7 +130,7 @@ func TestNamingRoundEndsWithAName(t *testing.T) {
 	n := newProtocolsNamer(t)
 	ipv4, global := hostIPv4(1), netip.MustParseAddr("2001:db8::1")
 	for _, addr := range []netip.Addr{global, ipv4} {
-		n.state.registerLocal(hostMAC(1), addr, "eth0", 24*time.Hour, nil)
+		n.state.registerLocal(hostMAC(1), addr, Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, 24*time.Hour, nil)
 	}
 	// It answers NetBIOS alone.
 	var asked []string
@@ -177,7 +177,7 @@ func TestNamingRateOfAllProtocols(t *testing.T) {
 	n := newProtocolsNamer(t)
 	const hosts = 12
 	for i := 1; i <= hosts; i++ {
-		n.state.registerLocal(hostMAC(i), hostIPv4(i), "eth0", time.Hour, nil)
+		n.state.registerLocal(hostMAC(i), hostIPv4(i), Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, time.Hour, nil)
 	}
 	total := 0
 	for second := range 30 {
@@ -252,13 +252,13 @@ func TestNamingClaimed(t *testing.T) {
 	}
 
 	// The address is another host's: the name is not that one's, and still waits for its own.
-	n.state.registerLocal(hostMAC(2), addr, "eth0", time.Hour, nil)
+	n.state.registerLocal(hostMAC(2), addr, Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, time.Hour, nil)
 	n.resolve()
 	if len(n.state.AllNames()) != 0 {
 		t.Errorf("the host of the address it told was named: %v", n.state.AllNames())
 	}
 	// The discovery finds a host at the MAC, by any address: it is named.
-	n.state.registerLocal(client, netip.MustParseAddr("2001:db8::20"), "eth0", time.Hour, nil)
+	n.state.registerLocal(client, netip.MustParseAddr("2001:db8::20"), Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, time.Hour, nil)
 	if n.resolve() || len(n.claims) != 0 {
 		t.Error("a name still waits")
 	}
@@ -286,7 +286,7 @@ func TestNamingClaimed(t *testing.T) {
 	if n.resolve() {
 		t.Error("a name waits after its patience")
 	}
-	n.state.registerLocal(hostMAC(4), hostIPv4(40), "eth0", time.Hour, nil)
+	n.state.registerLocal(hostMAC(4), hostIPv4(40), Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, time.Hour, nil)
 	n.resolve()
 	if len(n.state.NamesOf(hostMAC(4))) != 0 {
 		t.Error("named by what was said too long before")
@@ -307,8 +307,8 @@ func TestNamingNamedFrom(t *testing.T) {
 	n := newProtocolsNamer(t)
 	host, other := hostMAC(1), hostMAC(2)
 	linkLocal := netip.MustParseAddr("fe80::1")
-	n.state.registerLocal(host, linkLocal, "eth0", time.Hour, nil)
-	n.state.registerLocal(other, netip.MustParseAddr("fe80::2"), "eth0", time.Hour, nil)
+	n.state.registerLocal(host, linkLocal, Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, time.Hour, nil)
+	n.state.registerLocal(other, netip.MustParseAddr("fe80::2"), Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, time.Hour, nil)
 
 	n.namedFrom(NameDHCP, "eth0", linkLocal, other, "evil")
 	n.namedFrom(NameDHCP, "eth0", linkLocal, nil, "evil")
@@ -329,7 +329,7 @@ func TestNamingNamedFrom(t *testing.T) {
 		if want := []string{"eth0 " + addr.String()}; !slices.Equal(n.discovered, want) || len(n.claims) != 1 {
 			t.Fatalf("the discovery was asked for %v, want %v; %d wait", n.discovered, want, len(n.claims))
 		}
-		n.state.registerLocal(hostMAC(3), addr, "eth0", time.Hour, nil)
+		n.state.registerLocal(hostMAC(3), addr, Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, time.Hour, nil)
 		n.resolve()
 		if len(n.claims) != 0 {
 			t.Errorf("%d still wait", len(n.claims))
@@ -348,7 +348,7 @@ func TestNamingNeighbor(t *testing.T) {
 	port, chassis := net.HardwareAddr{0x00, 0x1b, 0x21, 0, 0, 0x11}, net.HardwareAddr{0x00, 0x1b, 0x21, 0, 0, 0x10}
 	victim := hostMAC(7)
 	for i, mac := range []net.HardwareAddr{port, chassis, victim} {
-		n.state.registerLocal(mac, hostIPv4(10+i), "eth0", time.Hour, nil)
+		n.state.registerLocal(mac, hostIPv4(10+i), Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, time.Hour, nil)
 	}
 	management := []netip.Addr{hostIPv4(99)}
 	if !n.neighbor("eth0", port, chassis, "switch-1", management) {
@@ -386,8 +386,8 @@ func TestNamingAnswerFromAnotherAddress(t *testing.T) {
 	n := newProtocolsNamer(t)
 	host, other := hostMAC(1), hostMAC(2)
 	global, linkLocal := netip.MustParseAddr("2001:db8::1"), netip.MustParseAddr("fe80::1")
-	n.state.registerLocal(host, global, "eth0", time.Hour, nil)
-	n.state.registerLocal(other, netip.MustParseAddr("fe80::2"), "eth0", time.Hour, nil)
+	n.state.registerLocal(host, global, Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, time.Hour, nil)
+	n.state.registerLocal(other, netip.MustParseAddr("fe80::2"), Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, time.Hour, nil)
 	n.round()
 
 	// Another host answers for it: nobody is named, neither of them.
@@ -402,7 +402,7 @@ func TestNamingAnswerFromAnotherAddress(t *testing.T) {
 	if want := []string{"eth0 fe80::1"}; !slices.Equal(n.discovered, want) || len(n.state.AllNames()) != 0 {
 		t.Fatalf("the discovery was asked for %v, want %v; names %v", n.discovered, want, n.state.AllNames())
 	}
-	n.state.registerLocal(host, linkLocal, "eth0", time.Hour, nil)
+	n.state.registerLocal(host, linkLocal, Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, time.Hour, nil)
 	n.resolve()
 	if got := namesOf(n.state, host); !slices.Equal(got, []string{"winbox (llmnr)"}) {
 		t.Errorf("names: %v", got)
@@ -451,7 +451,7 @@ func TestNamingFetches(t *testing.T) {
 	if want := []string{"eth0 2001:db8::1"}; !slices.Equal(n.discovered, want) || len(n.state.AllNames()) != 0 {
 		t.Fatalf("the discovery was asked for %v, want %v", n.discovered, want)
 	}
-	n.state.registerLocal(hostMAC(1), addr, "eth0", time.Hour, nil)
+	n.state.registerLocal(hostMAC(1), addr, Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, time.Hour, nil)
 	n.resolve()
 	if got := namesOf(n.state, hostMAC(1)); !slices.Equal(got, []string{"winbox-p (wsd)"}) {
 		t.Errorf("names: %v", got)
@@ -496,10 +496,10 @@ func TestHeardARP(t *testing.T) {
 	own := hostMAC(5)
 	heard := w.heardARP(ipv4Interface{iface: net.Interface{Index: 2, Name: "eth0", HardwareAddr: own},
 		prefixes: []netip.Prefix{netip.MustParsePrefix("192.168.1.5/24"), netip.MustParsePrefix("10.0.0.5/8")}})
-	if !heard(hostIPv4(20), hostMAC(1)) || heard(hostIPv4(20), hostMAC(1)) {
+	if !heard(hostIPv4(20), hostMAC(1), "heard") || heard(hostIPv4(20), hostMAC(1), "heard") {
 		t.Error("a host heard is found once")
 	}
-	if !heard(netip.MustParseAddr("10.9.9.9"), hostMAC(1)) {
+	if !heard(netip.MustParseAddr("10.9.9.9"), hostMAC(1), "heard") {
 		t.Error("a host of the other subnet of the interface was left out")
 	}
 	for name, c := range map[string]struct {
@@ -512,7 +512,7 @@ func TestHeardARP(t *testing.T) {
 		"the broadcast address of a subnet":        {netip.MustParseAddr("192.168.1.255"), hostMAC(2)},
 		"the address of a subnet itself":           {netip.MustParseAddr("10.0.0.0"), hostMAC(2)},
 	} {
-		if heard(c.ip, c.mac) {
+		if heard(c.ip, c.mac, "heard") {
 			t.Errorf("%s was taken as a host found", name)
 		}
 	}
@@ -530,18 +530,18 @@ func TestHeardARP(t *testing.T) {
 	flood := NewWorker(zap.NewNop().Sugar(), Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, IPv4: Family{Enabled: true, Listen: true}})
 	defer flood.State.Close()
 	heard = flood.heardARP(ipv4Interface{iface: net.Interface{Index: 2, Name: "eth0", HardwareAddr: own}, prefixes: []netip.Prefix{netip.MustParsePrefix("10.0.0.5/8")}})
-	if !heard(netip.MustParseAddr("10.1.1.1"), hostMAC(1)) {
+	if !heard(netip.MustParseAddr("10.1.1.1"), hostMAC(1), "heard") {
 		t.Error("the first host was left out")
 	}
 	for i := range 2 * arpNewMost {
-		heard(netip.AddrFrom4([4]byte{10, 2, byte(i >> 8), byte(i)}), hostMAC(100+i))
+		heard(netip.AddrFrom4([4]byte{10, 2, byte(i >> 8), byte(i)}), hostMAC(100+i), "heard")
 	}
 	if got := len(flood.State.GetAll()); got != arpNewMost {
 		t.Errorf("%d hosts registered of a flood, want %d", got, arpNewMost)
 	}
 	expires := flood.State.GetAll()[hostMAC(1).String()].Get()[0].GetExpiration()
 	time.Sleep(2 * time.Millisecond)
-	if heard(netip.MustParseAddr("10.1.1.1"), hostMAC(1)) || !flood.State.GetAll()[hostMAC(1).String()].Get()[0].GetExpiration().After(expires) {
+	if heard(netip.MustParseAddr("10.1.1.1"), hostMAC(1), "heard") || !flood.State.GetAll()[hostMAC(1).String()].Get()[0].GetExpiration().After(expires) {
 		t.Error("a host the state has was not refreshed, heard again while too many new ones are")
 	}
 	// A subnet of two addresses has no broadcast one: both are hosts.
@@ -552,7 +552,7 @@ func TestHeardARP(t *testing.T) {
 	// Without the IPv4 family, the state takes none.
 	off := NewWorker(zap.NewNop().Sugar(), Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, IPv6: Family{Enabled: true}})
 	defer off.State.Close()
-	if off.heardARP(ipv4Interface{iface: net.Interface{Name: "eth0", HardwareAddr: own}, prefixes: []netip.Prefix{netip.MustParsePrefix("192.168.1.5/24")}})(hostIPv4(20), hostMAC(1)) || len(off.State.GetAll()) != 0 {
+	if off.heardARP(ipv4Interface{iface: net.Interface{Name: "eth0", HardwareAddr: own}, prefixes: []netip.Prefix{netip.MustParsePrefix("192.168.1.5/24")}})(hostIPv4(20), hostMAC(1), "heard") || len(off.State.GetAll()) != 0 {
 		t.Error("an IPv4 host registered without the family")
 	}
 }

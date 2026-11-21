@@ -65,3 +65,26 @@ func FuzzParseSender(f *testing.F) {
 		}
 	})
 }
+
+// How a packet tells its sender: a gratuitous one, of the sender announcing its own address; a
+// reply, of an answer; a request, of a host that uses the address.
+func TestWayOf(t *testing.T) {
+	host, other := net.HardwareAddr{0x02, 0, 0, 0, 0, 0x20}, net.HardwareAddr{0x02, 0, 0, 0, 0, 0x66}
+	everyone := net.HardwareAddr{0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
+	for name, c := range map[string]struct {
+		packet []byte
+		want   string
+	}{
+		"a request to all":        {arpPacket(opRequest, host, "192.168.1.20", nil, "192.168.1.1"), "heard"},
+		"a reply to this machine": {arpPacket(opReply, host, "192.168.1.20", other, "192.168.1.5"), "answered"},
+		"a gratuitous request":    {arpPacket(opRequest, host, "192.168.1.20", nil, "192.168.1.20"), "announced"},
+		"a gratuitous reply":      {arpPacket(opReply, host, "192.168.1.20", everyone, "192.168.1.20"), "announced"},
+	} {
+		if _, _, ok := parseSender(c.packet, host); !ok {
+			t.Fatalf("%s: not taken", name)
+		}
+		if got := wayOf(c.packet); got != c.want {
+			t.Errorf("%s: %s, want %s", name, got, c.want)
+		}
+	}
+}
