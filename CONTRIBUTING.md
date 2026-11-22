@@ -9,7 +9,7 @@ go vet ./...
 go test -race ./...
 ```
 
-CI runs those, a vet for the other systems (`GOOS=darwin`, `freebsd`, `netbsd`, `openbsd`, `solaris`, `windows`: those the release builds for), whose files a build on one system doesn't see, a 32-bit build, `staticcheck`, `govulncheck`, and the live test below.
+CI runs those, a vet for the other systems (`GOOS=darwin`, `freebsd`, `netbsd`, `openbsd`, `solaris`, `windows`: those the release builds for), whose files a build on one system doesn't see, a 32-bit build, `staticcheck`, `golangci-lint` as `.golangci.yaml` sets it, on each of those systems, `go mod tidy -diff`, `govulncheck`, and the live test below.
 
 The live test discovers over a real link, between two network namespaces, which needs Linux, root and iproute2, and for the names the services that tell them, which it runs in the namespaces of the hosts: `avahi-daemon`, without D-Bus, Samba's `nmbd`, `systemd-resolved`, `dnsmasq`, `udhcpc`, `dhclient`, `wsdd2` and `lldpd`. A test whose service is missing is skipped:
 

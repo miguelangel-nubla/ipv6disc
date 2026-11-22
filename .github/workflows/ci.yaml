@@ -148,6 +148,23 @@ jobs:
         run: |
           go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
           GOOS=linux go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 -tags integration .
+      -
+        # As .golangci.yaml says: the errors nothing checks, and the formatting, of gofmt. On every
+        # system of the release, as the vet: each has files the others don't see. And the live
+        # tests, which only their tag builds.
+        name: Golangci-lint
+        run: |
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.10.1
+          for os in linux darwin freebsd netbsd openbsd solaris windows; do
+            echo "== $os"
+            GOOS=$os GOARCH=amd64 golangci-lint run ./...
+          done
+          echo "== linux, integration"
+          golangci-lint run --build-tags integration ./...
+      -
+        # A dependency go.mod lacks, or keeps for nothing, builds here and not for who imports it.
+        name: Tidy
+        run: go mod tidy -diff
 
   # Vulnerabilities in the code the module calls, of its dependencies and of Go.
   vulncheck:
