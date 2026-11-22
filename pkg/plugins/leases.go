@@ -114,7 +114,8 @@ func ParseHosts(output string) []Lease {
 //	}
 //
 // The file is a journal: the last entry of an address is its lease, and only one whose binding
-// state is active counts, as the others are of hosts that left.
+// state is active counts, as the others are of hosts that left. One without a name counts too: its
+// address is leased all the same.
 func ParseISCLeases(output string) []Lease {
 	leases := make(map[netip.Addr]Lease)
 	var current Lease
@@ -128,7 +129,7 @@ func ParseISCLeases(output string) []Lease {
 			current, active, inside = Lease{IP: ip}, false, err == nil
 		case !inside:
 		case len(fields) == 1 && fields[0] == "}":
-			if active && len(current.MAC) > 0 && current.Name != "" {
+			if active && len(current.MAC) > 0 {
 				leases[current.IP] = current
 			} else {
 				delete(leases, current.IP)
@@ -153,7 +154,7 @@ func ParseISCLeases(output string) []Lease {
 //	192.168.1.50,00:1a:2b:3c:4d:5e,01:00:1a:2b:3c:4d:5e,7200,1700003600,1,0,0,laptop.lan.,0,,0
 //
 // The file is a journal: the last line of an address is its lease, and only one in the state 0,
-// assigned, counts.
+// assigned, counts, with a name or without: its address is leased all the same.
 func ParseKeaLeases(output string) []Lease {
 	leases := make(map[netip.Addr]Lease)
 	var columns []string
@@ -175,8 +176,8 @@ func ParseKeaLeases(output string) []Lease {
 			continue
 		}
 		mac, _ := net.ParseMAC(column("hwaddr"))
-		if name := column("hostname"); column("state") == "0" && name != "" {
-			leases[ip] = Lease{MAC: mac, IP: ip, Name: name}
+		if column("state") == "0" {
+			leases[ip] = Lease{MAC: mac, IP: ip, Name: column("hostname")}
 		} else {
 			delete(leases, ip)
 		}

@@ -25,7 +25,7 @@ type Config struct {
 	IPv6 Family
 	IPv4 Family
 
-	// Whether the names of the hosts are kept: off unless asked for.
+	// The names of the hosts, which are always kept: how long they stay.
 	Hostnames Hostnames
 
 	// The protocols of the local discovery, each with its switch and its options. A Config made
@@ -206,8 +206,8 @@ func DefaultProtocols() Protocols {
 	}
 }
 
-// DefaultConfig discovers IPv6 addresses by every protocol of DefaultProtocols, no IPv4 ones, and
-// no names. Rediscover is left zero, a third of the lifetime, so that it follows a Lifetime
+// DefaultConfig discovers IPv6 addresses by every protocol of DefaultProtocols, with the names
+// those tell, and no IPv4 ones. Rediscover is left zero, a third of the lifetime, so that it follows a Lifetime
 // changed afterwards.
 func DefaultConfig() Config {
 	return Config{

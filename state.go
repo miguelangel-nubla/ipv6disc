@@ -414,11 +414,10 @@ func (s *State) FilterMACs(hws []net.HardwareAddr) *AddrCollection {
 	return results
 }
 
-// PrettyPrint lists the addresses of each MAC, after its names. hideSensible is there for symmetry
-// with the other PrettyPrint methods: nothing here is sensible.
 // PrettyPrint is the page of the discovery: a summary, and each host by its MAC, with its names
 // and their sources, and its addresses and their records, each with how long it has left and how
-// long it has been seen, lined up.
+// long it has been seen, lined up. hideSensible is there for symmetry with the other PrettyPrint
+// methods: nothing here is sensible.
 func (s *State) PrettyPrint(prefix string, hideSensible bool) string {
 	s.macsMutex.RLock()
 	defer s.macsMutex.RUnlock()

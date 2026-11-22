@@ -1,6 +1,6 @@
 # Discovery
 
-Discovery finds addresses and the MAC that has each: a host is its MAC, which doesn't change when its addresses do. Each address is kept for its lifetime after it was last seen. When asked to, it learns the [names](#names) of the hosts too.
+Discovery finds addresses and the MAC that has each: a host is its MAC, which doesn't change when its addresses do. Each address is kept for its lifetime after it was last seen. It learns the [names](#names) of the hosts too.
 
 ## Families and protocols
 
@@ -158,7 +158,7 @@ An answer is taken only as the answer to a question asked, by any of them: a res
 
 **NetBIOS.** A node status request (RFC 1002) to port 137 of the host. Its answer, from that address and that port, lists the names the machine registered: the first that is its own, not a group's, registered, and of the workstation service, is its name; its workgroup and its services are not.
 
-**LLMNR.** The PTR record of the address again, but sent to the group, on port 5355, with a hop limit of 1: a responder leaves out a UDP question sent to it alone, which RFC 4795 has go over TCP, where Windows doesn't listen. systemd-resolved was seen to answer the one and not the other. So every host of the link hears the question, and the one that has the address answers, to the port it came from. The answer is taken from port 5355 at an address of the link, with the ID and the question itself; a responder answers from the address its system picks, over IPv6 its link-local one, so an answer from another address than the one asked of names the host only when the state has both at one MAC. Whoever heard the question can forge its answer, which is why LLMNR asks last, and is off unless enabled.
+**LLMNR.** The PTR record of the address again, but sent to the group, on port 5355, with a hop limit of 1: a responder leaves out a UDP question sent to it alone, which RFC 4795 has go over TCP, where Windows doesn't listen. systemd-resolved was seen to answer the one and not the other. So every host of the link hears the question, and the one that has the address answers, to the port it came from. The answer is taken from port 5355 at an address of the link, with the ID and the question itself; a responder answers from the address its system picks, over IPv6 its link-local one, so an answer from another address than the one asked of names the host only when the state has both at one MAC. Whoever heard the question can forge its answer, which is why LLMNR asks last.
 
 ### Fetched from the hosts that answer a probe
 

@@ -71,9 +71,12 @@ func Dial(servers []netip.AddrPort, handler Handler) (*Conn, error) {
 			}
 			sockets[network] = c
 			conn.closers = append(conn.closers, c)
-			go conn.read(c)
 		}
 		conn.servers = append(conn.servers, asked{addr: addr, conn: sockets[network], asked: &questions.Table{}})
+	}
+	// Once the servers are all there: a packet that comes at once is looked up among them.
+	for _, c := range conn.closers {
+		go conn.read(c)
 	}
 	return conn, nil
 }

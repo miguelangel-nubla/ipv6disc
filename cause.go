@@ -23,11 +23,15 @@ type causeKey struct {
 	addr  netip.Addr
 }
 
-// causeWait is how long a cause waits for its address's MAC, and causesMost how many wait at once:
-// the solicitation of the discovery is answered in a second, and what never is goes.
+// causeWait is how long a cause waits for its address's MAC, causesMost how many addresses have
+// causes waiting at once, and causesEach how many wait for one address: the solicitation of the
+// discovery is answered in a second, and what never is goes. An address has a cause for each
+// protocol and way, and for each MAC a message said it is at: messages made up, each with another
+// MAC, fill no more than that.
 const (
 	causeWait  = 10 * time.Second
 	causesMost = 1024
+	causesEach = 32
 )
 
 // causes are the causes that wait, by interface and address.
@@ -45,14 +49,24 @@ func (c *causes) add(iface string, addr netip.Addr, protocol string, way Way, ma
 		c.waiting = make(map[causeKey][]cause)
 	}
 	key := causeKey{iface, addr.WithZone("").Unmap()}
-	list := c.waiting[key]
+	// Those of the address that waited too long go first: of one whose MAC never comes, nothing
+	// else takes them out.
+	list := slices.DeleteFunc(c.waiting[key], func(k cause) bool { return now.Sub(k.at) > causeWait })
+	if len(list) == 0 {
+		delete(c.waiting, key)
+	} else {
+		c.waiting[key] = list
+	}
 	for i, old := range list {
 		if old.protocol == protocol && old.way == way && macEqual(old.mac, mac) {
 			list[i].at = now
 			return
 		}
 	}
-	if len(c.waiting) >= causesMost {
+	if len(list) >= causesEach {
+		return
+	}
+	if len(list) == 0 && len(c.waiting) >= causesMost {
 		c.expire(now)
 		if len(c.waiting) >= causesMost {
 			return

@@ -46,11 +46,11 @@ A worker starts once, and its plugins are registered before `Start`. A program c
 
 ## Config
 
-`Config` is what the [configuration file](reference/configuration.md) of the command sets: a `Family` for each of `IPv6` and `IPv4`, with `Enabled`, `Listen`, `Active` and `Lifetime`, the `Lifetime` and `Rediscover` of all, the `Interfaces` and `ExcludeInterfaces`, `Hostnames`, with `Enabled`, off by default, and its `Lifetime`, and `Protocols`. The [discovery](discovery.md) page says what each does. A zero `Rediscover` is a third of the shortest lifetime of the families that probe. A family's zero `Lifetime` leaves each registration its own: `Config.Lifetime` for the local discovery, and for a plugin the lifetime it was made with.
+`Config` is what the [configuration file](reference/configuration.md) of the command sets: a `Family` for each of `IPv6` and `IPv4`, with `Enabled`, `Listen`, `Active` and `Lifetime`, the `Lifetime` and `Rediscover` of all, the `Interfaces` and `ExcludeInterfaces`, `Hostnames`, with its `Lifetime`, and `Protocols`. The [discovery](discovery.md) page says what each does. A zero `Rediscover` is a third of the shortest lifetime of the families that probe. A family's zero `Lifetime` leaves each registration its own: `Config.Lifetime` for the local discovery, and for a plugin the lifetime it was made with.
 
 `Protocols` has a field for each [protocol](discovery.md#protocols) of the local discovery, each a struct with `Enabled` and the options of that one: `NDP`, `Ping`, `SSDP` and `WSD`, both with `Names`, `MDNS`, with `Ask`, `ARP`, `ARPSweep`, with `MaxPrefix`, `ARPListen`, `DHCP`, `LLDP`, `NetBIOS`, `LLMNR`, and `DNS`, with its `Servers`. `ProtocolNames` are their names, as the file and the log have them. A protocol runs when it is enabled and its family listens, or for the sweep probes. Start from `DefaultConfig`, or give a `Config` made by hand `DefaultProtocols()`: the zero value of `Protocols` enables none, and such a worker, warned of at start, finds this machine's own addresses only.
 
-`Config.Validate` tells what `Worker.Start` would refuse, without starting anything: every error at once, as a protocol enabled that the system can't run, or one that only learns names without `Hostnames`.
+`Config.Validate` tells what `Worker.Start` would refuse, without starting anything: every error at once, as a protocol enabled that the system can't run, or one that needs another that is off.
 
 ## The configuration file
 

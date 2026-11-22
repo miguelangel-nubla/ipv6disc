@@ -117,6 +117,7 @@ lease 192.168.1.55 {
 `))
 	want := []string{
 		"00:1a:2b:3c:4d:5e 192.168.1.50 laptop",
+		"00:1a:2b:3c:4d:60 192.168.1.52 ",
 		"00:1a:2b:3c:4d:61 192.168.1.53 Living Room",
 	}
 	if !slices.Equal(got, want) {
@@ -140,6 +141,7 @@ fd00::1c4,00:01:00:01:2b:11:22:33:00:1a:2b:3c:4d:61,7200,1700003600,1,3600,0,105
 `))
 	want := []string{
 		"00:1a:2b:3c:4d:5e 192.168.1.50 laptop.lan.",
+		"00:1a:2b:3c:4d:60 192.168.1.52 ",
 		"00:1a:2b:3c:4d:65 fd00::1c3 phone.lan.",
 		"- fd00::1c4 tablet",
 	}
@@ -258,7 +260,8 @@ func FuzzParseLeases(f *testing.F) {
 				t.Errorf("%s: %d leases from %d lines", parser, len(leases), lines)
 			}
 			for _, l := range leases {
-				if !l.IP.IsValid() || l.Name == "" {
+				// A name it may lack: its address is leased all the same.
+				if !l.IP.IsValid() {
 					t.Errorf("%s: lease %+v", parser, l)
 				}
 			}

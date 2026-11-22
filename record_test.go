@@ -128,6 +128,35 @@ func TestCauses(t *testing.T) {
 	}
 }
 
+// The causes of one address are bounded, as the addresses that have any are: messages that say it
+// is at one MAC after another, as DHCP requests made up, fill no more than causesEach, and those
+// that waited too long give way to the ones that come, though its MAC never does.
+func TestCausesOfAnAddressAreBounded(t *testing.T) {
+	var c causes
+	ip := netip.MustParseAddr("192.168.1.50")
+	start := time.Now()
+	said := func(i int, at time.Time) {
+		c.add("eth0", ip, ProtocolDHCP, Announced, net.HardwareAddr{0x02, 0, 0, 0, byte(i >> 8), byte(i)}, at)
+	}
+	for i := range 10 * causesEach {
+		said(i, start)
+	}
+	if got := len(c.waiting[causeKey{"eth0", ip}]); got != causesEach {
+		t.Fatalf("%d causes wait for one address, want %d at most", got, causesEach)
+	}
+	// One of them said again is seen again, not another.
+	said(0, start.Add(time.Second))
+	if got := len(c.waiting[causeKey{"eth0", ip}]); got != causesEach {
+		t.Errorf("%d causes after one was said again, want %d", got, causesEach)
+	}
+	// Past their wait they go, as another comes: nothing ever took them.
+	later := start.Add(causeWait + 2*time.Second)
+	said(1000, later)
+	if got := c.waiting[causeKey{"eth0", ip}]; len(got) != 1 || !got[0].at.Equal(later) {
+		t.Errorf("after the wait: %d causes, want the one that came", len(got))
+	}
+}
+
 // An mDNS address record of the sender's own is its announcement: of the address it sent from, or
 // of another the State has at its MAC. Of another host's, it is nothing.
 func TestAnnouncedBy(t *testing.T) {
