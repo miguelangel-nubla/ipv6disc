@@ -107,9 +107,6 @@ func mapping(path string, raw json.RawMessage, typ reflect.Type) (map[string]jso
 	}
 	var on bool
 	if typ.Kind() == reflect.Struct && json.Unmarshal(raw, &on) == nil {
-		if path == "hostnames" {
-			return nil, fmt.Errorf("hostnames: %s: %s", raw, namesAlwaysKept)
-		}
 		if _, ok := fieldsOf(typ).index["enabled"]; ok {
 			return nil, fmt.Errorf("%s: %s is not its settings: it is written as %s, with enabled: %t under it", path, raw, key, on)
 		}
@@ -117,17 +114,12 @@ func mapping(path string, raw json.RawMessage, typ reflect.Type) (map[string]jso
 	return nil, fmt.Errorf("%s: %s is not a mapping of its keys", path, raw)
 }
 
-// namesAlwaysKept is what a switch of the names, which there was, is now.
-const namesAlwaysKept = "the names are no longer switched: they are kept, of the protocols that learn them; to learn none, disable those under protocols, as mdns, netbios, llmnr and dhcp, and the names of ssdp and wsd"
-
 // unknownKey is the error of a key nothing has, at path: a protocol there is none of, an option
 // its protocol doesn't have, or a key of any other mapping, each with those there are.
 func unknownKey(path, key string, known []string) error {
 	list := strings.Join(known, ", ")
 	parent, protocol, of := strings.Cut(path, ".")
 	switch {
-	case path == "hostnames" && key == "enabled":
-		return fmt.Errorf("hostnames.enabled: %s", namesAlwaysKept)
 	case path == "":
 		return fmt.Errorf("%s: no such key: the configuration has %s", key, list)
 	case path == "protocols":

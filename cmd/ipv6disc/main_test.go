@@ -80,7 +80,7 @@ func TestCommandRejects(t *testing.T) {
 		{config: "protocols:\n  bonjour:\n    enabled: true", code: 1, want: "protocols.bonjour: no such protocol: they are ndp, ping,"},
 		{config: "protocols:\n  mdns:\n    asks: true", code: 1, want: "protocols.mdns.asks: no such option of mdns: it has enabled, ask"},
 		{config: "protocols:\n  mdns:\n    ask: 3", code: 1, want: "protocols.mdns.ask: 3 is not true or false"},
-		{config: "hostnames:\n  enabled: true", code: 1, want: "hostnames.enabled: the names are no longer switched"},
+		{config: "hostnames:\n  enabled: true", code: 1, want: "hostnames.enabled: no such key: hostnames has lifetime"},
 		{config: "protocols:\n  arp-sweep:\n    max_prefix: 8", code: 1, want: "invalid max_prefix of the arp-sweep protocol, 8: it is from 16 to 30"},
 		{config: "plugins:\n  router:\n    type: nosuch", code: 1, want: `plugins.router.type: no such type of plugin, "nosuch"`},
 		{config: "lifetime: 0", code: 1, want: "they must be positive"},
