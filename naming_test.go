@@ -662,7 +662,13 @@ func TestNamingManyHosts(t *testing.T) {
 	// The discovery: the hosts come, with addresses that last a moment, some seen again.
 	loop(func(round int) {
 		i := round % hosts
-		state.registerLocal(hostMAC(i), addr4(i), Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, 30*time.Millisecond, nil)
+		// The hosts that say no name last longer: long enough to be there when the naming layer
+		// looks, however loaded the machine, whose round can take longer than the others' lives.
+		lifetime := 30 * time.Millisecond
+		if i%2 != 0 {
+			lifetime = 500 * time.Millisecond
+		}
+		state.registerLocal(hostMAC(i), addr4(i), Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, lifetime, nil)
 		if round%3 == 0 {
 			state.registerLocal(hostMAC(i), addr6(i), Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, 50*time.Millisecond, nil)
 		}
