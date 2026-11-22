@@ -1,0 +1,19 @@
+Discovery: 2 hosts, 1 named, 4 addresses
+    00:11:22:33:44:55
+        names:
+            nas                                      3h59m12s   12d
+                mdns on eth0                         3h59m12s   12d
+                reported by router from leases       3h51m 7s    3d 4h
+        addresses:
+            192.168.1.50                                2m51s   12d
+                arp:answered on eth0                    2m51s   12d
+                reported by router from leases        (lease)    3d 4h
+            2001:db8:1234:5678:211:22ff:fe33:4455      41m37s   12d
+                ndp:answered on eth0                   41m37s   12d
+                mdns:announced on eth0                 38m 5s       6h20m
+    66:77:88:99:aa:bb
+        addresses:
+            2001:db8:1234:5678:6477:88ff:fe99:aabb     58m 3s         47m
+                ndp:heard on eth0                      58m 3s         47m
+            fe80::6477:88ff:fe99:aabb                  58m 3s         47m
+                ndp:heard on eth0                      58m 3s         47m

@@ -85,6 +85,13 @@ Two more events report a host's [names](docs/discovery.md#names) as they come an
 
 `-live` shows the current state instead of the log.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/page-dark.svg">
+  <img src="docs/images/page-light.svg" alt="The live view: two hosts, each under its MAC. The first has a name, nas, with what said it, and two addresses, each with how it was seen. The second has two addresses and no name. Each line has how long it has left and how long it has been seen. Names are in blue, and the times and sources are dimmed.">
+</picture>
+
+The two times on each line are how long it has left before it expires, and how long it has been seen.
+
 - It hides errors too, such as those of a plugin that can't reach its router. Run without `-live` to see why hosts are missing.
 - It needs a terminal, which in Docker means `-it`.
 - It uses the terminal's colors for names and details, and none when `NO_COLOR` is set.

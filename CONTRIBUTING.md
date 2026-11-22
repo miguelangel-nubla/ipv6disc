@@ -80,6 +80,8 @@ After changing any of those sources, regenerate the pages:
 go test ./cmd/ipv6disc -update
 ```
 
+The same command redraws the README's picture of the live view, `docs/images/page-light.svg` and `page-dark.svg`, from `docs/images/page.txt`. Change the text, never the pictures. A test holds the picture's colors to those the program gives each kind of line.
+
 A test fails when the pages are out of date, or when a field has no description. Other tests keep the rest consistent:
 
 - **The schema matches the code.** Every key of the schema is a field of the types in [`pkg/config`](pkg/config), and every field is a key, with the same type and the same default. The schema's plugins are the registered plugins, with their fields.

@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/miguelangel-nubla/ipv6disc"
+	"github.com/miguelangel-nubla/ipv6disc/internal/reportpic"
 	"github.com/miguelangel-nubla/ipv6disc/pkg/config"
 	"github.com/miguelangel-nubla/ipv6disc/pkg/plugins"
 )
@@ -365,6 +366,37 @@ func TestReleaseHasTheDocumentation(t *testing.T) {
 			return ok
 		}) {
 			t.Errorf("%s is in no archive: the files of .goreleaser.yaml are %v", name, patterns)
+		}
+	}
+}
+
+// The README shows the page of -live as a picture, with its colors, which a page of GitHub can't
+// have in text. It is drawn from docs/images/page.txt, for the light and the dark theme, and the
+// README has both. After changing that text, go test ./cmd/ipv6disc -update.
+func TestPagePictureUpToDate(t *testing.T) {
+	root := filepath.Join("..", "..")
+	text, err := os.ReadFile(filepath.Join(root, "docs", "images", "page.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	readme, err := os.ReadFile(filepath.Join(root, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := reportpic.Roles(string(text))
+	for name, theme := range map[string]reportpic.Theme{"page-light.svg": reportpic.Light, "page-dark.svg": reportpic.Dark} {
+		if !strings.Contains(string(readme), `"docs/images/`+name+`"`) {
+			t.Errorf("the README doesn't show docs/images/%s", name)
+		}
+		path, want := filepath.Join(root, "docs", "images", name), reportpic.SVG(page, theme)
+		if *update {
+			if err := os.WriteFile(path, []byte(want), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		if got, err := os.ReadFile(path); err != nil || string(got) != want {
+			t.Errorf("%s is behind page.txt: go test ./cmd/ipv6disc -update", path)
 		}
 	}
 }
