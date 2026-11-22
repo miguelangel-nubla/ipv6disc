@@ -245,17 +245,23 @@ func (a *Addr) leaves(iface string) (was, last bool) {
 	if !a.self {
 		return false, false
 	}
-	for k, r := range a.records {
-		if r.On == iface {
-			delete(a.records, k)
+	for _, r := range a.records {
+		if r.On == iface && r.own() {
 			was = true
 		}
 	}
 	if !was {
 		return false, false
 	}
+	for k, r := range a.records {
+		if r.On == iface {
+			delete(a.records, k)
+		}
+	}
+	// Only an interface that has it keeps it: one that heard of it, as another of the same link
+	// does, saw this machine's address, which is gone.
 	for _, r := range a.records {
-		if r.On != "" {
+		if r.own() {
 			return true, false
 		}
 	}

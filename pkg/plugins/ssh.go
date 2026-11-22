@@ -258,13 +258,20 @@ func dialSSH(ctx context.Context, address string, config *ssh.ClientConfig) (*ss
 	stop := context.AfterFunc(ctx, func() { conn.Close() })
 	defer stop()
 	// The timeout of the handshake too, as ssh.Dial does.
-	conn.SetDeadline(time.Now().Add(config.Timeout))
+	if err := conn.SetDeadline(time.Now().Add(config.Timeout)); err != nil {
+		conn.Close()
+		return nil, err
+	}
 	c, chans, reqs, err := ssh.NewClientConn(conn, address, config)
 	if err != nil {
 		conn.Close()
 		return nil, err
 	}
-	conn.SetDeadline(time.Time{})
+	// Left on, the deadline would cut the command short.
+	if err := conn.SetDeadline(time.Time{}); err != nil {
+		c.Close()
+		return nil, err
+	}
 	return ssh.NewClient(c, chans, reqs), nil
 }
 

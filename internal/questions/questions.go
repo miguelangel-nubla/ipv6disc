@@ -58,7 +58,7 @@ func (t *Table) Ask(addr netip.Addr) uint16 {
 }
 
 // Answered tells the address the question with that ID was sent to, if it still waits and is
-// says the answer is its own: once, as a host answers once. An answer that isn't, as one from
+// tells the answer is its own: once, as a host answers once. An answer that isn't, as one from
 // another address, leaves the question waiting for the one that is.
 func (t *Table) Answered(id uint16, is func(asked netip.Addr) bool) (netip.Addr, bool) {
 	t.mutex.Lock()

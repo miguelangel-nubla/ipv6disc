@@ -342,6 +342,16 @@ func TestNamesChanges(t *testing.T) {
 		t.Errorf("after the expiration: %v", got)
 	}
 	expectChange("nothing more", false, 100*time.Millisecond)
+
+	// A source whose time ran out, of a name another still says, is new when it says it again.
+	state.RegisterName(namedMAC, "laserjet", "mdns", 100*time.Millisecond)
+	expectChange("one more source", true, time.Second)
+	time.Sleep(150 * time.Millisecond)
+	if got := namesOf(state, namedMAC); !slices.Equal(got, []string{"laserjet (router)"}) {
+		t.Errorf("after the source's time: %v", got)
+	}
+	state.RegisterName(namedMAC, "laserjet", "mdns", time.Hour)
+	expectChange("a source that says it again", true, time.Second)
 }
 
 // The log has an event for a name that comes, and for one that goes, with the name and the MAC:

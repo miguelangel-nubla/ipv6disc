@@ -47,7 +47,8 @@ func clampOffset(offset, lineCount, height int) int {
 }
 
 func displayContent(lines []string, offset int) {
-	termbox.Clear(termbox.ColorDefault, termbox.ColorDefault)
+	// It fails only before Init, as Flush: there is no screen then to show anything on.
+	_ = termbox.Clear(termbox.ColorDefault, termbox.ColorDefault)
 	width, height := termbox.Size()
 
 	for y := 0; y < height-1 && y+offset < len(lines); y++ {

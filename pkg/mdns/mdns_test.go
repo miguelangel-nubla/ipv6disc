@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"golang.org/x/net/dns/dnsmessage"
+
+	"github.com/miguelangel-nubla/ipv6disc/internal/onlink"
 )
 
 // record is a record of a crafted message.
@@ -205,10 +207,11 @@ type heard struct {
 
 // testConn is a Conn without sockets, on an interface with those addresses.
 func testConn(h *heard, prefixes ...string) *Conn {
-	conn := &Conn{iface: &net.Interface{Index: 2, Name: "eth0"}, questions: make(map[uint16]question), prefixesAt: time.Now()}
+	var link []netip.Prefix
 	for _, p := range prefixes {
-		conn.prefixes = append(conn.prefixes, netip.MustParsePrefix(p))
+		link = append(link, netip.MustParsePrefix(p))
 	}
+	conn := &Conn{iface: &net.Interface{Index: 2, Name: "eth0"}, link: onlink.Among(link...), questions: make(map[uint16]question)}
 	conn.handler = Handler{
 		Heard: func(from netip.Addr) bool { h.from = append(h.from, from); return len(h.from) == 1 },
 		Said: func(from netip.Addr, name string, addr netip.Addr, onLink bool) {
@@ -307,11 +310,19 @@ func TestTakeAnswer(t *testing.T) {
 		t.Errorf("taken on the socket of the questions: from %v, %d packets, want the three that answered or came in the group", h.from, conn.PacketsReceived.Load())
 	}
 
+	// A query with the ID of a question answers nothing, and leaves it waiting for its answer.
+	id = conn.ask(printer4)
+	conn.take(printer4, message(t, dnsmessage.Header{ID: id}, nil, nil), true)
+	conn.take(printer4, answer(id, printer4), true)
+	if len(h.answered) != 2 {
+		t.Errorf("answers after a query with the question's ID: %v", h.answered)
+	}
+
 	// One that waited too long is no answer.
 	id = conn.ask(printer4)
 	conn.questions[id] = question{printer4, time.Now().Add(-2 * questionTimeout)}
 	conn.take(printer4, answer(id, printer4), true)
-	if len(h.answered) != 1 {
+	if len(h.answered) != 2 {
 		t.Errorf("a late answer taken: %v", h.answered)
 	}
 	conn.ask(other)

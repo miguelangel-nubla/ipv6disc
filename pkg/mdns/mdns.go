@@ -16,6 +16,7 @@ import (
 	"golang.org/x/net/ipv6"
 
 	"github.com/miguelangel-nubla/ipv6disc/internal/backoff"
+	"github.com/miguelangel-nubla/ipv6disc/internal/onlink"
 	"github.com/miguelangel-nubla/ipv6disc/pkg/stats"
 )
 
@@ -69,7 +70,9 @@ type Handler struct {
 type Conn struct {
 	stats.Counters
 
-	iface   *net.Interface
+	iface *net.Interface
+	// The link of the interface: what is of it, and what is the interface's own.
+	link    *onlink.Link
 	options Options
 	handler Handler
 
@@ -81,9 +84,6 @@ type Conn struct {
 	// The questions sent and still waited for, by their ID: one to a host, which its answer
 	// takes, and the query for the services, which every host answers.
 	questions map[uint16]question
-	// The addresses of the interface, as last read.
-	prefixes   []netip.Prefix
-	prefixesAt time.Time
 }
 
 // question is one sent: to the host at addr, or, without one, to all.
@@ -96,15 +96,12 @@ type question struct {
 // answers nothing, and is left.
 const questionTimeout = 5 * time.Second
 
-// prefixesAge is how long the addresses of the interface are kept before they are read again.
-const prefixesAge = 10 * time.Second
-
 // Listen joins the groups of mDNS on iface, of the families of options, on the port of mDNS,
 // which it shares with the responder of this machine, if it has one, as avahi or mDNSResponder.
 // It takes the messages that come in on iface from an address of its link that isn't its own. A
 // family that can't be listened on is an error, with nothing left open.
 func Listen(iface *net.Interface, options Options, handler Handler) (*Conn, error) {
-	conn := &Conn{iface: iface, options: options, handler: handler, questions: make(map[uint16]question)}
+	conn := &Conn{iface: iface, link: onlink.Of(iface), options: options, handler: handler, questions: make(map[uint16]question)}
 	// A socket in a group, and one on a port of its own.
 	hear := func(group netip.Addr) (net.PacketConn, error) {
 		c, err := listenGroup(group, iface)
@@ -246,8 +243,7 @@ func (conn *Conn) read(readFrom reader, lookup bool) {
 // where it came from, and what is sent to the group doesn't cross a router, but this would.
 func (conn *Conn) take(from netip.Addr, packet []byte, lookup bool) {
 	from = from.Unmap().WithZone("")
-	onLink, own := conn.where(from)
-	if !onLink || own {
+	if !conn.link.Has(from) {
 		return
 	}
 	message, err := Parse(packet)
@@ -256,8 +252,12 @@ func (conn *Conn) take(from netip.Addr, packet []byte, lookup bool) {
 	}
 	var asked netip.Addr
 	if lookup {
+		// A query with the ID of a question answers nothing, and leaves it waiting.
+		if !message.Response {
+			return
+		}
 		var waited bool
-		if asked, waited = conn.answered(message.ID); !waited || !message.Response {
+		if asked, waited = conn.answered(message.ID); !waited {
 			return
 		}
 	}
@@ -284,57 +284,7 @@ func (conn *Conn) take(from netip.Addr, packet []byte, lookup bool) {
 // OnLink tells whether addr is of the link of the interface, and not the interface's own: a
 // link-local address, or one of a subnet the interface has an address in.
 func (conn *Conn) OnLink(addr netip.Addr) bool {
-	onLink, own := conn.where(addr.Unmap().WithZone(""))
-	return onLink && !own
-}
-
-// where tells whether addr is of the link of the interface, and whether it is the interface's
-// own, by the addresses the interface has, read again when they are old.
-func (conn *Conn) where(addr netip.Addr) (onLink, own bool) {
-	conn.mutex.Lock()
-	if conn.prefixesAt.IsZero() || time.Since(conn.prefixesAt) > prefixesAge {
-		conn.prefixes = interfacePrefixes(conn.iface)
-		conn.prefixesAt = time.Now()
-	}
-	prefixes := conn.prefixes
-	conn.mutex.Unlock()
-	return whereAmong(prefixes, addr)
-}
-
-func whereAmong(prefixes []netip.Prefix, addr netip.Addr) (onLink, own bool) {
-	if !addr.IsValid() || addr.IsMulticast() || addr.IsUnspecified() || addr.IsLoopback() {
-		return false, false
-	}
-	onLink = addr.IsLinkLocalUnicast()
-	for _, p := range prefixes {
-		if p.Addr() == addr {
-			own = true
-		}
-		if p.Contains(addr) {
-			onLink = true
-		}
-	}
-	return onLink, own
-}
-
-func interfacePrefixes(iface *net.Interface) []netip.Prefix {
-	addrs, err := iface.Addrs()
-	if err != nil {
-		return nil
-	}
-	var prefixes []netip.Prefix
-	for _, a := range addrs {
-		ipNet, ok := a.(*net.IPNet)
-		if !ok {
-			continue
-		}
-		ip, ok := netip.AddrFromSlice(ipNet.IP)
-		ones, _ := ipNet.Mask.Size()
-		if ip = ip.Unmap(); ok && ones <= ip.BitLen() {
-			prefixes = append(prefixes, netip.PrefixFrom(ip, ones))
-		}
-	}
-	return prefixes
+	return conn.link.Has(addr)
 }
 
 // DiscoverMulticast asks every host of the link for the kinds of service it has, over the

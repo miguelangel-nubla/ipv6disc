@@ -181,7 +181,8 @@ func (s *State) registerName(hw net.HardwareAddr, name string, said NameSource, 
 		host[clean] = n
 	}
 	n.Said = liveSaid(n.Said, now)
-	newSource := !slices.Contains(n.Sources, source)
+	// Among those whose lifetime runs: one that stopped saying it, and says it again, is new.
+	newSource := !slices.Contains(saidSources(n.Said), source)
 	said.LastSeen, said.Lifetime = now, lifetime
 	if i := slices.IndexFunc(n.Said, said.same); i >= 0 {
 		n.Said[i].LastSeen, n.Said[i].Lifetime = now, lifetime

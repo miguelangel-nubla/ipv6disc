@@ -101,6 +101,12 @@ func (r Record) source() string {
 	return r.By
 }
 
+// own tells whether the record is RegisterSelf's: of an interface of this machine that has the
+// address.
+func (r Record) own() bool {
+	return r.By == ReportedByKernel && r.From == FromInterfaces && r.On != ""
+}
+
 // recordKey tells records apart: the same one seen again is a record refreshed, not another.
 type recordKey struct {
 	protocol, way, by, from, on string

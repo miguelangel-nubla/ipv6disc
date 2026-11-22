@@ -392,6 +392,20 @@ func TestRemoveSelf(t *testing.T) {
 		t.Errorf("addresses %v, want the neighbor's only", got)
 	}
 
+	// One that another interface only heard of, as one of the same link does, goes all the same:
+	// no interface has it, and what was heard was this machine's.
+	state.RegisterSelf(mac, ip, "eth0", false, time.Hour, nil)
+	state.registerLocal(mac, ip, Record{Protocol: ProtocolNDP, Way: Heard, On: "eth1"}, time.Hour, nil)
+	if state.removeSelf(mac.String(), ip, "eth1") {
+		t.Error("removed from an interface that only heard of it")
+	}
+	if !state.removeSelf(mac.String(), ip, "eth0") {
+		t.Error("an address its only interface lost: not removed")
+	}
+	if got := addrs(); !slices.Equal(got, []string{neighbor.String()}) {
+		t.Errorf("addresses %v, want the neighbor's only", got)
+	}
+
 	// The last address of a MAC takes the MAC with it, an IPv4 one as an IPv6 one.
 	other, _ := net.ParseMAC("00:1a:2b:3c:4d:1c")
 	state.RegisterSelf(other, netip.MustParseAddr("192.0.2.28"), "eth0", false, time.Hour, nil)

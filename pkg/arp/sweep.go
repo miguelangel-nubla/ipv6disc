@@ -120,7 +120,7 @@ func Sweep(ctx context.Context, local netip.Addr, targets []netip.Addr) error {
 	defer ticker.Stop()
 	for _, target := range targets {
 		// A host that isn't there, or a full queue: the next sweep tries again.
-		conn.WriteToUDPAddrPort([]byte{0}, netip.AddrPortFrom(target, sweepPort))
+		_, _ = conn.WriteToUDPAddrPort([]byte{0}, netip.AddrPortFrom(target, sweepPort))
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
