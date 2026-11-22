@@ -577,15 +577,15 @@ func TestDiscoveryPageNamesBounds(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		fmt.Sprintf("and %d questions a second are sent at most", namingRate),
+		fmt.Sprintf("At most %d questions a second are sent in total", namingRate),
 		fmt.Sprintf("one after another, %d seconds apart", namingStep/time.Second),
 		fmt.Sprintf("on port %d", mdns.Port),
 		fmt.Sprintf("to port %d of the host", netbios.Port),
 		fmt.Sprintf("on port %d, with a hop limit of 1", llmnr.Port),
-		fmt.Sprintf("a question sent in the last %d seconds, from where it was sent", questions.Timeout/time.Second),
-		fmt.Sprintf("The request has %d seconds, the document %d KB at most", fetch.Timeout/time.Second, fetch.Limit>>10),
-		fmt.Sprintf("and %d are under way at once at most", fetch.AtOnce),
-		fmt.Sprintf("and what was said waits for it, %d seconds at most", namingPatience/time.Second),
+		fmt.Sprintf("the ID of a question sent in the last %d seconds, and comes from the address that question was sent to", questions.Timeout/time.Second),
+		fmt.Sprintf("A request may take %d seconds at most, and the document may be %d KB at most", fetch.Timeout/time.Second, fetch.Limit>>10),
+		fmt.Sprintf("At most %d requests run at once", fetch.AtOnce),
+		fmt.Sprintf("the name waits for the address to be found, for at most %d seconds", namingPatience/time.Second),
 		"less than three rediscovery intervals left, or half its lifetime",
 		"a reading of the neighbor table a second later",
 	} {

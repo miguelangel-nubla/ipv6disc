@@ -4,31 +4,40 @@
 [![release](https://img.shields.io/github/v/release/miguelangel-nubla/ipv6disc)](https://github.com/miguelangel-nubla/ipv6disc/releases/latest)
 [![Go Reference](https://pkg.go.dev/badge/github.com/miguelangel-nubla/ipv6disc.svg)](https://pkg.go.dev/github.com/miguelangel-nubla/ipv6disc)
 
-`ipv6disc` finds the hosts of the local network and their addresses, each with its MAC: IPv6, and IPv4 too. It listens to the network, probes it, and reads the neighbor tables of routers. The name is from when it was IPv6 only.
+`ipv6disc` finds the hosts on the local network and their addresses, each with its MAC, over IPv6 and IPv4. It listens to the network, probes it, and reads routers' neighbor tables. The name dates from when it was IPv6 only.
 
-It learns the names of the hosts too, by each protocol that is turned on: those they announce over mDNS and give as they ask for an address by DHCP, those they answer when asked, by mDNS, NetBIOS, LLMNR, WS-Discovery or SSDP, those a DNS server has for their addresses, and those of the routers' DHCP leases.
+It also learns the hosts' names, through each protocol that is turned on:
 
-It is a command, and a Go library: [ipv6ddns](https://github.com/miguelangel-nubla/ipv6ddns) uses it to keep DNS records of the devices of a network.
+- names the hosts announce over mDNS, or give when they ask for an address by DHCP;
+- names the hosts answer with when asked, by mDNS, NetBIOS, LLMNR, WS-Discovery or SSDP;
+- names a DNS server has for their addresses;
+- names in the routers' DHCP leases.
+
+It is both a command and a Go library. [ipv6ddns](https://github.com/miguelangel-nubla/ipv6ddns) uses the library to keep DNS records for the devices on a network.
 
 ## Installation
 
-- **A release**: the binary for your system, from the [latest release](https://github.com/miguelangel-nubla/ipv6disc/releases/latest).
+- **A release**: download the binary for your system from the [latest release](https://github.com/miguelangel-nubla/ipv6disc/releases/latest).
 - **Docker**: `ghcr.io/miguelangel-nubla/ipv6disc`, for linux/386, amd64, arm/v6, arm/v7 and arm64.
 - **From source**: `go install github.com/miguelangel-nubla/ipv6disc/cmd/ipv6disc@latest`.
 
 ## Usage
 
+This shows the hosts in the terminal as they are found:
+
 ```
 sudo ipv6disc -live
 ```
 
-shows the hosts as they are found, in the terminal. Without `-live`, it logs them as JSON, for [`jq`](https://jqlang.github.io/jq/):
+Without `-live`, it logs them as JSON, which you can filter with [`jq`](https://jqlang.github.io/jq/):
 
 ```
 sudo ipv6disc | jq 'select(.msg == "host identified") | .ip'
 ```
 
-Everything else is in a configuration file, YAML: the families, each protocol with its switch and its options, the names, the interfaces, the lifetimes, the plugins. Without one, the defaults discover IPv6, by every protocol, and the names the hosts tell. With IPv4 too, and the neighbor table of a router, `discovery.yaml`:
+Everything else is set in a YAML configuration file: the families, each protocol with its switch and its options, the names, the interfaces, the lifetimes, and the plugins. Without a file, the defaults discover IPv6, by every protocol, along with the names the hosts give.
+
+This `discovery.yaml` adds IPv4, and a router's neighbor table:
 
 ```yaml
 ipv4:
@@ -42,28 +51,54 @@ plugins:
     password: "secret"
 ```
 
+Run it with Docker:
+
 ```
 docker run -it --rm --network host -v "$PWD/discovery.yaml:/discovery.yaml:ro" \
   ghcr.io/miguelangel-nubla/ipv6disc -live -config_file /discovery.yaml
 ```
 
-The [example](cmd/ipv6disc/example.config.yaml) shows every key, and the [configuration reference](docs/reference/configuration.md) lists them. The command has three flags: `-config_file`, `-live` and `-version`.
+The [example configuration](cmd/ipv6disc/example.config.yaml) shows every key, and the [configuration reference](docs/reference/configuration.md) lists them. The command has three flags: `-config_file`, `-live` and `-version`.
 
-IPv6 local discovery needs root or `CAP_NET_RAW`, and in Docker the host's network: see [privileges](docs/discovery.md#privileges). The image has the binary alone: the configuration file, and the files a plugin reads, as an `identity_file`, are mounted in, and it has no CA certificates, so a mikrotik plugin with `use_tls: true` needs its [`tls_fingerprint`](docs/plugins.md#a-mikrotik-user) there.
+### Privileges and Docker
 
-The log has an event per change: `host identified` when an address is found, `host expired` when it goes, `host removed` when it is an address of this machine's that its interface no longer has, with its `ip`, `mac` and `source`; `log_level: debug` adds each refresh. `host named` and `host name expired` tell the [names](docs/discovery.md#names) of a host as they come and go, with the `name`, `mac` and `source`. `-live` shows the state instead of the log, errors too, as those of a plugin that can't reach its router: run without it to see why hosts are missing. It needs a terminal, in Docker `-it`, and ends with `q`, or when the process is told to stop.
+IPv6 local discovery needs root or `CAP_NET_RAW`. In Docker it also needs the host's network: see [privileges](docs/discovery.md#privileges).
 
-In `-live`, to select and copy, run it in `screen`, and press `Ctrl+a` then `Esc` for copy mode; `Esc` again goes on updating.
+The Docker image contains only the binary:
+
+- Mount the configuration file into the container, along with any file a plugin reads, such as an `identity_file`.
+- The image has no CA certificates. So a mikrotik plugin with `use_tls: true` needs its [`tls_fingerprint`](docs/plugins.md#a-mikrotik-user) there.
+
+### The log
+
+The log has one event per change, each with the `ip`, `mac` and `source`:
+
+- `host identified` when an address is found;
+- `host expired` when an address goes;
+- `host removed` when one of this machine's own addresses is no longer on its interface.
+
+`log_level: debug` adds each refresh.
+
+Two more events report a host's [names](docs/discovery.md#names) as they come and go, with the `name`, `mac` and `source`: `host named` and `host name expired`.
+
+### The live view
+
+`-live` shows the current state instead of the log.
+
+- It hides errors too, such as those of a plugin that can't reach its router. Run without `-live` to see why hosts are missing.
+- It needs a terminal, which in Docker means `-it`.
+- It ends with `q`, or when the process is told to stop.
+- To select and copy text, run it in `screen`. Press `Ctrl+a` then `Esc` for copy mode, and `Esc` again to resume updating.
 
 ## Documentation
 
 | | |
 |---|---|
-| [Discovery](docs/discovery.md) | How hosts are found: the families, each protocol, interfaces, lifetimes, solicitation, names |
-| [Plugins](docs/plugins.md) | Reading routers' neighbor tables, and the names of their DHCP leases |
+| [Discovery](docs/discovery.md) | How hosts are found: the families, each protocol, interfaces, lifetimes, solicitation, and names |
+| [Plugins](docs/plugins.md) | Reading routers' neighbor tables, and the names in their DHCP leases |
 | [The library](docs/library.md) | Using it from Go |
 | [Configuration reference](docs/reference/configuration.md) | Every key of the configuration file, generated from its schema |
 | [Flags reference](docs/reference/cli.md) | The three flags, generated from the code |
 | [Plugins reference](docs/reference/plugins.md) | Every plugin's fields, generated from the code |
 
-Contributing: [CONTRIBUTING.md](CONTRIBUTING.md). Security issues: [SECURITY.md](SECURITY.md).
+To contribute, see [CONTRIBUTING.md](CONTRIBUTING.md). To report a security issue, see [SECURITY.md](SECURITY.md).

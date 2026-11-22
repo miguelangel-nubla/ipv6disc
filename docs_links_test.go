@@ -69,8 +69,8 @@ func TestDiscoveryPageBounds(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		fmt.Sprintf("a /%d at most", 32-arp.MaxSweepBits),
-		fmt.Sprintf("up to %d nearest the local address", arp.MaxProbeAddrs),
+		fmt.Sprintf("a whole subnet up to a /%d", 32-arp.MaxSweepBits),
+		fmt.Sprintf("it asks for the %d nearest the local address", arp.MaxProbeAddrs),
 	} {
 		if !strings.Contains(string(page), want) {
 			t.Errorf("docs/discovery.md doesn't say %q: the code does", want)

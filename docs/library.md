@@ -4,7 +4,7 @@
 go get github.com/miguelangel-nubla/ipv6disc
 ```
 
-The API's documentation is on [pkg.go.dev](https://pkg.go.dev/github.com/miguelangel-nubla/ipv6disc). The parts, and how they go together:
+The API documentation is on [pkg.go.dev](https://pkg.go.dev/github.com/miguelangel-nubla/ipv6disc). This example shows the parts and how they fit together:
 
 ```go
 config := ipv6disc.DefaultConfig() // IPv6 by the protocols that find hosts, no IPv4
@@ -42,24 +42,55 @@ for {
 }
 ```
 
-A worker starts once, and its plugins are registered before `Start`. A program can run several, each with its own `Config` and its own `State`, as several commands can run on one machine: see [several instances](discovery.md#several-instances). Import the plugins with `_ "github.com/miguelangel-nubla/ipv6disc/pkg/plugins/all"`, or one by one.
+- A worker starts once. Register its plugins before `Start`.
+- A program can run several workers, each with its own `Config` and its own `State`, just as several commands can run on one machine: see [several instances](discovery.md#several-instances).
+- Import the plugins with `_ "github.com/miguelangel-nubla/ipv6disc/pkg/plugins/all"`, or one by one.
 
 ## Config
 
-`Config` is what the [configuration file](reference/configuration.md) of the command sets: a `Family` for each of `IPv6` and `IPv4`, with `Enabled`, `Listen`, `Active` and `Lifetime`, the `Lifetime` and `Rediscover` of all, the `Interfaces` and `ExcludeInterfaces`, `Hostnames`, with its `Lifetime`, and `Protocols`. The [discovery](discovery.md) page says what each does. A zero `Rediscover` is a third of the shortest lifetime of the families that probe. A family's zero `Lifetime` leaves each registration its own: `Config.Lifetime` for the local discovery, and for a plugin the lifetime it was made with.
+`Config` holds what the command's [configuration file](reference/configuration.md) sets. The [discovery](discovery.md) page says what each setting does. Its fields:
 
-`Protocols` has a field for each [protocol](discovery.md#protocols) of the local discovery, each a struct with `Enabled` and the options of that one: `NDP`, `Ping`, `SSDP` and `WSD`, both with `Names`, `MDNS`, with `Ask`, `ARP`, `ARPSweep`, with `MaxPrefix`, `ARPListen`, `DHCP`, `LLDP`, `NetBIOS`, `LLMNR`, and `DNS`, with its `Servers`. `ProtocolNames` are their names, as the file and the log have them. A protocol runs when it is enabled and its family listens, or for the sweep probes. Start from `DefaultConfig`, or give a `Config` made by hand `DefaultProtocols()`: the zero value of `Protocols` enables none, and such a worker, warned of at start, finds this machine's own addresses only.
+- `IPv6` and `IPv4`: a `Family` each, with `Enabled`, `Listen`, `Active` and `Lifetime`;
+- `Lifetime` and `Rediscover`, which apply to everything;
+- `Interfaces` and `ExcludeInterfaces`;
+- `Hostnames`, with its `Lifetime`;
+- `Protocols`.
 
-`Config.Validate` tells what `Worker.Start` would refuse, without starting anything: every error at once, as a protocol enabled that the system can't run, or one that needs another that is off.
+Two zero values have a meaning:
+
+- A zero `Rediscover` means a third of the shortest lifetime among the families that probe.
+- A family's zero `Lifetime` leaves each registration its own lifetime: `Config.Lifetime` for the local discovery, and for a plugin the lifetime the plugin was created with.
+
+### Protocols
+
+`Protocols` has a field for each [protocol](discovery.md#protocols) of the local discovery. Each field is a struct with `Enabled` and that protocol's options:
+
+- `NDP`, `Ping`, `ARP`, `ARPListen`, `DHCP`, `LLDP`, `NetBIOS` and `LLMNR`, with `Enabled` only;
+- `SSDP` and `WSD`, each with `Names`;
+- `MDNS`, with `Ask`;
+- `ARPSweep`, with `MaxPrefix`;
+- `DNS`, with `Servers`.
+
+`ProtocolNames` returns their names, as the file and the log write them. A protocol runs when it is enabled and its family listens or, for the sweep, probes.
+
+Start from `DefaultConfig`. If you build a `Config` by hand, give it `DefaultProtocols()`. The zero value of `Protocols` enables no protocol. A worker with none gets a warning at start, and only finds this machine's own addresses.
+
+### Validation
+
+`Config.Validate` reports what `Worker.Start` would refuse, without starting anything. It returns every error at once. Examples are an enabled protocol that the system can't run, and a protocol that needs another protocol that is off.
 
 ## The configuration file
 
-[`pkg/config`](../pkg/config) is the configuration as a file has it, for a program that reads the discovery from its own settings, as the command does, and as [ipv6ddns](https://github.com/miguelangel-nubla/ipv6ddns) does among others of its own:
+[`pkg/config`](../pkg/config) is the configuration in the form a file has it. Use it in a program that reads the discovery settings from its own configuration. The command does that, and so does [ipv6ddns](https://github.com/miguelangel-nubla/ipv6ddns), which has the discovery among other settings of its own.
 
-- `config.Load` and `config.Parse` read the file of the command, a `File`: YAML, or JSON, read strictly over `config.Default`, and validated.
-- `Discovery` is the keys of the discovery alone, a `File` without `log_level`. It reads itself from JSON, as `encoding/json` hands it, as strictly: a key it doesn't have and a value of the wrong type are errors that tell where they are and what there is. Read it into `config.DefaultDiscovery()`, or into that with the program's own defaults put in: what a document leaves out stays as it was.
-- `Discovery.Config` is the `ipv6disc.Config` of it, `Discovery.NewPlugins` its plugins, made, and `Discovery.Validate` what of both can't run.
-- `config.Schema` is the JSON schema of the file, [`schema.json`](../pkg/config/schema.json), and `config.DiscoverySchema` that of a `Discovery`, for the schema of the program that has one.
+- **`config.Load` and `config.Parse`** read the command's file, a `File`. The file is YAML or JSON. It is read strictly on top of `config.Default`, and validated.
+- **`Discovery`** is the discovery's keys alone: a `File` without `log_level`.
+  - It reads itself from JSON, through `encoding/json`, just as strictly. A key it doesn't have, or a value of the wrong type, is an error that says where the problem is and what is allowed there.
+  - Read it into `config.DefaultDiscovery()`, or into that value with your program's own defaults set in it. Whatever a document leaves out stays as it was.
+- **`Discovery.Config`** returns the matching `ipv6disc.Config`.
+- **`Discovery.NewPlugins`** creates its plugins.
+- **`Discovery.Validate`** reports what can't run in either of them.
+- **`config.Schema`** is the JSON schema of the file, [`schema.json`](../pkg/config/schema.json). `config.DiscoverySchema` is the schema of a `Discovery`, to include in the schema of a program that has one.
 
 ```yaml
 ipv4:
@@ -78,33 +109,86 @@ plugins:
 
 ## State
 
-The worker's `State` holds the addresses, by MAC:
+The worker's `State` holds the addresses, by MAC.
 
-- `GetAll`, `FilterMACs`: the addresses, as `AddrCollection`s, which filter by family, subnet and validity. An `Addr` has its MAC, its sources, the interfaces and plugins that saw it, its `Interfaces`, the local ones of them, and its expiration. `Self` tells an address of this machine's own, which `State.RegisterSelf` registers, and `Temporary`, on Linux, one of them the kernel made as a privacy address, which changes every day or so.
-- `Subscribe`: a channel that receives a value after each change, an address added, expired, or seen by a new source. Changes coming faster than they are received are told once. Its `cancel` doesn't close the channel: wait on the context too.
-- `Register`: adds an address, as the plugins do. It returns nil, and true, for an address the state leaves out: one of a family it doesn't take, one that is invalid, unspecified or multicast, or one with no MAC. `Seen` takes an `Addr` as it is, without those checks nor the families' lifetimes: one it adds is valid for its lifetime from then on.
-- `Close`: stops the expiration of every address, each of which has a goroutine and its timers until it expires, and of the names, which have one timer among them all. For after `Worker.Wait`, which leaves the state as it is, still expiring: a program that makes workers again and again would otherwise keep those of each for a lifetime. Nothing is removed, and `Valid` still tells by time.
+**`GetAll`, `FilterMACs`** return the addresses as `AddrCollection`s, which filter by family, subnet and validity. An `Addr` has:
+
+- its MAC;
+- its sources, which are the interfaces and plugins that saw it;
+- its `Interfaces`, the local interfaces among those sources;
+- its expiration;
+- `Self`, which is true for one of this machine's own addresses. `State.RegisterSelf` registers those;
+- `Temporary`, on Linux, which is true for one of this machine's addresses that the kernel created as a privacy address. Such an address changes every day or so.
+
+**`Subscribe`** returns a channel that receives a value after each change: an address added, expired, or seen by a new source. Changes that arrive faster than they are received are reported once. Its `cancel` doesn't close the channel, so wait on the context too.
+
+**`Register`** adds an address, as the plugins do. It returns nil and true for an address the state leaves out:
+
+- one of a family the state doesn't take;
+- one that is invalid, unspecified or multicast;
+- one with no MAC.
+
+**`Seen`** takes an `Addr` as it is, without those checks and without the families' lifetimes. An address it adds is valid for the address's own lifetime from then on.
+
+**`Close`** stops the expiration of every address and of the names. Each address has a goroutine and its timers until it expires, and the names share one timer.
+
+- Call it after `Worker.Wait`. `Wait` leaves the state as it is, still expiring.
+- Without `Close`, a program that creates workers again and again would keep each worker's goroutines and timers for a lifetime.
+- `Close` removes nothing, and `Valid` still answers by time.
 
 ## Records
 
-An address has a record of each way it was seen, each with its own `FirstSeen`, `LastSeen` and `Lifetime`: it stays while any of them does. `Addr.Records` returns those that still count, in the order they came.
+An address has a record for each way it was seen. Each record has its own `FirstSeen`, `LastSeen` and `Lifetime`, and the address stays while any record does. `Addr.Records` returns the records that are still current, in the order they arrived.
 
-- A **protocol's** record has its `Protocol`, as `ndp` or `mdns`, its `Way`, `Announced`, `Answered` or `Heard`, and the interface it was seen `On`. The local discovery makes them.
-- A **report** has who made it, `By`, a plugin's name or `ReportedByKernel`; its `Type`, the plugin's; and the table it is `From`: `FromNeighbors`, `FromLeases` or `FromInterfaces`. `Reported` tells it from a protocol's.
-- `Report` registers an address as a plugin does, with a report. `Register` is a report of `By` alone.
-- `Attach` adds a report to an address the state has already, and registers none: it says how the address was seen while it counts, and keeps the address no longer than the others do. The plugins attach their leases so: a server keeps the lease of a host that left until it ends. `Record.Attached` tells it.
+There are two kinds of record:
+
+- **A protocol's record** is made by the local discovery. It has its `Protocol`, such as `ndp` or `mdns`; its `Way`, which is `Announced`, `Answered` or `Heard`; and `On`, the interface it was seen on.
+- **A report** has `By`, who made it, which is a plugin's name or `ReportedByKernel`; its `Type`, the plugin's type; and `From`, the table it comes from: `FromNeighbors`, `FromLeases` or `FromInterfaces`. `Reported` tells a report from a protocol's record.
+
+Three methods of the state make reports:
+
+- **`Report`** registers an address with a report, as a plugin does.
+- **`Register`** makes a report that only has `By`.
+- **`Attach`** adds a report to an address the state already has. It registers no address.
+  - The report says how the address was seen for as long as the address stays, but it keeps the address no longer than its other records do.
+  - The plugins attach their leases this way, because a DHCP server keeps the lease of a host that left until the lease ends.
+  - `Record.Attached` tells such a record.
 
 ## Names
 
-The state a worker runs holds the [names](discovery.md#names) of the hosts too, by MAC, which the protocols enabled for them tell, and the plugins; a state of a program's own, once `SetNames` enables them:
+A worker's state also holds the hosts' [names](discovery.md#names), by MAC. They come from the protocols enabled for names, and from the plugins. A state you create yourself only takes names once `SetNames` enables them.
 
-- `NamesOf`, `AllNames`: the names of a MAC, or of each, whose lifetime is running, as `HostName`s: the `Name`, its `Sources`, each a protocol of the local discovery, as `mdns`, `dns`, `netbios`, `llmnr`, `wsd`, `ssdp`, `dhcp` or `lldp`, or a plugin's name, when it was last `Seen` and its `Expiration`. They are copies. A name is the host's, not an address's: use it with whichever addresses `GetAll` has at that MAC.
-- `Subscribe` tells the changes of the names as those of the addresses: a name added, expired, gone with its host, or said by a new source.
-- `RegisterName`: adds a name of a MAC, as a source said it, for a lifetime, or refreshes it, as `Register` does an address. It is the one way in, of the local discovery and of the plugins: a plugin calls it when `State.Names` tells that the state takes names. The name is cleaned by `CleanName`, to one DNS label, and left out when nothing is left of it.
-- `SetNames`: what the worker does with `Config.Hostnames`, for a state made by hand: without it, a state takes no names.
+**`NamesOf`, `AllNames`** return the names of one MAC, or of every MAC, whose lifetime is still running. Each is a `HostName`, with:
 
-A name is whatever a device claims: a hint of which host a MAC is, not a proof. The sources are not worth the same: `mdns`, `dhcp`, `netbios`, `llmnr` and `wsd` are the host's own name for itself, `dns` and a plugin's what a server of the network calls it, `lldp` what a switch or a host calls itself, and `ssdp` a label for people, that two devices of a model may share. A program that needs one name of a host picks by them.
+- the `Name`;
+- its `Sources`. Each source is a protocol of the local discovery (`mdns`, `dns`, `netbios`, `llmnr`, `wsd`, `ssdp`, `dhcp` or `lldp`) or a plugin's name;
+- when it was last `Seen`;
+- its `Expiration`.
+
+The values are copies. A name belongs to the host, not to an address, so use it with whichever addresses `GetAll` has at that MAC.
+
+**`Subscribe`** reports changes of names like changes of addresses: a name added, expired, gone with its host, or said by a new source.
+
+**`RegisterName`** adds a name for a MAC, as said by a source, for a lifetime. If the name is already there, it refreshes it, as `Register` does for an address.
+
+- It is the only way in, for the local discovery and for the plugins. A plugin calls it when `State.Names` says that the state takes names.
+- The name is cleaned by `CleanName` into one DNS label. If nothing is left of it, the name is left out.
+
+**`SetNames`** does what the worker does with `Config.Hostnames`, for a state you create yourself. Without it, a state takes no names.
+
+### How much a name is worth
+
+A name is whatever a device claims. It is a hint about which host a MAC is, not a proof. The sources are not worth the same:
+
+| Source | What the name is |
+|---|---|
+| `mdns`, `dhcp`, `netbios`, `llmnr`, `wsd` | The host's own name for itself |
+| `dns`, a plugin | What a server on the network calls the host |
+| `lldp` | What a switch or a host calls itself |
+| `ssdp` | A label for people, which two devices of one model may share |
+
+A program that needs a single name for a host should choose by source.
 
 ## Solicitation
 
-`Worker.Solicit` and `Worker.SolicitIPv4` ask given hosts for addresses that aren't otherwise seen: see [solicitation](discovery.md#solicitation). `Worker.Prefixes` returns the IPv6 /64s it listens on, to work out an EUI-64 address.
+`Worker.Solicit` and `Worker.SolicitIPv4` ask given hosts for addresses that aren't seen otherwise: see [solicitation](discovery.md#solicitation). `Worker.Prefixes` returns the IPv6 /64s the worker listens on, which you need to work out an EUI-64 address.

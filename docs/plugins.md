@@ -1,6 +1,8 @@
 # Plugins
 
-A plugin reads the neighbor table of another host, a router usually, every `interval`, and registers its entries, and reads its DHCP [leases](#leases): it finds the hosts of networks the local discovery doesn't reach, as other VLANs, or all of them where the local discovery can't run.
+A plugin reads the neighbor table of another host, usually a router, every `interval`, and registers the entries. It also reads that host's DHCP [leases](#leases).
+
+Use a plugin to find the hosts of networks the local discovery doesn't reach, such as other VLANs. Or use plugins to find all hosts, where the local discovery can't run.
 
 ```yaml
 plugins:
@@ -13,66 +15,100 @@ plugins:
     host_key: SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 ```
 
-Each key of `plugins`, in the [configuration file](reference/configuration.md#plugins), is a plugin by its name, which is the source of what it finds: any number of them, for several hosts. Each has its `type`, `linux`, `freebsd` or `mikrotik`, and the fields of that type, which are in the [plugins reference](reference/plugins.md). A field the type doesn't have, and one of the wrong type, are errors at start. A password is taken as written, its spaces too: in quotes when YAML would read it as something else, as one of digits alone.
+Each key of `plugins`, in the [configuration file](reference/configuration.md#plugins), is one plugin. The key is the plugin's name, and that name is the source of everything the plugin finds. You can have any number of plugins, for several hosts.
+
+- Each plugin has a `type`: `linux`, `freebsd` or `mikrotik`. It also has the fields of that type, which are listed in the [plugins reference](reference/plugins.md).
+- A field the type doesn't have, or a value of the wrong type, is an error at start.
+- A password is taken exactly as written, including its spaces. Put it in quotes when YAML would read it as something else, such as a password made of digits only.
 
 ## What they register
 
-The tables of the families on: IPv6 neighbors, and with `ipv4` enabled the ARP tables too. Only the entries confirmed recently: a router can keep an entry long after its host left, and the addresses of hosts that left must expire. Each address is registered with the plugin's name as its source.
+- **The tables of the enabled families.** A plugin reads the IPv6 neighbors and, with `ipv4` enabled, the ARP table too.
+- **Only entries confirmed recently.** A router can keep an entry long after its host left, and the addresses of hosts that left must expire.
+- **Only hosts.** The multicast groups that a MikroTik router lists among its neighbors are left out.
+- **The plugin's name as the source.** Each address is registered with it.
 
-Only hosts: the multicast groups a Mikrotik router lists among its neighbors are left out. A link-local address comes from the other host with that host's interface as its zone, `fe80::1%em0`: the zone is dropped, never taken for an interface of this machine.
+A link-local address arrives with the other host's interface as its zone, such as `fe80::1%em0`. The zone is dropped. It is never mistaken for an interface of this machine.
 
-A poll takes 30 seconds at most, connecting included: a host that doesn't answer is an error of that poll, and the next one runs at its time. Stopping the program stops the poll under way, which is not reported as an error.
+A poll takes 30 seconds at most, including the time to connect. A host that doesn't answer is an error for that poll only, and the next poll runs at its usual time. Stopping the program stops the poll in progress, and that is not reported as an error.
 
 ## Leases
 
-A plugin also reads its router's DHCP leases, whatever [protocols](discovery.md#protocols) are, in the same poll. Of each lease:
+In the same poll, a plugin also reads its router's DHCP leases. It does so whatever [protocols](discovery.md#protocols) are enabled. It uses two things from each lease:
 
-- **Its name** is a [name](discovery.md#names) of the lease's MAC, with the plugin's name as its source. A name is the host's whatever the family of the lease: one of a DHCPv4 lease names the host for its IPv6 addresses too.
-- **Its address**, when the discovery has it at that MAC, gets a record, reported by the plugin from `leases`: what a program can filter on, as one that takes only the addresses its DHCP server gave. A lease registers no address: a server keeps the lease of a host that left until it ends, so a lease finds nobody, and keeps an address no longer than what found it.
+- **The lease's name** becomes a [name](discovery.md#names) of the lease's MAC, with the plugin's name as its source. A name belongs to the host whatever the family of the lease. The name from a DHCPv4 lease also names the host for its IPv6 addresses.
+- **The lease's address** gets a record, reported by the plugin from `leases`, but only when discovery already has that address at that MAC. A program can filter on this record, for example to take only the addresses its DHCP server handed out.
 
-| | |
+A lease never registers an address. A server keeps the lease of a host that left until the lease ends, so a lease alone doesn't show that a host is there. For the same reason, a lease keeps an address no longer than whatever found the address.
+
+Where each type reads the leases:
+
+| Type | Leases read |
 |---|---|
 | `mikrotik` | `/ip/dhcp-server/lease`: the `host-name` of the leases that are `bound`. The bindings of the DHCPv6 server have no name to read |
-| `linux` | The leases of dnsmasq, `/tmp/dhcp.leases` as OpenWrt has it, or `/var/lib/misc/dnsmasq.leases`; and the hosts file odhcpd writes of its DHCPv6 leases, `/tmp/hosts/odhcpd` |
-| `freebsd` | The leases of ISC dhcpd, `/var/dhcpd/var/db/dhcpd.leases`, those in the state `active`; of Kea, `/var/lib/kea/dhcp4.leases` and `dhcp6.leases` as pfSense has them, or `/var/db/kea/kea-leases4.csv` and `kea-leases6.csv` as OPNsense does, those assigned; and of dnsmasq, `/var/db/dnsmasq.leases` |
+| `linux` | dnsmasq's leases, and the hosts file that odhcpd writes for its DHCPv6 leases |
+| `freebsd` | The leases of ISC dhcpd, of Kea, and of dnsmasq |
 
-A DHCPv6 lease knows its client by a DUID, not by a MAC: its name goes to the MAC the neighbor table, read at the same time, has the leased address at, if it is in use. A file that isn't there, as those of the servers the host doesn't run, says nothing, and the user of the plugin needs to be let read those that are. The names are as the clients gave them, cleaned as [any name](discovery.md#what-a-name-is): one that is none, as the `*` of a lease without a name, is left out.
+The files, by type:
 
-A name stays for its lifetime after the last poll that read it: the lease of a host that left stops naming it when the router drops it.
+- **`linux`**
+  - dnsmasq: `/tmp/dhcp.leases`, where OpenWrt keeps it, or `/var/lib/misc/dnsmasq.leases`.
+  - odhcpd: `/tmp/hosts/odhcpd`.
+- **`freebsd`**
+  - ISC dhcpd: `/var/dhcpd/var/db/dhcpd.leases`, the leases in the state `active`.
+  - Kea: `/var/lib/kea/dhcp4.leases` and `dhcp6.leases`, where pfSense keeps them, or `/var/db/kea/kea-leases4.csv` and `kea-leases6.csv`, where OPNsense keeps them. Only the assigned leases are used.
+  - dnsmasq: `/var/db/dnsmasq.leases`.
+
+More details:
+
+- **DHCPv6.** A DHCPv6 lease identifies its client by a DUID, not by a MAC. Its name goes to the MAC at which the neighbor table, read in the same poll, has the leased address, if the address is in use.
+- **Missing files.** A file that isn't there, such as the file of a server the host doesn't run, is not an error. The plugin's user must be allowed to read the files that are there.
+- **Cleaning.** The names are as the clients gave them, cleaned like [any name](discovery.md#what-a-name-is). Something that is not a name, such as the `*` of a lease without a name, is left out.
+- **Lifetime.** A name stays for its lifetime after the last poll that read it. So the lease of a host that left stops naming the host once the router drops the lease.
 
 ## SSH host keys
 
-Give a `linux` or `freebsd` plugin its `host_key`, so that nobody in between can pass for the host. To get it, from a trusted network:
+Give a `linux` or `freebsd` plugin its `host_key`, so that nobody in between can pose as the host. To get the key, run this from a trusted network:
 
 ```
 ssh-keyscan 192.168.1.1 | ssh-keygen -lf -
 ```
 
-A host usually has several keys, one of each kind, and this lists them all: the fingerprint of any of them works. The plugin asks the host for its key of each kind until it shows the one given, and remembers which it was. A host that has none with that fingerprint is refused, with the fingerprints it showed in the error, before the password or the command is sent to it.
+A host usually has several keys, one of each kind, and this command lists them all. The fingerprint of any of them works.
 
-Without `host_key` any key is accepted, and the log warns once, after the first poll that succeeds, with the fingerprint the host showed.
+- The plugin asks the host for its key of each kind until the host shows the one you gave, and remembers which kind it was.
+- A host that has no key with that fingerprint is refused, before the password or the command is sent to it. The error lists the fingerprints the host showed.
+
+Without `host_key`, any key is accepted. The log warns once, after the first poll that succeeds, with the fingerprint the host showed.
 
 ## A Mikrotik user
 
-The plugin only reads, so give it a user of its own, with the `read` and `api` policies, limited to the address it connects from:
+The plugin only reads. Give it a user of its own, with the `read` and `api` policies, limited to the address the plugin connects from:
 
 ```
 /user group add name=ipv6disc policy=read,api
 /user add name=ipv6disc group=ipv6disc address=192.168.88.10/32 password=...
 ```
 
-The `api` service, or `api-ssl` with `use_tls: true`, must be on, under `/ip/service`. Without `use_tls: true` the password crosses the network in the clear. `use_tls` is `true` or `false`, anything else is an error, and so is a `tls_fingerprint` without `use_tls: true`: it would not be checked.
+The `api` service must be on, under `/ip/service`, or `api-ssl` if you set `use_tls: true`.
 
-With `use_tls: true` alone, the router's certificate is verified with the system's CAs, for the name or address in `address`. The certificate RouterOS makes for itself is self-signed, and the Docker image has no CAs at all: there, give its `tls_fingerprint`, which is then all that is checked:
+- Without `use_tls: true`, the password crosses the network unencrypted.
+- `use_tls` is `true` or `false`. Anything else is an error.
+- A `tls_fingerprint` without `use_tls: true` is an error too, because it would not be checked.
+
+With `use_tls: true` alone, the router's certificate is verified against the system's CAs, for the name or address in `address`. That fails in two common cases: the certificate RouterOS makes for itself is self-signed, and the Docker image has no CAs at all. In those cases, give the certificate's `tls_fingerprint`. The fingerprint is then the only thing checked. To get it:
 
 ```
 openssl s_client -connect 192.168.88.1:8729 </dev/null 2>/dev/null | openssl x509 -noout -fingerprint -sha256
 ```
 
-In the image, a certificate of a public CA is verified with the host's CAs mounted in instead: `-v /etc/ssl/certs:/etc/ssl/certs:ro`.
+To verify a certificate from a public CA in the Docker image instead, mount the host's CAs into the container: `-v /etc/ssl/certs:/etc/ssl/certs:ro`.
 
 ## Writing one
 
-A plugin implements `ipv6disc.Plugin`, and registers its type in `init` with `plugins.Register`, its params as fields, each with its description and, when it is no string, its type: the configuration file takes them, the [reference](reference/plugins.md) is made of them, and `plugins.FieldParams` builds the params of programs that have them as fields. The [schema](../pkg/config/schema.json) of the configuration lists the fields of each type too: a test fails when it is behind the plugins. The plugins of [`pkg/plugins`](../pkg/plugins) are the examples. `plugins.Describe` only gives a type its description: it is `plugins.Register` that makes it one.
+A plugin implements `ipv6disc.Plugin`, and registers its type in `init` with `plugins.Register`. The plugins in [`pkg/plugins`](../pkg/plugins) are the examples to follow.
 
-`plugins.Poller` runs the polls and keeps their stats: its `Run` needs a positive interval, and returns an error otherwise, as `Start` of the plugins here does for a config built by hand without one.
+- **Fields.** Register the plugin's params as fields, each with its description and, when it isn't a string, its type. The configuration file accepts them, the [reference](reference/plugins.md) is generated from them, and `plugins.FieldParams` builds the params for programs that have them as fields.
+- **Schema.** The [schema](../pkg/config/schema.json) of the configuration also lists each type's fields. A test fails when the schema is behind the plugins.
+- **`plugins.Describe`** only gives a type its description. `plugins.Register` is what creates the type.
+- **`plugins.Poller`** runs the polls and keeps their stats. Its `Run` needs a positive interval, and returns an error otherwise. The `Start` of the plugins here returns the same error for a config built by hand without an interval.

@@ -1,43 +1,111 @@
 # Contributing
 
-Issues and pull requests are welcome. Security issues: see [SECURITY.md](SECURITY.md), not a public issue.
+Issues and pull requests are welcome. For a security issue, follow [SECURITY.md](SECURITY.md) instead of opening a public issue.
 
 ## Developing
+
+Before opening a pull request, run:
 
 ```bash
 go vet ./...
 go test -race ./...
 ```
 
-CI runs those, a vet for the other systems (`GOOS=darwin`, `freebsd`, `netbsd`, `openbsd`, `solaris`, `windows`: those the release builds for), whose files a build on one system doesn't see, a 32-bit build, `staticcheck`, `golangci-lint` as `.golangci.yaml` sets it, on each of those systems, `go mod tidy -diff`, `govulncheck`, and the live test below.
+CI runs both. It also runs:
 
-The live test discovers over a real link, between two network namespaces, which needs Linux, root and iproute2, and for the names the services that tell them, which it runs in the namespaces of the hosts: `avahi-daemon`, without D-Bus, Samba's `nmbd`, `systemd-resolved`, `dnsmasq`, `udhcpc`, `dhclient`, `wsdd2` and `lldpd`. A test whose service is missing is skipped:
+- a vet for the other systems the release builds for (`GOOS=darwin`, `freebsd`, `netbsd`, `openbsd`, `solaris`, `windows`), because a build on one system doesn't see the other systems' files;
+- a 32-bit build;
+- `staticcheck`, and `golangci-lint` with the settings in `.golangci.yaml`, on each of those systems;
+- `go mod tidy -diff`;
+- `govulncheck`;
+- the live test described below.
+
+### The live test
+
+The live test discovers over a real link, between two network namespaces. It needs Linux, root and iproute2.
+
+For the names, it also needs the services that announce or answer them, which it runs in the hosts' namespaces: `avahi-daemon` (without D-Bus), Samba's `nmbd`, `systemd-resolved`, `dnsmasq`, `udhcpc`, `dhclient`, `wsdd2` and `lldpd`. A test whose service is missing is skipped.
 
 ```bash
 go test -c -tags integration -o integration.test . && go build -o ipv6disc ./cmd/ipv6disc && sudo ./integration.test -test.run '^TestLive'
 ```
 
-The command is built beside the test, which runs two of it at once, each with a configuration file of its own.
+The command is built next to the test, because the test runs two copies of it at once, each with its own configuration file.
 
-From another system, with Docker, `tools/live-test.sh` runs it, and the other tests under the race detector, in a privileged container that is thrown away. Among the live tests, what only a real socket tells: that a neighbor advertisement with a hop limit below 255 is left out, and that the same one from the link isn't; and several instances at once: two workers of one process, two processes and two commands on one machine, and two machines of one link, where the probes of each are counted on the wire, alone and with the other; and a host that leaves the link, whose IPv4 address goes a lifetime after the kernel last confirmed it, while those that stay are there through every reading of the table; and the names, told by a real responder: a host asked its name over each family, one found and named by what it announces, renamed, and losing its old name a lifetime later, nothing sent to the port of mDNS by default, a worker beside the responder of its own machine, both on that port, and a host that sends its name unasked to the port the worker asks from, which names nobody; and the names by each of the other protocols, each alone: asked of nmbd over NetBIOS, of systemd-resolved over LLMNR, which answers a question to the group and none sent to it alone, and of dnsmasq as a DNS server; fetched from wsdd2, and from a UPnP device of the test's own, the one that is not a real service; heard of udhcpc and dhclient as they ask dnsmasq for an address, beside it too, and not of a host that writes another's MAC or address in a message of its own, and of lldpd; a host found by the ARP it sends within a second; without `CAP_NET_RAW`, none of the three heard, each said once, and the hosts found by the table as before; and nothing of any of it on the wire, nor a socket for it, by default; and the switches of the protocols, each alone with only what it can't run without: what it sends counted on the wire, its sockets and its groups there when it is enabled, and none of them of any protocol that is not, nor of a worker with none at all, the sweep of the subnets no larger than its `max_prefix`, and mDNS that only listens when told not to ask; the switches of a family over them, with every protocol enabled, where a family that is off, or doesn't probe, has none of its own on the wire nor open; the command without a configuration, and with a file that says nothing, which send what the command sent before it had one; mDNS without the names kept, which finds a host that only announces itself and asks it nothing; and the command with its configuration in a file, a flag from before the file refused, and a file that can't be, with nothing sent.
+On another system, `tools/live-test.sh` runs the live test with Docker, in a privileged container that is thrown away afterwards. It also runs the other tests under the race detector.
+
+### What the live tests cover
+
+The live tests check what only a real socket can show:
+
+- **The NDP hop limit.** A neighbor advertisement with a hop limit below 255 is ignored, and the same advertisement from the link is not.
+- **Several instances at once.** Two workers in one process, two processes on one machine, two commands on one machine, and two machines on one link. On the two machines, each instance's probes are counted on the wire, alone and with the other instance running.
+- **A host that leaves the link.** Its IPv4 address goes a lifetime after the kernel last confirmed it. The hosts that stay remain through every reading of the table.
+- **Names from a real mDNS responder.**
+  - A host is asked for its name over each family.
+  - A host is found and named by what it announces. When it is renamed, it loses its old name a lifetime later.
+  - With mDNS off, nothing is sent to the mDNS port.
+  - A worker runs next to its own machine's responder, with both on the mDNS port.
+  - A host that sends its name, unasked, to the port the worker asks from names nobody.
+- **Names from each of the other protocols, each one alone.**
+  - Asked: of nmbd over NetBIOS, of systemd-resolved over LLMNR, and of dnsmasq as a DNS server. systemd-resolved answers a question sent to the group, and not one sent to it alone.
+  - Fetched: from wsdd2, and from a UPnP device that the test provides itself. That device is the only one that is not a real service.
+  - Heard: from udhcpc and dhclient as they ask dnsmasq for an address, also when the worker runs on the same machine as dnsmasq, and from lldpd. A host that writes another host's MAC or address in its own message names nobody.
+- **The ARP a host sends.** The host is found within a second.
+- **Without `CAP_NET_RAW`.** None of the three protocols that need packet sockets is heard, the log says so once for each, and the hosts are found through the table as before.
+- **With the name protocols off.** Nothing of any of them is on the wire, and no socket is opened for them.
+- **Each protocol's switch**, with the protocol alone plus only what it can't run without.
+  - When the protocol is enabled, what it sends is counted on the wire, and its sockets and groups are there.
+  - No socket or group belongs to a protocol that is not enabled, or to a worker with no protocol at all.
+  - The sweep only covers the subnets no larger than its `max_prefix`.
+  - mDNS only listens when it is told not to ask.
+- **Each family's switches**, which override the protocols' switches. With every protocol enabled, a family that is off, or that doesn't probe, has none of its protocols on the wire and none of their sockets open.
+- **The command's defaults.** The command without a configuration, and with a file that sets nothing, sends what the command sent before it had a configuration file.
+- **mDNS finding hosts.** It finds a host that only announces itself, and asks that host nothing.
+- **The command's configuration file.** The command takes its configuration from a file. A flag that existed before the file is refused. With a file that is invalid, nothing is sent.
 
 ## The documentation
 
-The [flags reference](docs/reference/cli.md), the [configuration reference](docs/reference/configuration.md) and the [plugins reference](docs/reference/plugins.md) are generated from the code: the flags' usages, the schema of the configuration file, [`pkg/config/schema.json`](pkg/config/schema.json), and the fields each plugin registers. After changing them:
+Three pages are generated from the code:
+
+| Page | Generated from |
+|---|---|
+| [Flags reference](docs/reference/cli.md) | The flags' usage texts |
+| [Configuration reference](docs/reference/configuration.md) | The schema of the configuration file, [`pkg/config/schema.json`](pkg/config/schema.json) |
+| [Plugins reference](docs/reference/plugins.md) | The fields each plugin registers |
+
+After changing any of those sources, regenerate the pages:
 
 ```bash
 go test ./cmd/ipv6disc -update
 ```
 
-A test fails when the pages are behind, or a field has no description. Others hold the schema to the code: every key of it is a field of the types of [`pkg/config`](pkg/config), and every field a key, of the same type and with the same default; its plugins are those registered, with their fields; and every configuration the pages show, and the [example](cmd/ipv6disc/example.config.yaml) of the release, is one the command takes; and the archives of a release have that example and every page, by the files of [`.goreleaser.yaml`](.goreleaser.yaml).
+A test fails when the pages are out of date, or when a field has no description. Other tests keep the rest consistent:
 
-A new protocol is a field of `ipv6disc.Protocols`, with its `Enabled` and its options, its name in `ProtocolNames`, a key of `protocols` in `pkg/config` and in the schema, a row of the table of [protocols](docs/discovery.md#protocols), which a test holds to the code, and a row of the live test of the switches, with what it sends and opens.
+- **The schema matches the code.** Every key of the schema is a field of the types in [`pkg/config`](pkg/config), and every field is a key, with the same type and the same default. The schema's plugins are the registered plugins, with their fields.
+- **The examples load.** Every configuration shown in the pages, and the release's [example](cmd/ipv6disc/example.config.yaml), is one the command accepts.
+- **The release has the pages.** A release's archives contain that example and every page, according to the files listed in [`.goreleaser.yaml`](.goreleaser.yaml).
+
+Some sentences of [`docs/discovery.md`](docs/discovery.md) are also held to the code by tests, word for word, because they state limits the code defines. When you reword one, update the test that quotes it: `naming_test.go`, `protocols_test.go` or `docs_links_test.go`.
+
+### Adding a protocol
+
+A new protocol needs all of these:
+
+1. A field in `ipv6disc.Protocols`, with its `Enabled` and its options.
+2. Its name in `ProtocolNames`.
+3. A key under `protocols` in `pkg/config`, and in the schema.
+4. A row in the table of [protocols](docs/discovery.md#protocols). A test keeps that table matching the code.
+5. A row in the live test of the switches, with what the protocol sends and opens.
 
 ## Releases
 
-A tag makes a release: goreleaser builds it and publishes it on GitHub, with its images. Work goes to `dev`, where CI runs on every push, and reaches `main` when it is released.
+A tag makes a release: goreleaser builds it and publishes it on GitHub, with its images. Work goes to `dev`, where CI runs on every push. It reaches `main` when it is released.
 
-- **A prerelease** is a tag of `dev` with a prerelease part: `v0.23.0-rc.1`, `-rc.2`, `-beta.1`. GitHub marks it a prerelease, not the latest release, and its images have its own tags only: `latest`, `vX` and `vX.Y` stay on the last release, so nobody gets it who didn't ask for it. ipv6ddns can take one in its `go.mod` to be tested with it before the release.
+- **A prerelease** is a tag on `dev` with a prerelease part: `v0.23.0-rc.1`, `-rc.2`, `-beta.1`.
+  - GitHub marks it as a prerelease, not as the latest release.
+  - Its images only get its own tags. `latest`, `vX` and `vX.Y` stay on the last release, so nobody gets a prerelease without asking for it.
+  - ipv6ddns can depend on a prerelease in its `go.mod`, to be tested with it before the release.
 - **A release** is `dev` merged into `main`, and tagged there: `v0.23.0`.
 
-A tag whose commit says `[skip ci]` starts no release: GitHub skips every workflow of that push, the tag's too. Tag a commit that doesn't, or run the release on the tag by hand: *Actions*, *goreleaser*, *Run workflow*, with the tag under *Use workflow from*.
+A tag whose commit message contains `[skip ci]` starts no release. GitHub skips every workflow of that push, including the tag's. Either tag a commit without it, or run the release on the tag by hand: *Actions*, *goreleaser*, *Run workflow*, with the tag under *Use workflow from*.
