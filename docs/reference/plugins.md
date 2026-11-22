@@ -22,12 +22,12 @@ A FreeBSD host, as pfSense or OPNsense, over SSH: `ndp -an` for IPv6, `arp -an` 
 
 | Field | Takes | |
 |---|---|---|
-| `interval` | duration | **Required.** How often the table is read: 60s, 5m. |
-| `address` | string | **Required.** The host, with its port unless 22: 192.168.1.1, [2001:db8::1]:2222. |
+| `interval` | duration | **Required.** How often the table is read, as 60s or 5m. |
+| `address` | string | **Required.** The host, with its port unless it's 22, as 192.168.1.1 or [2001:db8::1]:2222. |
 | `username` | string | **Required.** The SSH user. |
-| `password` | string | Its password. Or an identity_file, or both. |
+| `password` | string | Its password. An identity_file works instead, or as well. |
 | `identity_file` | string | The SSH private key file. |
-| `host_key` | string | The fingerprint of the host's SSH key, any of them when it has several, SHA256:..., as ssh-keygen -l shows it. Recommended: without it, any key is accepted, and the log warns with the fingerprint seen. |
+| `host_key` | string | The fingerprint of the host's SSH key, as ssh-keygen -l shows it: SHA256:.... Any of its keys works. Recommended: without it, any key is accepted, and the log warns with the fingerprint it saw. |
 
 ## linux
 
@@ -35,12 +35,12 @@ A Linux host, as OpenWrt, over SSH: `ip neigh`, and the DHCP leases of dnsmasq a
 
 | Field | Takes | |
 |---|---|---|
-| `interval` | duration | **Required.** How often the table is read: 60s, 5m. |
-| `address` | string | **Required.** The host, with its port unless 22: 192.168.1.1, [2001:db8::1]:2222. |
+| `interval` | duration | **Required.** How often the table is read, as 60s or 5m. |
+| `address` | string | **Required.** The host, with its port unless it's 22, as 192.168.1.1 or [2001:db8::1]:2222. |
 | `username` | string | **Required.** The SSH user. |
-| `password` | string | Its password. Or an identity_file, or both. |
+| `password` | string | Its password. An identity_file works instead, or as well. |
 | `identity_file` | string | The SSH private key file. |
-| `host_key` | string | The fingerprint of the host's SSH key, any of them when it has several, SHA256:..., as ssh-keygen -l shows it. Recommended: without it, any key is accepted, and the log warns with the fingerprint seen. |
+| `host_key` | string | The fingerprint of the host's SSH key, as ssh-keygen -l shows it: SHA256:.... Any of its keys works. Recommended: without it, any key is accepted, and the log warns with the fingerprint it saw. |
 
 ## mikrotik
 
@@ -48,9 +48,9 @@ A Mikrotik router, over its API: `/ipv6/neighbor` for IPv6, `/ip/arp` for IPv4, 
 
 | Field | Takes | |
 |---|---|---|
-| `interval` | duration | **Required.** How often the tables are read: 60s, 5m. |
-| `address` | string | **Required.** The router, with its port unless the default: 8728, or 8729 with TLS. |
+| `interval` | duration | **Required.** How often the tables are read, as 60s or 5m. |
+| `address` | string | **Required.** The router, with its port unless it's the default: 8728, or 8729 with TLS. |
 | `username` | string | **Required.** An API user: the read and api policies are enough. |
 | `password` | string | Its password. |
-| `use_tls` | boolean | true or false: the API over TLS, the api-ssl service. Without it, the password crosses the network in the clear. |
-| `tls_fingerprint` | string | The SHA-256 fingerprint of the router's certificate, 64 hex digits, colons allowed, when the system's CAs can't verify it, as the self-signed one RouterOS makes. It needs use_tls. |
+| `use_tls` | boolean | Whether to use the API over TLS, the api-ssl service. Without it, the password crosses the network unencrypted. |
+| `tls_fingerprint` | string | The SHA-256 fingerprint of the router's certificate, as 64 hex digits, colons allowed. For when the system's CAs can't verify it, as with the self-signed one RouterOS makes. It needs use_tls. |

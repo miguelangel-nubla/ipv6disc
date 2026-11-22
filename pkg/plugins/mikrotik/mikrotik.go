@@ -28,12 +28,12 @@ func init() {
 		}
 		return NewMikrotikPlugin(name, cfg, lifetime), nil
 	},
-		plugins.Field{Name: "interval", Required: true, Type: plugins.FieldDuration, Description: "How often the tables are read: 60s, 5m."},
-		plugins.Field{Name: "address", Required: true, Description: "The router, with its port unless the default: 8728, or 8729 with TLS."},
+		plugins.Field{Name: "interval", Required: true, Type: plugins.FieldDuration, Description: "How often the tables are read, as 60s or 5m."},
+		plugins.Field{Name: "address", Required: true, Description: "The router, with its port unless it's the default: 8728, or 8729 with TLS."},
 		plugins.Field{Name: "username", Required: true, Description: "An API user: the read and api policies are enough."},
 		plugins.Field{Name: "password", Description: "Its password."},
-		plugins.Field{Name: "use_tls", Type: plugins.FieldBoolean, Description: "true or false: the API over TLS, the api-ssl service. Without it, the password crosses the network in the clear."},
-		plugins.Field{Name: "tls_fingerprint", Description: "The SHA-256 fingerprint of the router's certificate, 64 hex digits, colons allowed, when the system's CAs can't verify it, as the self-signed one RouterOS makes. It needs use_tls."},
+		plugins.Field{Name: "use_tls", Type: plugins.FieldBoolean, Description: "Whether to use the API over TLS, the api-ssl service. Without it, the password crosses the network unencrypted."},
+		plugins.Field{Name: "tls_fingerprint", Description: "The SHA-256 fingerprint of the router's certificate, as 64 hex digits, colons allowed. For when the system's CAs can't verify it, as with the self-signed one RouterOS makes. It needs use_tls."},
 	)
 }
 
