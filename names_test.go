@@ -517,8 +517,8 @@ func TestPrettyPrintNames(t *testing.T) {
 	got := state.PrettyPrint("", true)
 	for _, want := range []string{
 		"Discovery: 2 hosts, 1 named, 2 addresses\n",
-		"    00:1a:2b:3c:4d:a1\n        names:\n            laserjet                 1h 0m 0s  up            0s\n                reported by router   1h 0m 0s  up            0s\n            printer ",
-		"                reported by mdns     1h 0m 0s  up            0s\n                reported by router   1h 0m 0s  up            0s\n        addresses:\n            2001:db8::20 ",
+		"    00:1a:2b:3c:4d:a1\n        names:\n            laserjet                 1h 0m 0s             0s\n                reported by router   1h 0m 0s             0s\n            printer ",
+		"                reported by mdns     1h 0m 0s             0s\n                reported by router   1h 0m 0s             0s\n        addresses:\n            2001:db8::20 ",
 		"    00:1a:2b:3c:4d:a2\n        addresses:\n            2001:db8::21 ",
 	} {
 		if !strings.Contains(got, want) {

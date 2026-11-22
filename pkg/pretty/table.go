@@ -82,9 +82,9 @@ func (t *Table) Render(prefix string) string {
 		if l.hasLeft {
 			left = Left(l.left, days, hours)
 		}
-		up := strings.Repeat(" ", len("up ")+len(Up(0)))
+		up := strings.Repeat(" ", len(Up(0)))
 		if l.hasUp {
-			up = "up " + Up(l.up)
+			up = Up(l.up)
 		}
 		if !l.hasLeft && !l.hasUp && l.note == "" {
 			left, up = "", strings.Repeat(" ", len(up))

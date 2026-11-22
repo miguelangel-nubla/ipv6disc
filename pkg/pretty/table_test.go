@@ -56,10 +56,10 @@ func TestTable(t *testing.T) {
 	tb.Row("    10.2.3.75", 9*time.Minute+59*time.Second, 9*time.Hour+time.Minute, "(this host)")
 	got := tb.Render("  ")
 	want := `  00:1b:21:bc:be:de
-      10.2.3.12                                    2m41s  up   3d 4h
-          arp:answered on lan-ipv4              3h59m12s  up      2h10m
-          reported by mikrotik-57 from leases    (lease)  up   3d 4h
-      10.2.3.75                                    9m59s  up      9h 1m     (this host)
+      10.2.3.12                                    2m41s    3d 4h
+          arp:answered on lan-ipv4              3h59m12s       2h10m
+          reported by mikrotik-57 from leases    (lease)    3d 4h
+      10.2.3.75                                    9m59s       9h 1m     (this host)
 `
 	if got != want {
 		t.Errorf("got\n%s\nwant\n%s", strings.ReplaceAll(got, " ", "·"), strings.ReplaceAll(want, " ", "·"))
