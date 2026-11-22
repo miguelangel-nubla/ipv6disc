@@ -11,15 +11,17 @@ import (
 
 // Table is lines, some of them rows of columns: Render pads them to line up.
 type Table struct {
-	lines []line
+	lines []*Entry
 }
 
-type line struct {
+// Entry is a line of a Table, as its methods add it: Label gives its label a role.
+type Entry struct {
 	// A line as it is, of no column.
-	text string
-	row  bool
+	spans []Span
+	row   bool
 
 	label string
+	role  Role
 	// How long it has left, or in its place a note, as (lease); and since when it was seen.
 	left    time.Duration
 	hasLeft bool
@@ -32,28 +34,51 @@ type line struct {
 // Line adds a line as it is, as a heading: it has no column, and the rows around it line up all
 // the same.
 func (t *Table) Line(text string) {
-	t.lines = append(t.lines, line{text: text})
+	t.Spans(Span{Text: text})
+}
+
+// Spans is Line, of pieces each with its role.
+func (t *Table) Spans(spans ...Span) {
+	t.lines = append(t.lines, &Entry{spans: spans})
+}
+
+// Label gives the row's label a role, in place of Plain. The times and the rest of a row are
+// Detail.
+func (e *Entry) Label(role Role) *Entry {
+	e.role = role
+	return e
+}
+
+func (t *Table) add(e Entry) *Entry {
+	t.lines = append(t.lines, &e)
+	return &e
 }
 
 // Row adds a row: label, with its indentation, how long it has left, how long it has been seen,
 // and the rest, as what said it.
-func (t *Table) Row(label string, left, up time.Duration, rest string) {
-	t.lines = append(t.lines, line{row: true, label: label, left: left, hasLeft: true, up: up, hasUp: true, rest: rest})
+func (t *Table) Row(label string, left, up time.Duration, rest string) *Entry {
+	return t.add(Entry{row: true, label: label, left: left, hasLeft: true, up: up, hasUp: true, rest: rest})
 }
 
 // RowNote is Row with a note in place of how long it has left: what has no time of its own.
-func (t *Table) RowNote(label, note string, up time.Duration, rest string) {
-	t.lines = append(t.lines, line{row: true, label: label, note: note, up: up, hasUp: true, rest: rest})
+func (t *Table) RowNote(label, note string, up time.Duration, rest string) *Entry {
+	return t.add(Entry{row: true, label: label, note: note, up: up, hasUp: true, rest: rest})
 }
 
 // RowText is a row of label and the rest alone: no time, the columns left blank.
-func (t *Table) RowText(label, rest string) {
-	t.lines = append(t.lines, line{row: true, label: label, rest: rest})
+func (t *Table) RowText(label, rest string) *Entry {
+	return t.add(Entry{row: true, label: label, rest: rest})
 }
 
-// Render is the lines, the rows of each prefixed by prefix, padded to the widest label, and their
-// times each in its column.
+// Render is the lines as text, the rows of each prefixed by prefix, padded to the widest label,
+// and their times each in its column.
 func (t *Table) Render(prefix string) string {
+	return t.Page(prefix).String()
+}
+
+// Page is Render with the roles: those of the lines as given, of a row its label's, and Detail
+// for its times and the rest.
+func (t *Table) Page(prefix string) Page {
 	width, days, hours := 0, false, false
 	for _, l := range t.lines {
 		if !l.row {
@@ -72,10 +97,14 @@ func (t *Table) Render(prefix string) string {
 			leftWidth = max(leftWidth, len(l.note))
 		}
 	}
-	var b strings.Builder
+	page := make(Page, 0, len(t.lines))
 	for _, l := range t.lines {
 		if !l.row {
-			b.WriteString(prefix + l.text + "\n")
+			line := make(Line, 0, len(l.spans)+1)
+			if prefix != "" {
+				line = append(line, Span{Text: prefix})
+			}
+			page = append(page, append(line, l.spans...))
 			continue
 		}
 		left := l.note
@@ -93,9 +122,16 @@ func (t *Table) Render(prefix string) string {
 		if l.rest != "" {
 			row += "  " + l.rest
 		}
-		b.WriteString(strings.TrimRight(row, " ") + "\n")
+		row = strings.TrimRight(row, " ")
+		// The label, and the columns after it with the padding up to them.
+		cut := min(len(prefix)+len(l.label), len(row))
+		line := Line{{Text: row[:cut], Role: l.role}}
+		if cut < len(row) {
+			line = append(line, Span{Text: row[cut:], Role: Detail})
+		}
+		page = append(page, line)
 	}
-	return b.String()
+	return page
 }
 
 // Left is how long something has left, every unit from its largest down to the seconds, each in

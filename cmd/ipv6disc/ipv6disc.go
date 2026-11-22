@@ -16,6 +16,7 @@ import (
 
 	"github.com/miguelangel-nubla/ipv6disc"
 	"github.com/miguelangel-nubla/ipv6disc/pkg/config"
+	"github.com/miguelangel-nubla/ipv6disc/pkg/pretty"
 	"github.com/miguelangel-nubla/ipv6disc/pkg/terminal"
 )
 
@@ -143,13 +144,13 @@ func startUpdater() {
 		return
 	}
 
-	liveOutput := make(chan string)
+	liveOutput := make(chan pretty.Page)
 	go func() {
 		refresh := time.NewTicker(1 * time.Second)
 		defer refresh.Stop()
 		for {
 			select {
-			case liveOutput <- worker.State.PrettyPrint("    ", true) + worker.PrettyPrintStats("    "):
+			case liveOutput <- append(worker.State.Page("    "), worker.StatsPage("    ")...):
 			case <-ctx.Done():
 				return
 			}
@@ -160,7 +161,7 @@ func startUpdater() {
 			}
 		}
 	}()
-	terminal.Run(ctx, liveOutput)
+	terminal.RunPages(ctx, liveOutput)
 	terminal.Close()
 	stop()
 	worker.Wait()

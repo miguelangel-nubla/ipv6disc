@@ -18,6 +18,7 @@ import (
 	"github.com/miguelangel-nubla/ipv6disc/pkg/arp"
 	"github.com/miguelangel-nubla/ipv6disc/pkg/ndp"
 	"github.com/miguelangel-nubla/ipv6disc/pkg/ping"
+	"github.com/miguelangel-nubla/ipv6disc/pkg/pretty"
 	"github.com/miguelangel-nubla/ipv6disc/pkg/ssdp"
 	"github.com/miguelangel-nubla/ipv6disc/pkg/wsd"
 	"go.uber.org/zap"
@@ -159,16 +160,26 @@ func (w *Worker) Protocols() []string {
 	return w.config.running()
 }
 
+// PrettyPrintStats is StatsPage as text.
 func (w *Worker) PrettyPrintStats(prefix string) string {
-	var result strings.Builder
+	return w.StatsPage(prefix).String()
+}
+
+// StatsPage is the page of what runs: the protocols, the counters of each on each interface, and
+// those of the plugins.
+func (w *Worker) StatsPage(prefix string) pretty.Page {
+	var page pretty.Page
+	heading := func(text, rest string) {
+		page.Add(pretty.Span{Text: prefix}, pretty.As(pretty.Heading, text), pretty.Span{Text: rest})
+	}
 
 	// What the configuration runs, then what of it is running, on each interface.
 	running := "none"
 	if protocols := w.config.running(); len(protocols) > 0 {
 		running = strings.Join(protocols, ", ")
 	}
-	result.WriteString(prefix + "Protocols: " + running + "\n")
-	result.WriteString(prefix + "Protocol Workers:\n")
+	heading("Protocols:", " "+running)
+	heading("Protocol Workers:", "")
 	w.pcMutex.RLock()
 	// Group by interface
 	ifaceMap := make(map[string][]*InterfaceProcesses)
@@ -203,6 +214,7 @@ func (w *Worker) PrettyPrintStats(prefix string) string {
 	sort.Strings(ifaceNames)
 
 	printStats := func(name string, stats map[string]any) {
+		var result strings.Builder
 		fmt.Fprintf(&result, "%s            %-5s:", prefix, name)
 		// Sort keys for consistent output
 		sKeys := make([]string, 0, len(stats))
@@ -213,11 +225,11 @@ func (w *Worker) PrettyPrintStats(prefix string) string {
 		for _, sk := range sKeys {
 			fmt.Fprintf(&result, " %s=%v", sk, stats[sk])
 		}
-		result.WriteString("\n")
+		page.Add(pretty.As(pretty.Detail, result.String()))
 	}
 
 	for _, name := range ifaceNames {
-		fmt.Fprintf(&result, "%s    %s:\n", prefix, name)
+		page.Add(pretty.Span{Text: prefix + "    " + name + ":"})
 		ips := ifaceMap[name]
 		// Sort by IP within interface
 		sort.Slice(ips, func(i, j int) bool {
@@ -225,18 +237,18 @@ func (w *Worker) PrettyPrintStats(prefix string) string {
 		})
 
 		for _, ip := range ips {
-			fmt.Fprintf(&result, "%s        %s:\n", prefix, ip.Address.String())
+			page.Add(pretty.As(pretty.Detail, prefix+"        "+ip.Address.String()+":"))
 
 			for _, p := range ip.Protocols {
 				printStats(p.Name, p.Worker.Stats())
 			}
 		}
 		if listener, ok := ipv4[name]; ok {
-			fmt.Fprintf(&result, "%s        ipv4:\n", prefix)
+			page.Add(pretty.As(pretty.Detail, prefix+"        ipv4:"))
 			printStats(ProtocolARPListen, listener.Stats())
 		}
 		if len(names[name]) > 0 {
-			fmt.Fprintf(&result, "%s        names:\n", prefix)
+			page.Add(pretty.As(pretty.Detail, prefix+"        names:"))
 			for _, p := range names[name] {
 				printStats(p.Name, p.Worker.Stats())
 			}
@@ -244,16 +256,16 @@ func (w *Worker) PrettyPrintStats(prefix string) string {
 	}
 	// The naming protocols of no interface.
 	if len(global) > 0 {
-		fmt.Fprintf(&result, "%s    names:\n", prefix)
+		page.Add(pretty.Span{Text: prefix + "    names:"})
 		for _, p := range global {
 			printStats(p.Name, p.Worker.Stats())
 		}
 	}
 
-	result.WriteString(prefix + "Plugins:\n")
+	heading("Plugins:", "")
 	for _, p := range w.plugins {
 		stats := p.Stats()
-		fmt.Fprintf(&result, "%s    %s:", prefix, p.Name())
+		var result strings.Builder
 		// Sort keys for consistent output
 		sKeys := make([]string, 0, len(stats))
 		for k := range stats {
@@ -268,10 +280,10 @@ func (w *Worker) PrettyPrintStats(prefix string) string {
 				fmt.Fprintf(&result, " %s=%v", k, v)
 			}
 		}
-		result.WriteString("\n")
+		page.Add(pretty.Span{Text: prefix + "    " + p.Name() + ":"}, pretty.As(pretty.Detail, result.String()))
 	}
 
-	return result.String()
+	return page
 }
 
 // Start runs the plugins and, when listening is enabled, the discovery on every interface address,

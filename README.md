@@ -87,6 +87,7 @@ Two more events report a host's [names](docs/discovery.md#names) as they come an
 
 - It hides errors too, such as those of a plugin that can't reach its router. Run without `-live` to see why hosts are missing.
 - It needs a terminal, which in Docker means `-it`.
+- It uses the terminal's colors for names and details, and none when `NO_COLOR` is set.
 - It ends with `q`, or when the process is told to stop.
 - To select and copy text, run it in `screen`. Press `Ctrl+a` then `Esc` for copy mode, and `Esc` again to resume updating.
 

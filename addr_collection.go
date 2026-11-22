@@ -242,10 +242,10 @@ func (c *AddrCollection) rows(t *pretty.Table, indent string, now time.Time) {
 		t.Row(indent+addrKey(addr), addr.GetExpiration().Sub(now), now.Sub(firstSeen(records)), notes)
 		for _, r := range records {
 			if r.Attached() {
-				t.RowNote(indent+"    "+r.String(), "(lease)", now.Sub(r.FirstSeen), "")
+				t.RowNote(indent+"    "+r.String(), "(lease)", now.Sub(r.FirstSeen), "").Label(pretty.Detail)
 				continue
 			}
-			t.Row(indent+"    "+r.String(), r.Expiration().Sub(now), now.Sub(r.FirstSeen), "")
+			t.Row(indent+"    "+r.String(), r.Expiration().Sub(now), now.Sub(r.FirstSeen), "").Label(pretty.Detail)
 		}
 	}
 }

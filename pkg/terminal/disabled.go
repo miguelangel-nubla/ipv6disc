@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"log"
+
+	"github.com/miguelangel-nubla/ipv6disc/pkg/pretty"
 )
 
 var errUnsupported = errors.New("live output is not supported on this platform")
@@ -18,6 +20,9 @@ func Close() {}
 
 // Run returns at once: Init gave no terminal.
 func Run(ctx context.Context, contentChan <-chan string) {}
+
+// RunPages returns at once: Init gave no terminal.
+func RunPages(ctx context.Context, contentChan <-chan pretty.Page) {}
 
 func LiveOutput(contentChan chan string) {
 	log.Fatal("Live output is not supported on this platform, please remove the -live flag.")

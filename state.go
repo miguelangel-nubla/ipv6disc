@@ -419,6 +419,12 @@ func (s *State) FilterMACs(hws []net.HardwareAddr) *AddrCollection {
 // long it has been seen, lined up. hideSensible is there for symmetry with the other PrettyPrint
 // methods: nothing here is sensible.
 func (s *State) PrettyPrint(prefix string, hideSensible bool) string {
+	return s.Page(prefix).String()
+}
+
+// Page is PrettyPrint with the roles: the names as names, and the times, what said each thing
+// and the groups as details.
+func (s *State) Page(prefix string) pretty.Page {
 	s.macsMutex.RLock()
 	defer s.macsMutex.RUnlock()
 
@@ -431,23 +437,23 @@ func (s *State) PrettyPrint(prefix string, hideSensible bool) string {
 		}
 	}
 	var t pretty.Table
-	t.Line(fmt.Sprintf("Discovery: %d hosts, %d named, %d addresses", len(s.macs), named, addresses))
+	t.Spans(pretty.As(pretty.Heading, "Discovery:"), pretty.Span{Text: fmt.Sprintf(" %d hosts, %d named, %d addresses", len(s.macs), named, addresses)})
 	now := time.Now()
 	for _, mac := range slices.Sorted(maps.Keys(s.macs)) {
 		t.Line("    " + mac)
 		if hostNames := names[mac]; len(hostNames) > 0 {
-			t.Line("        names:")
+			t.Spans(pretty.As(pretty.Detail, "        names:"))
 			for _, n := range hostNames {
-				t.Row("            "+n.Name, n.Expiration.Sub(now), now.Sub(n.FirstSeen), "")
+				t.Row("            "+n.Name, n.Expiration.Sub(now), now.Sub(n.FirstSeen), "").Label(pretty.Name)
 				for _, said := range n.Said {
-					t.Row("                "+said.String(), said.Expiration().Sub(now), now.Sub(said.FirstSeen), "")
+					t.Row("                "+said.String(), said.Expiration().Sub(now), now.Sub(said.FirstSeen), "").Label(pretty.Detail)
 				}
 			}
 		}
-		t.Line("        addresses:")
+		t.Spans(pretty.As(pretty.Detail, "        addresses:"))
 		s.macs[mac].rows(&t, "            ", now)
 	}
-	return t.Render(prefix)
+	return t.Page(prefix)
 }
 
 func NewState() *State {

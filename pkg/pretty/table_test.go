@@ -1,6 +1,7 @@
 package pretty
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -63,5 +64,64 @@ func TestTable(t *testing.T) {
 `
 	if got != want {
 		t.Errorf("got\n%s\nwant\n%s", strings.ReplaceAll(got, " ", "·"), strings.ReplaceAll(want, " ", "·"))
+	}
+}
+
+// The page is the same text, with the roles: of a line as given, of a row its label's, and Detail
+// for its columns. What the text has is no markup: escaped as HTML, and of no role of its own.
+func TestTablePage(t *testing.T) {
+	var tb Table
+	tb.Spans(As(Heading, "Hosts:"), Span{Text: " 1"})
+	tb.Row("    <b>[[e|x]]", time.Minute, time.Hour, "").Label(Name)
+	tb.Row("    10.2.3.75", 9*time.Minute, 9*time.Hour, "a&b")
+	tb.RowText("    alone", "")
+	page := tb.Page("  ")
+	if got, want := page.String(), tb.Render("  "); got != want {
+		t.Fatalf("the page as text:\n%s\nwant\n%s", got, want)
+	}
+	// Each line: its pieces' roles, and the text of the first, which of a row is its label.
+	want := []struct {
+		roles []Role
+		first string
+	}{
+		{[]Role{Plain, Heading, Plain}, "  "},
+		{[]Role{Name, Detail}, "      <b>[[e|x]]"},
+		{[]Role{Plain, Detail}, "      10.2.3.75"},
+		{[]Role{Plain}, "      alone"},
+	}
+	if len(page) != len(want) {
+		t.Fatalf("got %d lines, want %d", len(page), len(want))
+	}
+	for i, w := range want {
+		var roles []Role
+		for _, s := range page[i] {
+			roles = append(roles, s.Role)
+		}
+		if !slices.Equal(roles, w.roles) || page[i][0].Text != w.first {
+			t.Errorf("line %d: %q with roles %v, want %q first and roles %v", i, page[i], roles, w.first, w.roles)
+		}
+	}
+	html := page.HTML()
+	for _, has := range []string{
+		`  <span class="h">Hosts:</span> 1` + "\n",
+		`<span class="n">      &lt;b&gt;[[e|x]]</span><span class="d">`,
+		`a&amp;b</span>` + "\n",
+		"      alone\n",
+	} {
+		if !strings.Contains(html, has) {
+			t.Errorf("the HTML has no %q:\n%s", has, html)
+		}
+	}
+	if strings.Contains(html, "<b>") {
+		t.Errorf("a tag of the text is in the HTML:\n%s", html)
+	}
+}
+
+func TestText(t *testing.T) {
+	if got := Text("a\n\nb\n"); len(got) != 3 || got.String() != "a\n\nb\n" {
+		t.Errorf("got %q", got)
+	}
+	if got := Text(""); len(got) != 0 {
+		t.Errorf("no text: %q", got)
 	}
 }

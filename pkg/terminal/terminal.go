@@ -7,37 +7,73 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/mattn/go-runewidth"
 	"github.com/nsf/termbox-go"
+
+	"github.com/miguelangel-nubla/ipv6disc/pkg/pretty"
 )
 
 const controls = "Controls: ↑ ↓ PgUp PgDn  q/ESC/Enter: quit"
 
-// cell is a rune and the screen column it starts at.
+// cell is a rune, the screen column it starts at, and the role of the piece it is of.
 type cell struct {
-	col int
-	ch  rune
+	col  int
+	ch   rune
+	role pretty.Role
 }
 
 // layoutLine places the runes of line in screen columns, each after the width of those before
 // it, not their bytes, and leaves out what doesn't fit in width.
-func layoutLine(line string, width int) []cell {
-	cells := make([]cell, 0, len(line))
+func layoutLine(line pretty.Line, width int) []cell {
+	var cells []cell
 	col := 0
-	for _, ch := range line {
-		w := runewidth.RuneWidth(ch)
-		if w == 0 { // combining or control: no cell of its own
-			continue
+	for _, span := range line {
+		for _, ch := range span.Text {
+			w := runewidth.RuneWidth(ch)
+			if w == 0 { // combining or control: no cell of its own
+				continue
+			}
+			if col+w > width {
+				return cells
+			}
+			cells = append(cells, cell{col, ch, span.Role})
+			col += w
 		}
-		if col+w > width {
-			break
-		}
-		cells = append(cells, cell{col, ch})
-		col += w
 	}
 	return cells
+}
+
+// attribute is how a role shows, with the 8 colors every terminal has, bold and dim. The
+// headings and the details keep the terminal's own color, which is on its ground whatever that
+// is: white, or a gray, is lost on one or another. Without colors, as NO_COLOR asks, bold and dim
+// stay: they are no color.
+func attribute(role pretty.Role, colors bool) termbox.Attribute {
+	color := termbox.ColorDefault
+	var style termbox.Attribute
+	switch role {
+	case pretty.Heading:
+		style = termbox.AttrBold
+	case pretty.Name:
+		color = termbox.ColorCyan
+	case pretty.OK:
+		color = termbox.ColorGreen
+	case pretty.Warn:
+		color = termbox.ColorYellow
+	case pretty.Error:
+		color, style = termbox.ColorRed, termbox.AttrBold
+	case pretty.Detail:
+		style = termbox.AttrDim
+	}
+	if !colors {
+		color = termbox.ColorDefault
+	}
+	return color | style
+}
+
+// noColor is whether the environment asks for no colors: NO_COLOR set, to anything but nothing.
+func noColor() bool {
+	return os.Getenv("NO_COLOR") != ""
 }
 
 // clampOffset is the offset within what there is to scroll: lineCount lines, on a screen of
@@ -46,17 +82,18 @@ func clampOffset(offset, lineCount, height int) int {
 	return max(0, min(offset, lineCount+1-height))
 }
 
-func displayContent(lines []string, offset int) {
+func displayContent(lines pretty.Page, offset int) {
+	colors := !noColor()
 	// It fails only before Init, as Flush: there is no screen then to show anything on.
 	_ = termbox.Clear(termbox.ColorDefault, termbox.ColorDefault)
 	width, height := termbox.Size()
 
 	for y := 0; y < height-1 && y+offset < len(lines); y++ {
 		for _, c := range layoutLine(lines[y+offset], width) {
-			termbox.SetCell(c.col, y, c.ch, termbox.ColorDefault, termbox.ColorDefault)
+			termbox.SetCell(c.col, y, c.ch, attribute(c.role, colors), termbox.ColorDefault)
 		}
 	}
-	for _, c := range layoutLine(controls, width) {
+	for _, c := range layoutLine(pretty.Line{{Text: controls}}, width) {
 		termbox.SetCell(c.col, height-1, c.ch, termbox.ColorDefault, termbox.ColorDefault)
 	}
 
@@ -96,6 +133,25 @@ func Close() {
 // Run shows each content received, on the terminal Init took, until a key quits, q, Esc, Enter
 // or Ctrl-C, or ctx is done: the terminal is raw, so a signal is the caller's to turn into ctx.
 func Run(ctx context.Context, contentChan <-chan string) {
+	pages := make(chan pretty.Page)
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		defer close(pages)
+		for content := range contentChan {
+			select {
+			case pages <- pretty.Text(content):
+			case <-done:
+				return
+			}
+		}
+	}()
+	RunPages(ctx, pages)
+}
+
+// RunPages is Run of pages: each piece shows by its role, in the colors of the terminal, without
+// them when NO_COLOR is set.
+func RunPages(ctx context.Context, contentChan <-chan pretty.Page) {
 	eventChan := make(chan termbox.Event)
 	done := make(chan struct{})
 	go pollEvents(eventChan, done)
@@ -111,9 +167,9 @@ func Run(ctx context.Context, contentChan <-chan string) {
 }
 
 // loop is Run, of the events and on the screen given.
-func loop(ctx context.Context, contentChan <-chan string, eventChan <-chan termbox.Event, screenHeight func() int, display func(lines []string, offset int)) {
+func loop(ctx context.Context, contentChan <-chan pretty.Page, eventChan <-chan termbox.Event, screenHeight func() int, display func(lines pretty.Page, offset int)) {
 	offset := 0
-	lines := []string{}
+	var lines pretty.Page
 
 	for {
 		select {
@@ -125,10 +181,7 @@ func loop(ctx context.Context, contentChan <-chan string, eventChan <-chan termb
 				contentChan = nil
 				continue
 			}
-			lines = nil
-			if content = strings.TrimSuffix(content, "\n"); content != "" {
-				lines = strings.Split(content, "\n")
-			}
+			lines = content
 		case ev := <-eventChan:
 			if ev.Type == termbox.EventKey {
 				page := screenHeight() - 1
