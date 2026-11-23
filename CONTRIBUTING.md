@@ -102,6 +102,19 @@ A new protocol needs all of these:
 4. A row in the table of [protocols](docs/discovery.md#protocols). A test keeps that table matching the code.
 5. A row in the live test of the switches, with what the protocol sends and opens.
 
+## The packages
+
+Beside its archives and its images, a release has two packages of the command, with its manual page:
+
+- **Arch's**, which the `nfpms` block of [`.goreleaser.yaml`](.goreleaser.yaml) makes. `tools/package-test.sh` builds it as a release does, and installs it in an Arch container.
+- **Nix's**, the flake: [`flake.nix`](flake.nix) and [`nix/package.nix`](nix/package.nix). `tools/nix-test.sh` builds it in a container of Nix's.
+
+The flake pins a hash of the Go modules. **After any change to `go.sum`**, its check fails until the hash is updated:
+
+```bash
+tools/nix-test.sh --update
+```
+
 ## Releases
 
 A tag makes a release: goreleaser builds it and publishes it on GitHub, with its images. Work goes to `dev`, where CI runs on every push. It reaches `main` when it is released.

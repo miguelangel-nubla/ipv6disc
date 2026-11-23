@@ -2,3 +2,5 @@
 /cmd/ipv6disc/ipv6disc
 /dist/
 /integration.test
+/result
+/docs/ipv6disc.1.gz

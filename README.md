@@ -18,6 +18,8 @@ It is both a command and a Go library. [ipv6ddns](https://github.com/miguelangel
 ## Installation
 
 - **A release**: download the binary for your system from the [latest release](https://github.com/miguelangel-nubla/ipv6disc/releases/latest).
+- **On Arch**: the release has a package, installed with `sudo pacman -U ./ipv6disc_*.pkg.tar.zst`.
+- **With [Nix](https://nixos.org)**: the repository is a flake. `nix run github:miguelangel-nubla/ipv6disc -- --version` runs the command, and `nix profile install github:miguelangel-nubla/ipv6disc` installs it.
 - **With [Homebrew](https://brew.sh)**, on macOS: `brew install miguelangel-nubla/tap/ipv6disc`. It is built from source, on your machine, with its manual page.
 - **Docker**: `ghcr.io/miguelangel-nubla/ipv6disc`, for linux/386, amd64, arm/v6, arm/v7 and arm64.
 - **From source**: `go install github.com/miguelangel-nubla/ipv6disc/cmd/ipv6disc@latest`.
