@@ -109,7 +109,7 @@ Beside its archives and its images, a release has two packages of the command, w
 - **Arch's**, which the `nfpms` block of [`.goreleaser.yaml`](.goreleaser.yaml) makes. `tools/package-test.sh` builds it as a release does, and installs it in an Arch container.
 - **Nix's**, the flake: [`flake.nix`](flake.nix) and [`nix/package.nix`](nix/package.nix). `tools/nix-test.sh` builds it in a container of Nix's.
 
-The flake pins a hash of the Go modules. **After any change to `go.sum`**, its check fails until the hash is updated:
+The flake pins a hash of the Go modules, which is behind after any change to `go.sum`. On `dev`, CI writes it by itself: its `nix` job commits the new hash and starts CI on that commit, so wait for that run before a release. In a pull request it can't, and fails until you run this and commit the result:
 
 ```bash
 tools/nix-test.sh --update
