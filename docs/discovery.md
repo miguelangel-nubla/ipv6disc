@@ -390,6 +390,8 @@ Interfaces without a MAC, such as PPP links and tunnels, are left out, and their
 
 The interfaces and their addresses are checked every minute. An address that moved to another interface, or whose interface was created again, is listened on again there.
 
+An address can't be listened on while the system still checks it for a duplicate, for a second or so after it is given: at boot, or when a new prefix is announced. Discovery tries such an address again after a second, then after twice as long each time, so it is listened on seconds after it is ready and not at the next check.
+
 None of this affects the plugins.
 
 ## Several instances

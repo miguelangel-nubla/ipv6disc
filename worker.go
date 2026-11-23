@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/miguelangel-nubla/ipv6disc/pkg/arp"
@@ -38,7 +39,11 @@ type Worker struct {
 	plugins       []Plugin
 	protocolConns map[workerKey]*InterfaceProcesses
 	workerCancels map[workerKey]context.CancelFunc
-	// Of both maps. Taken before the State's locks, as when an address that went is removed, never
+	// How many times in a row each address could not be listened on, as one not there yet, and
+	// what has the interfaces read again before their time, for it to be tried again.
+	notReady map[workerKey]int
+	recheck  chan struct{}
+	// Of the three maps. Taken before the State's locks, as when an address that went is removed, never
 	// after: the expiration events, which ping, run with none of the State's held.
 	pcMutex sync.RWMutex
 	// The naming protocols of each interface, as the discovery's above, with the same lock; the
@@ -136,6 +141,8 @@ func NewWorker(logger *zap.SugaredLogger, config Config) *Worker {
 		plugins:       make([]Plugin, 0),
 		protocolConns: make(map[workerKey]*InterfaceProcesses),
 		workerCancels: make(map[workerKey]context.CancelFunc),
+		notReady:      make(map[workerKey]int),
+		recheck:       make(chan struct{}, 1),
 		nameConns:     make(map[nameKey]*nameProcesses),
 		nameCancels:   make(map[nameKey]context.CancelFunc),
 		ipv4Wake:      make(chan struct{}, 1),
@@ -336,6 +343,7 @@ func (w *Worker) Start(ctx context.Context) error {
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
+				case <-w.recheck:
 				}
 			}
 		}()
@@ -549,7 +557,52 @@ func (w *Worker) checkInterfaces(ctx context.Context) {
 		}
 	}
 
-	w.syncWorkers(ctx, found, w.StartInterfaceAddr)
+	w.syncWorkers(ctx, found, w.runInterfaceAddr)
+}
+
+// addrRetry is how long after an address could not be listened on, as one not there yet, it is
+// tried again: twice as long each time after, until the readings of the interfaces take over.
+const addrRetry = time.Second
+
+// retryIn tells how long from now to try again an address whose worker ended with err, and
+// counts the try: zero when it is not to be tried before the next reading of the interfaces, as
+// after any error but that of an address that can't be listened on yet, and after as many tries
+// as fit before that reading. With pcMutex held.
+//
+// An address is among the interface's while the kernel still checks it for a duplicate, a second
+// or more after it is given, and can't be bound until then: one of a prefix just announced, or
+// any at boot.
+func (w *Worker) retryIn(key workerKey, err error) time.Duration {
+	if !errors.Is(err, syscall.EADDRNOTAVAIL) {
+		delete(w.notReady, key)
+		return 0
+	}
+	delay := addrRetry << w.notReady[key]
+	if delay >= interfaceCheckInterval {
+		return 0
+	}
+	w.notReady[key]++
+	return delay
+}
+
+// listenError is the failure to listen for a protocol on an address, which ends its worker.
+type listenError struct {
+	protocol string
+	err      error
+}
+
+func (e *listenError) Error() string {
+	return "error listening for " + e.protocol + ": " + e.err.Error()
+}
+func (e *listenError) Unwrap() error { return e.err }
+
+// listenFailed logs the error a worker ended with, on an address of an interface.
+func (w *Worker) listenFailed(iface string, addr netip.Addr, err error) {
+	message, cause := "error listening", err
+	if failed := (*listenError)(nil); errors.As(err, &failed) {
+		message, cause = "error listening for "+failed.protocol, failed.err
+	}
+	w.logger.Errorw(message, zap.String("interface", iface), zap.String("address", addr.String()), zap.Error(cause))
 }
 
 // syncWorkers starts a worker, run, on each address found that has none, and stops the workers of
@@ -557,10 +610,16 @@ func (w *Worker) checkInterfaces(ctx context.Context) {
 // again, or on one whose MAC changed. Those stop before the others start. An address its interface
 // no longer has with that MAC leaves the state at once, not after its lifetime: it is not this
 // machine's there any more. When only the index changed, it stays for the worker that follows.
-func (w *Worker) syncWorkers(ctx context.Context, found map[workerKey]net.Interface, run func(context.Context, net.Interface, netip.Addr)) {
+func (w *Worker) syncWorkers(ctx context.Context, found map[workerKey]net.Interface, run func(context.Context, net.Interface, netip.Addr) error) {
 	w.pcMutex.Lock()
 	defer w.pcMutex.Unlock()
 
+	// An address that went is not one to try again.
+	for key := range w.notReady {
+		if _, ok := found[key]; !ok {
+			delete(w.notReady, key)
+		}
+	}
 	start, stop := diffWorkers(w.workerCancels, found)
 	for _, key := range stop {
 		w.logger.Infof("stopping discovery on %s %s", key.name, key.addr)
@@ -579,15 +638,34 @@ func (w *Worker) syncWorkers(ctx context.Context, found map[workerKey]net.Interf
 		w.running.Add(1)
 		go func() {
 			defer w.running.Done()
-			run(ctx, found[key], key.addr)
+			err := run(ctx, found[key], key.addr)
 			// It also ends on a failure to listen: let the next check try again. Stopped, its
 			// entry is gone, or is of the worker that took its place.
 			w.pcMutex.Lock()
-			if ctx.Err() == nil {
+			failed := ctx.Err() == nil
+			var retry time.Duration
+			if failed {
 				delete(w.workerCancels, key)
+				retry = w.retryIn(key, err)
 			}
 			w.pcMutex.Unlock()
 			cancel()
+			switch {
+			case !failed || err == nil:
+			case retry > 0:
+				// Not an error: the address is there, and can't be listened on yet. The next
+				// check comes when it may, not a minute later.
+				w.logger.Debugw("not listening yet: the address can't be listened on, as one still checked for a duplicate",
+					zap.String("interface", key.name), zap.String("address", key.addr.String()), zap.Duration("again in", retry), zap.Error(err))
+				time.AfterFunc(retry, func() {
+					select {
+					case w.recheck <- struct{}{}:
+					default:
+					}
+				})
+			default:
+				w.listenFailed(key.name, key.addr, err)
+			}
 		}()
 	}
 }
@@ -596,6 +674,14 @@ func (w *Worker) syncWorkers(ctx context.Context, found map[workerKey]net.Interf
 // protocols of it that are enabled, each with its listener, and the address itself, registered
 // as this machine's. NDP tells the MACs, and asks the MAC of whatever the others hear.
 func (w *Worker) StartInterfaceAddr(ctx context.Context, iface net.Interface, addr netip.Addr) {
+	if err := w.runInterfaceAddr(ctx, iface, addr); err != nil {
+		w.listenFailed(iface.Name, addr, err)
+	}
+}
+
+// runInterfaceAddr is StartInterfaceAddr, which returns the failure to listen that ended it,
+// for the one that started it to tell, or to try again: nil once ctx is done.
+func (w *Worker) runInterfaceAddr(ctx context.Context, iface net.Interface, addr netip.Addr) error {
 	var err error
 	var ndpConn *ndp.Conn
 	var pingConn *ping.Conn
@@ -617,12 +703,8 @@ func (w *Worker) StartInterfaceAddr(ctx context.Context, iface net.Interface, ad
 			)
 		}
 	}
-	listenFailed := func(protocol string, err error) {
-		w.logger.Errorw("error listening for "+protocol,
-			zap.String("interface", iface.Name),
-			zap.String("address", addr.String()),
-			zap.Error(err),
-		)
+	listenFailed := func(protocol string, err error) error {
+		return &listenError{protocol, err}
 	}
 	processes := &InterfaceProcesses{InterfaceName: iface.Name, Address: addr}
 	running := func(name string, conn worker) {
@@ -632,8 +714,7 @@ func (w *Worker) StartInterfaceAddr(ctx context.Context, iface net.Interface, ad
 	if w.config.runs(ProtocolNDP) {
 		ndpConn, err = ndp.ListenForNDP(&iface, addr, processNDP, onError("NDP"))
 		if err != nil {
-			listenFailed("NDP", err)
-			return
+			return listenFailed("NDP", err)
 		}
 		defer ndpConn.Close()
 		running(ProtocolNDP, ndpConn)
@@ -644,8 +725,7 @@ func (w *Worker) StartInterfaceAddr(ctx context.Context, iface net.Interface, ad
 	if w.config.runs(ProtocolPing) {
 		pingConn, err = ping.ListenForICMP(&iface, addr, w.onFoundAddrFunc(ndpConn, &iface, w.logger, ProtocolPing, "ICMP echo response"), onError("ICMP"))
 		if err != nil {
-			listenFailed("ICMP", err)
-			return
+			return listenFailed("ICMP", err)
 		}
 		defer pingConn.Close()
 		running(ProtocolPing, pingConn)
@@ -661,8 +741,7 @@ func (w *Worker) StartInterfaceAddr(ctx context.Context, iface net.Interface, ad
 			ssdpConn, err = ssdp.ListenForSSDP(&iface, addr, w.onFoundAddrFunc(ndpConn, &iface, w.logger, ProtocolSSDP, "SSDP announcement"), onError("SSDP"))
 		}
 		if err != nil {
-			listenFailed("SSDP", err)
-			return
+			return listenFailed("SSDP", err)
 		}
 		defer ssdpConn.Close()
 		running(ProtocolSSDP, ssdpConn)
@@ -676,8 +755,7 @@ func (w *Worker) StartInterfaceAddr(ctx context.Context, iface net.Interface, ad
 			wsdConn, err = wsd.ListenForWSD(&iface, addr, w.onFoundAddrFunc(ndpConn, &iface, w.logger, ProtocolWSD, "WSD message"), onError("WSD"))
 		}
 		if err != nil {
-			listenFailed("WSD", err)
-			return
+			return listenFailed("WSD", err)
 		}
 		defer wsdConn.Close()
 		running(ProtocolWSD, wsdConn)
@@ -698,7 +776,7 @@ func (w *Worker) StartInterfaceAddr(ctx context.Context, iface net.Interface, ad
 
 	// Stopped while it started: nothing to register, nor to probe.
 	if ctx.Err() != nil {
-		return
+		return nil
 	}
 
 	// The address is this machine's for as long as the worker runs: it is registered again well
@@ -743,7 +821,7 @@ func (w *Worker) StartInterfaceAddr(ctx context.Context, iface net.Interface, ad
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 		case <-selfTicker.C:
 			registerSelf()
 		case <-ticker.C:

@@ -4,13 +4,16 @@ import (
 	"context"
 	"net"
 	"net/netip"
+	"os"
 	"runtime"
 	"slices"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/miguelangel-nubla/ipv6disc/pkg/arp"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 type blockingPlugin struct{ stopped chan struct{} }
@@ -116,7 +119,7 @@ func TestSyncWorkers(t *testing.T) {
 		for _, index := range indexes {
 			found[workerKey{index, "eth0", addr, ""}] = net.Interface{Index: index, Name: "eth0"}
 		}
-		w.syncWorkers(ctx, found, run)
+		w.syncWorkers(ctx, found, noError(run))
 	}
 	expect := func(what string, want ...event) {
 		t.Helper()
@@ -204,15 +207,15 @@ func TestSyncWorkersStoppedWorkerLeavesItsSuccessor(t *testing.T) {
 		}
 	}
 
-	w.syncWorkers(ctx, found, run)
+	w.syncWorkers(ctx, found, noError(run))
 	first := next()
-	w.syncWorkers(ctx, nil, run)
-	w.syncWorkers(ctx, found, run)
+	w.syncWorkers(ctx, nil, noError(run))
+	w.syncWorkers(ctx, found, noError(run))
 	second := next()
 	close(first)
 	// It is through soon after: nothing tells when, as it leaves the entry alone.
 	time.Sleep(50 * time.Millisecond)
-	w.syncWorkers(ctx, found, run)
+	w.syncWorkers(ctx, found, noError(run))
 	select {
 	case end := <-started:
 		t.Error("a second worker started on the address: the one stopped took the entry of its successor")
@@ -248,7 +251,7 @@ func TestSyncWorkersRemovesTheAddressesGone(t *testing.T) {
 		for addr, iface := range ifaces {
 			found[keyOf(&iface, addr)] = iface
 		}
-		w.syncWorkers(ctx, found, run)
+		w.syncWorkers(ctx, found, noError(run))
 		for range starts {
 			select {
 			case <-registered:
@@ -471,5 +474,98 @@ func TestNewWorkerLeavesAPluginItsLifetime(t *testing.T) {
 	}
 	if until := time.Until(a4.GetExpiration()); until < 119*time.Minute || until > 121*time.Minute {
 		t.Errorf("IPv4, a family lifetime of 2h: expires in %s", until)
+	}
+}
+
+// noError is a worker's run that ends without an error, as one stopped does.
+func noError(run func(context.Context, net.Interface, netip.Addr)) func(context.Context, net.Interface, netip.Addr) error {
+	return func(ctx context.Context, iface net.Interface, addr netip.Addr) error {
+		run(ctx, iface, addr)
+		return nil
+	}
+}
+
+// An address that can't be listened on yet, as one the kernel still checks for a duplicate, is
+// tried again in a second, then in twice as long each time, and is no error; once the readings
+// of the interfaces come as soon, they take over, and it is one. Any other failure to listen is
+// an error at once, tried again at the next reading.
+func TestSyncWorkersTriesAgainAnAddressNotThereYet(t *testing.T) {
+	core, logs := observer.New(zap.DebugLevel)
+	w := NewWorker(zap.New(core).Sugar(), Config{Protocols: DefaultProtocols(), Lifetime: time.Hour, IPv6: Family{Enabled: true}})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	addr := netip.MustParseAddr("2001:db8::19")
+	key := workerKey{2, "eth0", addr, ""}
+	found := map[workerKey]net.Interface{key: {Index: 2, Name: "eth0"}}
+	notThere := &listenError{"NDP", &net.OpError{Op: "listen", Err: os.NewSyscallError("bind", syscall.EADDRNOTAVAIL)}}
+	denied := &listenError{"NDP", &net.OpError{Op: "listen", Err: os.NewSyscallError("socket", syscall.EPERM)}}
+
+	// The times between the tries, and none once they are as long as a reading is away.
+	var delays []time.Duration
+	w.pcMutex.Lock()
+	for {
+		delay := w.retryIn(key, notThere)
+		if delay == 0 {
+			break
+		}
+		delays = append(delays, delay)
+	}
+	if again := w.retryIn(key, notThere); again != 0 {
+		t.Errorf("tried again in %s, after as many tries as fit before a reading", again)
+	}
+	// Another error starts the count again, as an address that went does.
+	otherwise := w.retryIn(key, denied)
+	first := w.retryIn(key, notThere)
+	w.pcMutex.Unlock()
+	if want := []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second, 32 * time.Second}; !slices.Equal(delays, want) {
+		t.Errorf("tried again in %v, want %v", delays, want)
+	}
+	if otherwise != 0 || first != time.Second {
+		t.Errorf("after another error: tried again in %s, and then %s, want never and 1s", otherwise, first)
+	}
+	w.syncWorkers(ctx, nil, noError(func(context.Context, net.Interface, netip.Addr) {}))
+	w.pcMutex.Lock()
+	if len(w.notReady) != 0 {
+		t.Errorf("an address that went is still counted: %v", w.notReady)
+	}
+	w.pcMutex.Unlock()
+
+	// A worker that ends so has the interfaces read again in a second, without an error.
+	fail := notThere
+	started := make(chan struct{}, 4)
+	run := func(context.Context, net.Interface, netip.Addr) error {
+		started <- struct{}{}
+		return fail
+	}
+	w.syncWorkers(ctx, found, run)
+	<-started
+	select {
+	case <-w.recheck:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the interfaces are not read again for an address that is not there yet")
+	}
+	if errs := logs.FilterLevelExact(zap.ErrorLevel).All(); len(errs) != 0 {
+		t.Errorf("an error, of an address that is only not there yet: %v", errs)
+	}
+	if told := logs.FilterMessageSnippet("not listening yet").All(); len(told) != 1 || told[0].ContextMap()["address"] != addr.String() {
+		t.Errorf("not told of the address not listened on yet: %v", logs.All())
+	}
+
+	// And one that ends with another error tells it, and waits for the next reading.
+	fail = denied
+	w.syncWorkers(ctx, found, run)
+	<-started
+	deadline := time.Now().Add(3 * time.Second)
+	for logs.FilterLevelExact(zap.ErrorLevel).Len() == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	errs := logs.FilterLevelExact(zap.ErrorLevel).All()
+	if len(errs) != 1 || errs[0].Message != "error listening for NDP" || errs[0].ContextMap()["interface"] != "eth0" || errs[0].ContextMap()["address"] != addr.String() {
+		t.Errorf("the error of a failure to listen: %v", errs)
+	}
+	select {
+	case <-w.recheck:
+		t.Error("the interfaces are read again before their time, for an error that is no address not there yet")
+	case <-time.After(1500 * time.Millisecond):
 	}
 }

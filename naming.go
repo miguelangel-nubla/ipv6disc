@@ -11,6 +11,7 @@ import (
 	"os"
 	"slices"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/miguelangel-nubla/ipv6disc/pkg/arp"
@@ -969,20 +970,54 @@ func (w *Worker) startInterfaceNames(ctx context.Context, iface net.Interface, k
 		w.pcMutex.Unlock()
 	}()
 
-	probe := func() {
-		if mdnsConn != nil && asks && (w.config.probesIPv4() && key.ipv4 || w.config.probesIPv6() && key.ipv6) {
-			startMulticast("mDNS", mdnsConn.DiscoverMulticast, iface.Name, w.logger)
+	// probe asks the group of mDNS, and tells whether it is to be asked again before its time:
+	// when the question had no address to be sent from yet, as while the interface's only one
+	// is still checked for a duplicate. That is no error, as any other failure to send is.
+	probe := func() (again bool) {
+		probes := w.config.probesIPv4() && key.ipv4 || w.config.probesIPv6() && key.ipv6
+		if mdnsConn == nil || !asks || !probes {
+			return false
 		}
+		w.logger.Debugw("mDNS discover multicast", zap.String("listener", iface.Name))
+		err := mdnsConn.DiscoverMulticast()
+		switch {
+		case err == nil:
+		case errors.Is(err, syscall.EADDRNOTAVAIL):
+			w.logger.Debugw("mDNS discover multicast not sent yet: no address to send it from, as one still checked for a duplicate",
+				zap.String("listener", iface.Name), zap.Error(err))
+			return true
+		default:
+			w.logger.Errorw("mDNS discover multicast failed", zap.String("listener", iface.Name), zap.Error(err))
+		}
+		return false
 	}
-	probe()
 	ticker := time.NewTicker(w.config.Rediscover)
 	defer ticker.Stop()
+	// Asked again as an address not there yet is tried again: in a second, then in twice as
+	// long each time, until the next round is as soon.
+	var retry <-chan time.Time
+	delay := addrRetry
+	ask := func() {
+		retry = nil
+		if !probe() {
+			delay = addrRetry
+			return
+		}
+		if delay < w.config.Rediscover {
+			retry = time.After(delay)
+			delay *= 2
+		}
+	}
+	ask()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			probe()
+			delay = addrRetry
+			ask()
+		case <-retry:
+			ask()
 		}
 	}
 }
