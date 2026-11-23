@@ -1,4 +1,4 @@
-// Package pretty lays out the page of a program on ipv6disc, as -live shows it: lines of a value,
+// Package pretty lays out the page of a program on ipv6disc, as --live shows it: lines of a value,
 // how long it has left, and how long it has been seen, each in its column, and the units of the
 // durations under each other, days under days, hours under hours.
 package pretty

@@ -4,7 +4,7 @@ Discovery finds the addresses on the network, and the MAC that holds each one. A
 
 ## Families and protocols
 
-Everything on this page is set in the [configuration file](reference/configuration.md), which you pass as `ipv6disc -config_file discovery.yaml`. Without a file, every key has its default.
+Everything on this page is set in the [configuration file](reference/configuration.md), which you pass as `ipv6disc --config discovery.yaml`. Without a file, every key has its default.
 
 Each family, IPv6 and IPv4, has its own switches under `ipv6` and `ipv4`: `enabled`, `listen`, `active`, and its `lifetime`. IPv6 is on by default, and IPv4 is off.
 
@@ -90,7 +90,7 @@ A configuration that can't run is an error at start. The error says what is wron
 
 The options of a protocol that is off are not checked.
 
-At start, the log says which protocols run: `protocols of the local discovery: ndp, ping, ssdp, wsd`. `-live` shows them first, under `Protocols`.
+At start, the log says which protocols run: `protocols of the local discovery: ndp, ping, ssdp, wsd`. `--live` shows them first, under `Protocols`.
 
 ### IPv6
 
@@ -132,7 +132,7 @@ With `arp` off and `arp-listen` on, hosts are found only by the ARP heard, which
 
 ### This machine's own addresses
 
-The addresses of the interfaces discovery runs on are registered too, with the interface's MAC, and marked as this machine's. `-live` shows them as `(this host)`.
+The addresses of the interfaces discovery runs on are registered too, with the interface's MAC, and marked as this machine's. `--live` shows them as `(this host)`.
 
 - **Temporary addresses.** On Linux, the IPv6 privacy addresses that the kernel created as temporary are marked `(this host, temporary)`. They change every day or so.
 - **Refreshing.** The addresses are registered while the family listens, for as long as the system has them. They are refreshed well within their lifetime, whatever `rediscover` is and whatever protocols are enabled: IPv6 addresses at least every third of the lifetime, and IPv4 addresses every minute.
@@ -353,9 +353,9 @@ What is outside the link can't do any of this. A message is only taken from an a
   - more than 63 characters;
   - an IP address in place of a name.
 
-**Where names are shown.** `-live` shows a host's names under its MAC. Each name is shown with what said it, how long each source has left, and how long it has been saying the name. Addresses are shown the same way, each with its records.
+**Where names are shown.** `--live` shows a host's names under its MAC. Each name is shown with what said it, how long each source has left, and how long it has been saying the name. Addresses are shown the same way, each with its records.
 
-Under each interface, `-live` also shows what every protocol running there sent and took:
+Under each interface, `--live` also shows what every protocol running there sent and took:
 
 - The naming protocols are under `names`, where `hosts` counts the answers and the messages that gave a name.
 - The ARP heard is under `ipv4`, as `arp-listen`.
@@ -441,7 +441,7 @@ Notes for specific systems:
 
 - **Docker:** the local discovery needs the host's network, `--network host`. Docker Desktop on macOS and Windows doesn't provide it, so there only the plugins find hosts. `NET_RAW` is granted by default.
 - **Windows:** the IPv6 listener has been seen to miss NDP packets. Prefer the plugins there.
-- **Solaris:** there is no `-live`.
+- **Solaris:** there is no `--live`.
 
 ## Lifetimes and probing
 

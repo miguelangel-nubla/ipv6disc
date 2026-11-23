@@ -26,10 +26,10 @@ It is both a command and a Go library. [ipv6ddns](https://github.com/miguelangel
 This shows the hosts in the terminal as they are found:
 
 ```
-sudo ipv6disc -live
+sudo ipv6disc --live
 ```
 
-Without `-live`, it logs them as JSON, which you can filter with [`jq`](https://jqlang.github.io/jq/):
+Without `--live`, it logs them as JSON, which you can filter with [`jq`](https://jqlang.github.io/jq/):
 
 ```
 sudo ipv6disc | jq 'select(.msg == "host identified") | .ip'
@@ -55,10 +55,10 @@ Run it with Docker:
 
 ```
 docker run -it --rm --network host -v "$PWD/discovery.yaml:/discovery.yaml:ro" \
-  ghcr.io/miguelangel-nubla/ipv6disc -live -config_file /discovery.yaml
+  ghcr.io/miguelangel-nubla/ipv6disc --live --config /discovery.yaml
 ```
 
-The [example configuration](cmd/ipv6disc/example.config.yaml) shows every key, and the [configuration reference](docs/reference/configuration.md) lists them. The command has three flags: `-config_file`, `-live` and `-version`.
+The [example configuration](cmd/ipv6disc/example.config.yaml) shows every key, and the [configuration reference](docs/reference/configuration.md) lists them. The command has three flags: `--config`, `--live` and `--version`.
 
 ### Privileges and Docker
 
@@ -83,7 +83,7 @@ Two more events report a host's [names](docs/discovery.md#names) as they come an
 
 ### The live view
 
-`-live` shows the current state instead of the log.
+`--live` shows the current state instead of the log.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/page-dark.svg">
@@ -92,7 +92,7 @@ Two more events report a host's [names](docs/discovery.md#names) as they come an
 
 The two times on each line are how long it has left before it expires, and how long it has been seen.
 
-- It hides errors too, such as those of a plugin that can't reach its router. Run without `-live` to see why hosts are missing.
+- It hides errors too, such as those of a plugin that can't reach its router. Run without `--live` to see why hosts are missing.
 - It needs a terminal, which in Docker means `-it`.
 - It uses the terminal's colors for names and details, and none when `NO_COLOR` is set.
 - It ends with `q`, or when the process is told to stop.

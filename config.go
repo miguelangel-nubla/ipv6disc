@@ -156,7 +156,7 @@ type DNSProtocol struct {
 	Servers []netip.AddrPort
 }
 
-// The protocols of the local discovery, as a configuration names them, and as -live and the log
+// The protocols of the local discovery, as a configuration names them, and as --live and the log
 // do.
 const (
 	ProtocolNDP       = "ndp"

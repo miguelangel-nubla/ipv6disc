@@ -25,5 +25,5 @@ func Run(ctx context.Context, contentChan <-chan string) {}
 func RunPages(ctx context.Context, contentChan <-chan pretty.Page) {}
 
 func LiveOutput(contentChan chan string) {
-	log.Fatal("Live output is not supported on this platform, please remove the -live flag.")
+	log.Fatal("Live output is not supported on this platform, please remove the --live flag.")
 }

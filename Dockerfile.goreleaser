@@ -1,4 +1,4 @@
-# The binary alone. Its configuration is a file mounted in, and named: -config_file /discovery.yaml.
+# The binary alone. Its configuration is a file mounted in, and named: --config /discovery.yaml.
 # Without one, the defaults.
 FROM scratch
 ARG TARGETPLATFORM

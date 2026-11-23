@@ -26,7 +26,7 @@ const generated = "<!-- Generated from the code by `go test ./cmd/ipv6disc -upda
 
 func cell(s string) string { return strings.ReplaceAll(s, "|", `\|`) }
 
-// cliPage is the reference of the flags, as -h lists them.
+// cliPage is the reference of the flags, as --help lists them.
 func cliPage() string {
 	var b strings.Builder
 	b.WriteString("# Flags\n\n" + generated)
@@ -41,10 +41,10 @@ func cliPage() string {
 		} else {
 			def = "`" + def + "`"
 		}
-		fmt.Fprintf(&b, "| `-%s` | %s | %s |\n", f.Name, def, cell(f.Usage))
+		fmt.Fprintf(&b, "| `--%s` | %s | %s |\n", f.Name, def, cell(f.Usage))
 	})
 	b.WriteString("\nEverything else is in the configuration file: the families, the protocols, the names, the interfaces, the lifetimes, the plugins and the level of the log. Its keys are in the [configuration reference](configuration.md). A flag there is none of is an error, as each of those the command had before the file.\n")
-	b.WriteString("\nA boolean flag is turned off as `-live=false`, not `-live false`: a word that is no flag, nor a flag's value, is an error.\n")
+	b.WriteString("\nA boolean flag is turned off as `--live=false`, not `--live false`: a word that is no flag, nor a flag's value, is an error.\n")
 	return b.String()
 }
 
@@ -170,7 +170,7 @@ func configPage() (string, error) {
 
 	var b strings.Builder
 	b.WriteString("# Configuration reference\n\n" + generated)
-	b.WriteString("The configuration file is YAML, or JSON, given as `ipv6disc -config_file discovery.yaml`. Without the flag no file is read, and every key has its default: IPv6 is discovered, by the protocols that find hosts. Every key is optional. A duration is `90s`, `1m30s`, `4h`, or a number of seconds. A key there is none of, a key written twice, and a value of another type than its key takes, are errors at start, each with where it is and what there is; so is a second document after a `---`. The schema is [`pkg/config/schema.json`](../../pkg/config/schema.json), and the [discovery](../discovery.md) page says what each key does.\n")
+	b.WriteString("The configuration file is YAML, or JSON, given as `ipv6disc --config discovery.yaml`. Without the flag no file is read, and every key has its default: IPv6 is discovered, by the protocols that find hosts. Every key is optional. A duration is `90s`, `1m30s`, `4h`, or a number of seconds. A key there is none of, a key written twice, and a value of another type than its key takes, are errors at start, each with where it is and what there is; so is a second document after a `---`. The schema is [`pkg/config/schema.json`](../../pkg/config/schema.json), and the [discovery](../discovery.md) page says what each key does.\n")
 
 	b.WriteString("\n## Top level\n\n" + root.Description + "\n\n" + tableHead)
 	if err := table(&b, "", root.Properties); err != nil {
@@ -370,7 +370,7 @@ func TestReleaseHasTheDocumentation(t *testing.T) {
 	}
 }
 
-// The README shows the page of -live as a picture, with its colors, which a page of GitHub can't
+// The README shows the page of --live as a picture, with its colors, which a page of GitHub can't
 // have in text. It is drawn from docs/images/page.txt, for the light and the dark theme, and the
 // README has both. After changing that text, go test ./cmd/ipv6disc -update.
 func TestPagePictureUpToDate(t *testing.T) {

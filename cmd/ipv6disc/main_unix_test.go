@@ -13,14 +13,14 @@ import (
 	"time"
 )
 
-// -live without a terminal, as docker run without -t or a service: it says so and exits, before
+// --live without a terminal, as docker run without -t or a service: it says so and exits, before
 // anything is started, where it panicked with the discovery running.
 func TestLiveNeedsATerminal(t *testing.T) {
 	// A session of its own has no controlling terminal, wherever the tests run.
 	noTerminal := func(cmd *exec.Cmd) { cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true} }
 	config := writeConfig(t, "ipv6:\n  enabled: false\nipv4:\n  enabled: true\n  active: false\n")
-	code, stdout, stderr := command(t, noTerminal, "-live", "-config_file", config)
-	if code != 1 || !strings.Contains(stderr, "-live needs a terminal") || strings.Contains(stderr, "panic") || stdout != "" {
+	code, stdout, stderr := command(t, noTerminal, "--live", "--config", config)
+	if code != 1 || !strings.Contains(stderr, "--live needs a terminal") || strings.Contains(stderr, "panic") || stdout != "" {
 		t.Errorf("exit %d, want 1 and the reason alone:\n%s%s", code, stdout, stderr)
 	}
 }
@@ -59,7 +59,7 @@ func TestLogLevelOfTheFile(t *testing.T) {
 		{"log_level: warn\n", true, false},
 		{"log_level: error\n", false, false},
 	} {
-		cmd := exec.Command(os.Args[0], "-config_file", writeConfig(t, quiet+tt.level))
+		cmd := exec.Command(os.Args[0], "--config", writeConfig(t, quiet+tt.level))
 		cmd.Env = append(os.Environ(), asCommand+"=1")
 		var out output
 		cmd.Stdout, cmd.Stderr = &out, &out

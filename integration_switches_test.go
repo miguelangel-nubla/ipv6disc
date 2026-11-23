@@ -408,11 +408,11 @@ func TestLiveCommandConfigFile(t *testing.T) {
 	}
 
 	// A flag from before: refused, as any there is none of.
-	for _, old := range [][]string{{"-ipv4"}, {"-hostnames", "-live"}, {"-plugin", "router=linux:60s"}, {"-rediscover=3s"}} {
+	for _, old := range [][]string{{"-ipv4"}, {"-hostnames", "--live"}, {"-plugin", "router=linux:60s"}, {"-rediscover=3s"}} {
 		out, err := refused(old...)
 		name, _, _ := strings.Cut(old[0], "=")
 		var exit *exec.ExitError
-		if !errors.As(err, &exit) || exit.ExitCode() != 2 || !strings.Contains(out, "flag provided but not defined: "+name) || !strings.Contains(out, "-config_file") {
+		if !errors.As(err, &exit) || exit.ExitCode() != 2 || !strings.Contains(out, "flag provided but not defined: "+name) || !strings.Contains(out, "--config") {
 			t.Errorf("ipv6disc %s: %v\n%s", strings.Join(old, " "), err, out)
 		}
 	}
@@ -421,7 +421,7 @@ func TestLiveCommandConfigFile(t *testing.T) {
 	if err := os.WriteFile(bad, []byte("protocols:\n  mdns: true\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := refused("-config_file", bad); err == nil || !strings.Contains(out, "protocols.mdns: true is not its settings: it is written as mdns, with enabled: true under it") {
+	if out, err := refused("--config", bad); err == nil || !strings.Contains(out, "protocols.mdns: true is not its settings: it is written as mdns, with enabled: true under it") {
 		t.Errorf("a file that can't be: %v\n%s", err, out)
 	}
 	if sent := wire.from(a.mac); len(sent) != 0 {
@@ -435,7 +435,7 @@ func TestLiveCommandConfigFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	wire.reset()
-	c := &command{t: t, name: "ipv6disc -config_file", cmd: inA(exec.Command(binary, "-config_file", file)), exited: make(chan struct{})}
+	c := &command{t: t, name: "ipv6disc --config", cmd: inA(exec.Command(binary, "--config", file)), exited: make(chan struct{})}
 	c.start()
 	waitFor(t, 30*time.Second, "p's address, by the command", func() bool { return c.identified(p.mac, p.ipv6) })
 	time.Sleep(7 * time.Second)
@@ -634,7 +634,7 @@ func TestLiveCommandDefaults(t *testing.T) {
 			if err := os.WriteFile(file, []byte(*config), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			args = []string{"-config_file", file}
+			args = []string{"--config", file}
 		}
 		for _, h := range lan {
 			ip(t, "-n", h.namespace, "neigh", "flush", "all")

@@ -40,27 +40,43 @@ func init() {
 // defineFlags defines the flags on flag.CommandLine, each with its default: the tests define them
 // again on a new one, as a flag set can't forget what it was given.
 func defineFlags() {
-	flag.StringVar(&configFile, "config_file", "", "The configuration file, YAML: the families, the protocols, the names and the plugins. Without it no file is read, and the defaults discover IPv6")
+	flag.StringVar(&configFile, "config", "", "The configuration file, YAML: the families, the protocols, the names and the plugins. Without it no file is read, and the defaults discover IPv6")
 	flag.BoolVar(&live, "live", false, "Show the state in the terminal, updating, instead of the log")
 	flag.BoolVar(&showVersion, "version", false, "Show the version, and exit")
 	flag.Usage = usage
 }
 
-// usage lists the flags, as flag does, and tells where the rest is.
+// usage lists the flags as flag does, but each with two dashes, and tells where the rest is.
 func usage() {
 	fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n", os.Args[0])
-	flag.PrintDefaults()
+	flag.VisitAll(func(f *flag.Flag) {
+		// The kind of its value, none for a boolean, and its default when it has one.
+		kind, text := flag.UnquoteUsage(f)
+		line := "  --" + f.Name
+		if kind != "" {
+			line += " " + kind
+		}
+		line += "\n    \t" + text
+		switch {
+		case f.DefValue == "" || f.DefValue == "false":
+		case kind == "string":
+			line += fmt.Sprintf(" (default %q)", f.DefValue)
+		default:
+			line += fmt.Sprintf(" (default %s)", f.DefValue)
+		}
+		fmt.Fprintln(flag.CommandLine.Output(), line)
+	})
 	fmt.Fprintf(flag.CommandLine.Output(), "\nEverything else is in the configuration file, whose keys are at:\n  %s\n", reference)
 }
 
 // unexpectedArgs is the error of the words left after the flags. There are none to give: flag
-// stops at the first, so that the flags after it would be left out without a word, as -live after
-// "-version false".
+// stops at the first, so that the flags after it would be left out without a word, as --live after
+// "--version false".
 func unexpectedArgs(args []string) error {
 	if len(args) == 0 {
 		return nil
 	}
-	return fmt.Errorf("unexpected argument %q: the flags take no separate words, and a boolean one is turned off as -name=false", args[0])
+	return fmt.Errorf("unexpected argument %q: the flags take no separate words, and a boolean one is turned off as --name=false", args[0])
 }
 
 // versionString is the version of the command: the release's, or the module's as the build has
@@ -115,16 +131,16 @@ func startUpdater() {
 		worker.RegisterPlugin(p)
 	}
 
-	// The terminal is raw in -live, so Ctrl-C is a key there, but a signal from elsewhere, as
+	// The terminal is raw in --live, so Ctrl-C is a key there, but a signal from elsewhere, as
 	// docker stop sends, has to end it too.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	if live {
 		// Before anything is started: without a terminal there is nothing to show it on. Not
-		// by the logger, which -live silences.
+		// by the logger, which --live silences.
 		if err := terminal.Init(); err != nil {
-			fmt.Fprintln(os.Stderr, "-live needs a terminal:", err)
+			fmt.Fprintln(os.Stderr, "--live needs a terminal:", err)
 			os.Exit(1)
 		}
 	}

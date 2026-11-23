@@ -65,17 +65,17 @@ func TestCommandRejects(t *testing.T) {
 		want         string
 	}{
 		// A word that is no flag: the flags after it would not be read.
-		{args: "-live false -version", code: 2, want: `unexpected argument "false"`},
-		{args: "-live=false typo", code: 2, want: `unexpected argument "typo"`},
+		{args: "--live false --version", code: 2, want: `unexpected argument "false"`},
+		{args: "--live=false typo", code: 2, want: `unexpected argument "typo"`},
 		// What was a flag, and any other there is none of.
 		{args: "-ipv4", code: 2, want: "flag provided but not defined: -ipv4"},
-		{args: "-hostnames -live", code: 2, want: "flag provided but not defined: -hostnames"},
+		{args: "-hostnames --live", code: 2, want: "flag provided but not defined: -hostnames"},
 		{args: "-plugin router=linux:60s", code: 2, want: "flag provided but not defined: -plugin"},
 		{args: "-log_level=debug", code: 2, want: "flag provided but not defined: -log_level"},
 		{args: "-lifetime 1h", code: 2, want: "flag provided but not defined: -lifetime"},
-		{args: "-live=maybe", code: 2, want: "invalid boolean value"},
+		{args: "--live=maybe", code: 2, want: "invalid boolean value"},
 		// A file that isn't there, and one that says what can't be: each error of it.
-		{args: "-config_file /no/such/file.yaml", code: 1, want: "/no/such/file.yaml: no such file or directory"},
+		{args: "--config /no/such/file.yaml", code: 1, want: "/no/such/file.yaml: no such file or directory"},
 		{config: "ipv4: true", code: 1, want: "ipv4: true is not its settings: it is written as ipv4, with enabled: true under it"},
 		{config: "protocols:\n  bonjour:\n    enabled: true", code: 1, want: "protocols.bonjour: no such protocol: they are ndp, ping,"},
 		{config: "protocols:\n  mdns:\n    asks: true", code: 1, want: "protocols.mdns.asks: no such option of mdns: it has enabled, ask"},
@@ -94,7 +94,7 @@ func TestCommandRejects(t *testing.T) {
 	} {
 		args := strings.Fields(tt.args)
 		if tt.config != "" {
-			args = append(args, "-config_file", writeConfig(t, tt.config))
+			args = append(args, "--config", writeConfig(t, tt.config))
 		}
 		code, stdout, stderr := command(t, nil, args...)
 		if code != tt.code || !strings.Contains(stdout+stderr, tt.want) {
@@ -110,16 +110,16 @@ func TestCommandRejects(t *testing.T) {
 	}
 }
 
-// -version says the version and exits, whatever else is given, and -h the flags and where the
+// --version says the version and exits, whatever else is given, and --help the flags and where the
 // configuration file's keys are.
 func TestCommandVersionAndHelp(t *testing.T) {
-	code, stdout, stderr := command(t, nil, "-version", "-config_file", "/no/such/file.yaml")
+	code, stdout, stderr := command(t, nil, "--version", "--config", "/no/such/file.yaml")
 	if code != 0 || !strings.HasPrefix(stdout, "ipv6disc ") || strings.TrimSpace(strings.TrimPrefix(stdout, "ipv6disc ")) == "" || stderr != "" {
-		t.Errorf("-version: exit %d:\n%s%s", code, stdout, stderr)
+		t.Errorf("--version: exit %d:\n%s%s", code, stdout, stderr)
 	}
-	for _, help := range []string{"-h", "-help"} {
+	for _, help := range []string{"--help", "-help", "-h"} {
 		code, stdout, stderr = command(t, nil, help)
-		if code != 0 || stdout != "" || !strings.Contains(stderr, "-config_file string") || !strings.Contains(stderr, reference) {
+		if code != 0 || stdout != "" || !strings.Contains(stderr, "--config string") || !strings.Contains(stderr, reference) {
 			t.Errorf("%s: exit %d:\n%s%s", help, code, stdout, stderr)
 		}
 	}

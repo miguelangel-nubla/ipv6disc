@@ -2,7 +2,7 @@
 
 <!-- Generated from the code by `go test ./cmd/ipv6disc -update`: edit it, not this page. -->
 
-The configuration file is YAML, or JSON, given as `ipv6disc -config_file discovery.yaml`. Without the flag no file is read, and every key has its default: IPv6 is discovered, by the protocols that find hosts. Every key is optional. A duration is `90s`, `1m30s`, `4h`, or a number of seconds. A key there is none of, a key written twice, and a value of another type than its key takes, are errors at start, each with where it is and what there is; so is a second document after a `---`. The schema is [`pkg/config/schema.json`](../../pkg/config/schema.json), and the [discovery](../discovery.md) page says what each key does.
+The configuration file is YAML, or JSON, given as `ipv6disc --config discovery.yaml`. Without the flag no file is read, and every key has its default: IPv6 is discovered, by the protocols that find hosts. Every key is optional. A duration is `90s`, `1m30s`, `4h`, or a number of seconds. A key there is none of, a key written twice, and a value of another type than its key takes, are errors at start, each with where it is and what there is; so is a second document after a `---`. The schema is [`pkg/config/schema.json`](../../pkg/config/schema.json), and the [discovery](../discovery.md) page says what each key does.
 
 ## Top level
 

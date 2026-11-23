@@ -34,14 +34,14 @@ func TestFlags(t *testing.T) {
 	resetFlags(t)
 	var names []string
 	flag.VisitAll(func(f *flag.Flag) { names = append(names, f.Name) })
-	if !slices.Equal(names, []string{"config_file", "live", "version"}) {
+	if !slices.Equal(names, []string{"config", "live", "version"}) {
 		t.Errorf("the flags are %v", names)
 	}
 	if err := flag.CommandLine.Parse(nil); err != nil || configFile != "" || live || showVersion {
-		t.Errorf("without flags: config_file %q, live %v, version %v, %v", configFile, live, showVersion, err)
+		t.Errorf("without flags: config %q, live %v, version %v, %v", configFile, live, showVersion, err)
 	}
-	if err := flag.CommandLine.Parse([]string{"-config_file", "discovery.yaml", "-live"}); err != nil || configFile != "discovery.yaml" || !live {
-		t.Errorf("with them: config_file %q, live %v, %v", configFile, live, err)
+	if err := flag.CommandLine.Parse([]string{"--config", "discovery.yaml", "--live"}); err != nil || configFile != "discovery.yaml" || !live {
+		t.Errorf("with them: config %q, live %v, %v", configFile, live, err)
 	}
 }
 
@@ -49,6 +49,8 @@ func TestFlags(t *testing.T) {
 // configuration file.
 func TestOldFlagsAreUnknown(t *testing.T) {
 	for _, old := range []string{
+		// The name --config had.
+		"-config_file=discovery.yaml",
 		"-ipv4", "-ipv6=false", "-ipv6_listen=false", "-ipv6_active=false", "-ipv4_listen", "-ipv4_active=false",
 		"-lifetime=1h", "-ipv6_lifetime=1h", "-ipv4_lifetime=1h", "-rediscover=10m",
 		"-hostnames", "-hostnames_lifetime=1h", "-hostnames_protocols=mdns", "-hostnames_dns=192.168.1.1",
@@ -72,7 +74,7 @@ func TestOldFlagsAreUnknown(t *testing.T) {
 // The usage lists the flags there are, and tells where the keys of the configuration file are.
 func TestUsage(t *testing.T) {
 	resetFlags(t)
-	if err := flag.CommandLine.Parse([]string{"-live", "-config_file=other.yaml"}); err != nil {
+	if err := flag.CommandLine.Parse([]string{"--live", "--config=other.yaml"}); err != nil {
 		t.Fatal(err)
 	}
 	var out strings.Builder
@@ -82,10 +84,10 @@ func TestUsage(t *testing.T) {
 	usage()
 
 	for _, want := range []string{
-		"  -config_file string\n",
+		"  --config string\n",
 		"Without it no file is read, and the defaults discover IPv6",
-		"  -live\n",
-		"  -version\n",
+		"  --live\n",
+		"  --version\n",
 		"\nEverything else is in the configuration file, whose keys are at:\n  https://github.com/miguelangel-nubla/ipv6disc/blob/main/docs/reference/configuration.md\n",
 	} {
 		if !strings.Contains(out.String(), want) {
@@ -99,31 +101,31 @@ func TestUsage(t *testing.T) {
 }
 
 // flag stops at the first word that is no flag, and a boolean flag takes none: what follows
-// "-live false" was left out without a word.
+// "--live false" was left out without a word.
 func TestUnexpectedArgs(t *testing.T) {
 	parse := func(args ...string) (*flag.FlagSet, *bool, *string) {
 		fs := flag.NewFlagSet("test", flag.ContinueOnError)
-		live, file := fs.Bool("live", true, ""), fs.String("config_file", "", "")
+		live, file := fs.Bool("live", true, ""), fs.String("config", "", "")
 		if err := fs.Parse(args); err != nil {
 			t.Fatal(err)
 		}
 		return fs, live, file
 	}
 
-	fs, live, file := parse("-live", "false", "-config_file", "discovery.yaml")
+	fs, live, file := parse("--live", "false", "--config", "discovery.yaml")
 	if !*live || *file != "" || fs.NArg() != 3 {
-		t.Fatalf("-live false -config_file discovery.yaml: live %v, config_file %q, left %v: flag changed, and so must this test", *live, *file, fs.Args())
+		t.Fatalf("--live false --config discovery.yaml: live %v, config %q, left %v: flag changed, and so must this test", *live, *file, fs.Args())
 	}
-	if err := unexpectedArgs(fs.Args()); err == nil || !strings.Contains(err.Error(), `"false"`) || !strings.Contains(err.Error(), "-name=false") {
-		t.Errorf("-live false: error %v, want one naming \"false\" and the way to write it", err)
+	if err := unexpectedArgs(fs.Args()); err == nil || !strings.Contains(err.Error(), `"false"`) || !strings.Contains(err.Error(), "--name=false") {
+		t.Errorf("--live false: error %v, want one naming \"false\" and the way to write it", err)
 	}
 
-	fs, live, file = parse("-live=false", "-config_file", "discovery.yaml")
+	fs, live, file = parse("--live=false", "--config", "discovery.yaml")
 	if *live || *file != "discovery.yaml" {
-		t.Errorf("-live=false -config_file discovery.yaml: live %v, config_file %q", *live, *file)
+		t.Errorf("--live=false --config discovery.yaml: live %v, config %q", *live, *file)
 	}
 	if err := unexpectedArgs(fs.Args()); err != nil {
-		t.Errorf("-live=false -config_file discovery.yaml: %v", err)
+		t.Errorf("--live=false --config discovery.yaml: %v", err)
 	}
 }
 

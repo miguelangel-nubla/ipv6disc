@@ -704,7 +704,7 @@ func startCommand(t *testing.T, binary, config string, flags ...string) *command
 	if err := os.WriteFile(file, []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	flags = append([]string{"-config_file", file}, flags...)
+	flags = append([]string{"--config", file}, flags...)
 	c := &command{t: t, name: "ipv6disc with " + strings.Join(strings.Fields(config), " "), cmd: exec.Command(binary, flags...), exited: make(chan struct{})}
 	c.start()
 	return c

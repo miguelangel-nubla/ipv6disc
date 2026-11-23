@@ -1,4 +1,4 @@
-# An example of the configuration of ipv6disc: ipv6disc -config_file config.yaml
+# An example of the configuration of ipv6disc: ipv6disc --config config.yaml
 #
 # Every key is optional, and what is left out is its default: without a file at all, IPv6 is
 # discovered, by the protocols that find hosts. This one also discovers IPv4, and learns the names
