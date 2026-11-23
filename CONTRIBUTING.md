@@ -80,6 +80,8 @@ After changing any of those sources, regenerate the pages:
 go test ./cmd/ipv6disc -update
 ```
 
+It also writes the manual page, [`docs/ipv6disc.1`](docs/ipv6disc.1), from the flags.
+
 The same command redraws the README's picture of the live view, `docs/images/page-light.svg` and `page-dark.svg`, from `docs/images/page.txt`. Change the text, never the pictures. A test holds the picture's colors to those the program gives each kind of line.
 
 A test fails when the pages are out of date, or when a field has no description. Other tests keep the rest consistent:
@@ -109,5 +111,6 @@ A tag makes a release: goreleaser builds it and publishes it on GitHub, with its
   - Its images only get its own tags. `latest`, `vX` and `vX.Y` stay on the last release, so nobody gets a prerelease without asking for it.
   - ipv6ddns can depend on a prerelease in its `go.mod`, to be tested with it before the release.
 - **A release** is `dev` merged into `main`, and tagged there: `v0.23.0`.
+  - It makes the Homebrew formula, in [`miguelangel-nubla/homebrew-tap`](https://github.com/miguelangel-nubla/homebrew-tap), of its version, when the release workflow has the secret `HOMEBREW_TAP_TOKEN`. Without the secret, run `./update.sh ipv6disc <tag>` by hand in a clone of the tap, and push it.
 
 A tag whose commit message contains `[skip ci]` starts no release. GitHub skips every workflow of that push, including the tag's. Either tag a commit without it, or run the release on the tag by hand: *Actions*, *goreleaser*, *Run workflow*, with the tag under *Use workflow from*.

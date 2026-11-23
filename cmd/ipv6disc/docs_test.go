@@ -26,6 +26,48 @@ const generated = "<!-- Generated from the code by `go test ./cmd/ipv6disc -upda
 
 func cell(s string) string { return strings.ReplaceAll(s, "|", `\|`) }
 
+// roff is the text as a manual page has it: its dashes are the minus of a flag, not a hyphen
+// that a terminal may show as another character, and a line can't start a request.
+func roff(text string) string {
+	text = strings.ReplaceAll(text, `\`, `\e`)
+	text = strings.ReplaceAll(text, "-", `\-`)
+	if strings.HasPrefix(text, ".") || strings.HasPrefix(text, "'") {
+		text = `\&` + text
+	}
+	return text
+}
+
+// manPage is the manual page, ipv6disc(1): the flags as --help lists them.
+func manPage() string {
+	var synopsis, options strings.Builder
+	flag.VisitAll(func(f *flag.Flag) {
+		if f.Name == "update" || strings.HasPrefix(f.Name, "test.") {
+			return
+		}
+		kind, text := flag.UnquoteUsage(f)
+		name := `\fB` + roff("--"+f.Name) + `\fR`
+		if kind != "" {
+			name += ` \fI` + roff(kind) + `\fR`
+		}
+		synopsis.WriteString("\n[" + name + "]")
+		fmt.Fprintf(&options, ".TP\n%s\n%s.\n", name, roff(text))
+	})
+
+	var b strings.Builder
+	b.WriteString(`.\" Generated from the code by go test ./cmd/ipv6disc \-update: edit it, not this page.` + "\n")
+	b.WriteString(".TH IPV6DISC 1 \"\" ipv6disc \"User Commands\"\n")
+	b.WriteString(".SH NAME\nipv6disc \\- find the hosts on the local network and their addresses, over IPv6 and IPv4\n")
+	b.WriteString(".SH SYNOPSIS\n.B ipv6disc" + synopsis.String() + "\n")
+	b.WriteString(".SH DESCRIPTION\n")
+	b.WriteString(roff("ipv6disc finds the hosts on the local network and their addresses, each with its MAC, and the names they have. It listens to the network, probes it, and reads the neighbor tables of routers.") + "\n.PP\n")
+	b.WriteString(roff("It logs what it finds, as JSON, until it is stopped; or shows the current state in the terminal instead.") + "\n.PP\n")
+	b.WriteString(roff("Local discovery needs raw sockets: root, or on Linux the CAP_NET_RAW capability.") + "\n")
+	b.WriteString(".SH OPTIONS\n" + options.String())
+	b.WriteString(".PP\n" + roff("Everything else is in the configuration file.") + "\n")
+	b.WriteString(".SH SEE ALSO\n" + roff("The keys of the configuration file:") + "\n.UR " + reference + "\n.UE\n")
+	return b.String()
+}
+
 // cliPage is the reference of the flags, as --help lists them.
 func cliPage() string {
 	var b strings.Builder
@@ -41,7 +83,8 @@ func cliPage() string {
 		} else {
 			def = "`" + def + "`"
 		}
-		fmt.Fprintf(&b, "| `--%s` | %s | %s |\n", f.Name, def, cell(f.Usage))
+		_, text := flag.UnquoteUsage(f)
+		fmt.Fprintf(&b, "| `--%s` | %s | %s |\n", f.Name, def, cell(text))
 	})
 	b.WriteString("\nEverything else is in the configuration file: the families, the protocols, the names, the interfaces, the lifetimes, the plugins and the level of the log. Its keys are in the [configuration reference](configuration.md). A flag there is none of is an error, as each of those the command had before the file.\n")
 	b.WriteString("\nA boolean flag is turned off as `--live=false`, not `--live false`: a word that is no flag, nor a flag's value, is an error.\n")
@@ -223,7 +266,8 @@ func TestReferenceUpToDate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for path, want := range map[string]string{"cli.md": cliPage(), "plugins.md": pluginsRef, "configuration.md": configRef} {
+	// And the manual page, beside the folder of the others.
+	for path, want := range map[string]string{"cli.md": cliPage(), "plugins.md": pluginsRef, "configuration.md": configRef, "../ipv6disc.1": manPage()} {
 		path = filepath.Join("..", "..", "docs", "reference", path)
 		if *update {
 			if err := os.WriteFile(path, []byte(want), 0o644); err != nil {

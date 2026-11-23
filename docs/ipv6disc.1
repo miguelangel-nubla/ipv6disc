@@ -1,0 +1,31 @@
+.\" Generated from the code by go test ./cmd/ipv6disc \-update: edit it, not this page.
+.TH IPV6DISC 1 "" ipv6disc "User Commands"
+.SH NAME
+ipv6disc \- find the hosts on the local network and their addresses, over IPv6 and IPv4
+.SH SYNOPSIS
+.B ipv6disc
+[\fB\-\-config\fR \fIfile\fR]
+[\fB\-\-live\fR]
+[\fB\-\-version\fR]
+.SH DESCRIPTION
+ipv6disc finds the hosts on the local network and their addresses, each with its MAC, and the names they have. It listens to the network, probes it, and reads the neighbor tables of routers.
+.PP
+It logs what it finds, as JSON, until it is stopped; or shows the current state in the terminal instead.
+.PP
+Local discovery needs raw sockets: root, or on Linux the CAP_NET_RAW capability.
+.SH OPTIONS
+.TP
+\fB\-\-config\fR \fIfile\fR
+The configuration file, YAML: the families, the protocols, the names and the plugins. Without it no file is read, and the defaults discover IPv6.
+.TP
+\fB\-\-live\fR
+Show the state in the terminal, updating, instead of the log.
+.TP
+\fB\-\-version\fR
+Show the version, and exit.
+.PP
+Everything else is in the configuration file.
+.SH SEE ALSO
+The keys of the configuration file:
+.UR https://github.com/miguelangel-nubla/ipv6disc/blob/main/docs/reference/configuration.md
+.UE

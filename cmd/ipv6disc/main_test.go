@@ -119,7 +119,7 @@ func TestCommandVersionAndHelp(t *testing.T) {
 	}
 	for _, help := range []string{"--help", "-help", "-h"} {
 		code, stdout, stderr = command(t, nil, help)
-		if code != 0 || stdout != "" || !strings.Contains(stderr, "--config string") || !strings.Contains(stderr, reference) {
+		if code != 0 || stdout != "" || !strings.Contains(stderr, "--config file") || !strings.Contains(stderr, reference) {
 			t.Errorf("%s: exit %d:\n%s%s", help, code, stdout, stderr)
 		}
 	}

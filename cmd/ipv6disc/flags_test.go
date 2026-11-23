@@ -84,7 +84,7 @@ func TestUsage(t *testing.T) {
 	usage()
 
 	for _, want := range []string{
-		"  --config string\n",
+		"  --config file\n",
 		"Without it no file is read, and the defaults discover IPv6",
 		"  --live\n",
 		"  --version\n",
