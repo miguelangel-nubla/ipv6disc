@@ -819,6 +819,29 @@ func runOnLAN(t *testing.T, name string) {
 	}
 	ip(t, "netns", "exec", lan["q"].namespace, "sysctl", "-qw", "net.ipv6.icmp.echo_ignore_multicast=1")
 
+	// The machines are there once their addresses are. Each kernel makes its link-local address
+	// when its link comes up, and checks that nothing else has it: a neighbor solicitation of
+	// its own, from the unspecified address, at any moment of the second that follows. A test
+	// that started before would count it among what the machine sent, as any solicitation.
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		var waiting []string
+		for name, h := range lan {
+			out, err := exec.Command("ip", "-n", h.namespace, "-6", "-o", "addr", "show", "dev", "lan", "scope", "link").CombinedOutput()
+			if err != nil {
+				t.Fatalf("the addresses of %s: %v\n%s", name, err, out)
+			}
+			if len(bytes.TrimSpace(out)) == 0 || bytes.Contains(out, []byte("tentative")) {
+				waiting = append(waiting, name)
+			}
+		}
+		if len(waiting) == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the link-local addresses of %v are not checked for duplicates yet", waiting)
+		}
+	}
+
 	runInside(t, lanNamespace, name)
 }
 
@@ -1100,6 +1123,38 @@ type capture struct {
 	mdnsPorts map[string]map[bool]uint16
 	// The UDP port each MAC last sent each kind of probe from.
 	ports map[string]map[string]uint16
+	// What each of the probes counted was, for a test to tell which it didn't expect.
+	frames map[string][]string
+}
+
+// frameOf tells a probe as a failure is to tell it: its kind, where it is from and to, and of a
+// neighbor solicitation, the address it asks for. One from the unspecified address is the
+// kernel's, checking that an address it is about to use has no duplicate.
+func frameOf(kind string, frame []byte) string {
+	switch binary.BigEndian.Uint16(frame[12:14]) {
+	case unix.ETH_P_IPV6:
+		source, _ := netip.AddrFromSlice(frame[22:38])
+		destination, _ := netip.AddrFromSlice(frame[38:54])
+		told := fmt.Sprintf("%s from %s to %s", kind, source, destination)
+		if kind == "solicitation" && len(frame) >= 78 {
+			target, _ := netip.AddrFromSlice(frame[62:78])
+			told += fmt.Sprintf(", for %s", target)
+		}
+		return told
+	case unix.ETH_P_IP:
+		source, _ := netip.AddrFromSlice(frame[26:30])
+		destination, _ := netip.AddrFromSlice(frame[30:34])
+		return fmt.Sprintf("%s from %s to %s", kind, source, destination)
+	}
+	return kind
+}
+
+// told returns what each probe mac sent since reset was, in the order they came, for the
+// message of a failure.
+func (c *capture) told(mac string) string {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	return strings.Join(c.frames[mac], "; ")
 }
 
 // port returns the UDP port mac last sent a probe of that kind from: zero if it sent none. Not
@@ -1122,6 +1177,7 @@ func (c *capture) reset() {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	c.counts = make(map[string]map[string]int)
+	c.frames = make(map[string][]string)
 }
 
 // from returns how many of each kind of probe mac sent since reset.
@@ -1152,7 +1208,7 @@ func startCapture(t *testing.T, ports ...string) *capture {
 	if err := unix.SetsockoptTimeval(fd, unix.SOL_SOCKET, unix.SO_RCVTIMEO, &unix.Timeval{Usec: 100_000}); err != nil {
 		t.Fatal(err)
 	}
-	c := &capture{counts: make(map[string]map[string]int), mdnsPorts: make(map[string]map[bool]uint16), ports: make(map[string]map[string]uint16)}
+	c := &capture{counts: make(map[string]map[string]int), mdnsPorts: make(map[string]map[bool]uint16), ports: make(map[string]map[string]uint16), frames: make(map[string][]string)}
 	stop, done := make(chan struct{}), make(chan struct{})
 	t.Cleanup(func() { close(stop); <-done; unix.Close(fd) })
 	go func() {
@@ -1179,6 +1235,10 @@ func startCapture(t *testing.T, ports ...string) *capture {
 					c.counts[mac] = make(map[string]int)
 				}
 				c.counts[mac][kind]++
+				// As many as tell what was sent, of the thousands of a sweep.
+				if len(c.frames[mac]) < 32 {
+					c.frames[mac] = append(c.frames[mac], frameOf(kind, buf[:n]))
+				}
 				if port := udpSource(buf[:n]); port != 0 {
 					if c.ports[mac] == nil {
 						c.ports[mac] = make(map[string]uint16)

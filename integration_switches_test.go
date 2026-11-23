@@ -425,7 +425,7 @@ func TestLiveCommandConfigFile(t *testing.T) {
 		t.Errorf("a file that can't be: %v\n%s", err, out)
 	}
 	if sent := wire.from(a.mac); len(sent) != 0 {
-		t.Errorf("a command that didn't start sent %v", sent)
+		t.Errorf("a command that didn't start sent %v: %s", sent, wire.told(a.mac))
 	}
 
 	// With a file: IPv4 too, and of IPv6 the ping alone, beside NDP.
