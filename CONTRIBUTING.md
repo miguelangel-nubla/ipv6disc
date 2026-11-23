@@ -111,6 +111,6 @@ A tag makes a release: goreleaser builds it and publishes it on GitHub, with its
   - Its images only get its own tags. `latest`, `vX` and `vX.Y` stay on the last release, so nobody gets a prerelease without asking for it.
   - ipv6ddns can depend on a prerelease in its `go.mod`, to be tested with it before the release.
 - **A release** is `dev` merged into `main`, and tagged there: `v0.23.0`.
-  - It makes the Homebrew formula, in [`miguelangel-nubla/homebrew-tap`](https://github.com/miguelangel-nubla/homebrew-tap), of its version, when the release workflow has the secret `HOMEBREW_TAP_TOKEN`. Without the secret, run `./update.sh ipv6disc <tag>` by hand in a clone of the tap, and push it.
+  - The Homebrew formula, in [`miguelangel-nubla/homebrew-tap`](https://github.com/miguelangel-nubla/homebrew-tap), follows it by itself: every hour, a workflow there makes the formula of the latest release, installs and tests it on macOS, and keeps it.
 
 A tag whose commit message contains `[skip ci]` starts no release. GitHub skips every workflow of that push, including the tag's. Either tag a commit without it, or run the release on the tag by hand: *Actions*, *goreleaser*, *Run workflow*, with the tag under *Use workflow from*.
