@@ -118,7 +118,7 @@ The worker's `State` holds the addresses, by MAC.
 - its `Interfaces`, the local interfaces among those sources;
 - its expiration;
 - `Self`, which is true for one of this machine's own addresses. `State.RegisterSelf` registers those;
-- `Temporary`, on Linux, which is true for one of this machine's addresses that the kernel created as a privacy address. Such an address changes every day or so.
+- `Temporary`, on Linux and macOS, which is true for one of this machine's addresses that the kernel created as a privacy address. Such an address changes every day or so.
 
 **`Subscribe`** returns a channel that receives a value after each change: an address added, expired, or seen by a new source. Changes that arrive faster than they are received are reported once. Its `cancel` doesn't close the channel, so wait on the context too.
 

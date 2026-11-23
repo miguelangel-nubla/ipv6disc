@@ -46,3 +46,7 @@ func parseIfInet6(lines *bufio.Scanner) map[netip.Addr]bool {
 	}
 	return temporary
 }
+
+// unlistenableAddrs is of macOS: Linux lets every address it has be listened on, the deprecated
+// ones too, once checked for a duplicate.
+func unlistenableAddrs() map[netip.Addr]bool { return nil }

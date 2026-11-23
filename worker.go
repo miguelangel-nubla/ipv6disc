@@ -528,8 +528,10 @@ func (w *Worker) checkInterfaces(ctx context.Context) {
 		return
 	}
 
-	// The addresses there now, each with its interface.
+	// The addresses there now, each with its interface: but those the system has and doesn't
+	// let be listened on, which would fail at every reading.
 	found := make(map[workerKey]net.Interface)
+	unlistenable := unlistenableAddrs()
 
 	for _, iface := range ifaces {
 		if err := isValidInterface(&iface); err != nil || !w.config.usesInterface(iface.Name) {
@@ -550,7 +552,7 @@ func (w *Worker) checkInterfaces(ctx context.Context) {
 			addr, ok := netip.AddrFromSlice(ipNet.IP)
 			addr = addr.Unmap()
 			// An interface with a link-local address only is not listened on.
-			if !ok || addr.Is4() || addr.IsLinkLocalUnicast() {
+			if !ok || addr.Is4() || addr.IsLinkLocalUnicast() || unlistenable[addr] {
 				continue
 			}
 			found[keyOf(&iface, addr)] = iface

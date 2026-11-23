@@ -134,7 +134,8 @@ With `arp` off and `arp-listen` on, hosts are found only by the ARP heard, which
 
 The addresses of the interfaces discovery runs on are registered too, with the interface's MAC, and marked as this machine's. `--live` shows them as `(this host)`.
 
-- **Temporary addresses.** On Linux, the IPv6 privacy addresses that the kernel created as temporary are marked `(this host, temporary)`. They change every day or so.
+- **Temporary addresses.** On Linux and macOS, the IPv6 privacy addresses that the kernel created as temporary are marked `(this host, temporary)`. They change every day or so.
+- **Deprecated addresses, on macOS.** macOS keeps a temporary address it has replaced for a while, marked as deprecated, and doesn't let it be listened on. Discovery leaves those out: they are not registered, and nothing is listened for on them.
 - **Refreshing.** The addresses are registered while the family listens, for as long as the system has them. They are refreshed well within their lifetime, whatever `rediscover` is and whatever protocols are enabled: IPv6 addresses at least every third of the lifetime, and IPv4 addresses every minute.
 - **Removal.** An address its interface no longer has, such as one from a prefix that went away or a temporary address that was replaced, leaves the state the next time the interfaces are checked. That is every minute, not a lifetime later. The log says `host removed`.
 - **Changes.** Discovery follows an address that moves to another interface (for example to a bridge), an interface that is created again, and an interface whose MAC changed. It stops on the old interface and starts on the new one.
