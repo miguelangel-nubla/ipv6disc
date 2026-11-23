@@ -10,6 +10,8 @@ on:
   # Weekly too: new vulnerabilities, and new Go releases, come without a commit.
   schedule:
     - cron: '41 4 * * 1'
+  # By hand, and by the nix job, for the commit it writes: a push of its own starts nothing.
+  workflow_dispatch:
 
 permissions:
   contents: read
