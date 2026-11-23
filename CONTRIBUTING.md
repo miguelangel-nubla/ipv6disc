@@ -115,6 +115,12 @@ The flake pins a hash of the Go modules. **After any change to `go.sum`**, its c
 tools/nix-test.sh --update
 ```
 
+## A job without a runner
+
+GitHub is at times short of macOS runners. A job it has none for waits, is cancelled with nothing run, and its CI run ends as failed, though nothing was tested. The [rerun](.github/workflows/rerun.yaml) workflow runs such jobs again by itself, up to three times, and only when that is all that went wrong: a job that ran and failed is left for you to look at. `DRY_RUN=1 tools/ci-rerun.sh <owner/repository> <run id>` tells what it would do with a run.
+
+It runs as `main` has it, so a change to it takes effect once it is merged there.
+
 ## Releases
 
 A tag makes a release: goreleaser builds it and publishes it on GitHub, with its images. Work goes to `dev`, where CI runs on every push. It reaches `main` when it is released.
