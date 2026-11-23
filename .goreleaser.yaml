@@ -6,7 +6,9 @@ before:
     # The manual page, compressed as the package has it.
     - sh -c "gzip -9nc docs/ipv6disc.1 > docs/ipv6disc.1.gz"
 builds:
-  - main: ./cmd/ipv6disc
+  # Every system: the archives, and the images.
+  - id: ipv6disc
+    main: ./cmd/ipv6disc
     env:
       - CGO_ENABLED=0
     goos:
@@ -45,9 +47,25 @@ builds:
     ignore:
       - goos: windows
         goarch: arm
+  # Arch's package is of the architectures Arch has, and Arch Linux ARM: built again, as a
+  # package takes every binary of the builds it names.
+  - id: packages
+    main: ./cmd/ipv6disc
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+      - arm
+    goarm:
+      - 7
 # One image for every platform: the build context has the binary of each at <os>/<arch>[/<variant>]/.
 dockers_v2:
   -
+    ids:
+      - ipv6disc
     images:
       - "ghcr.io/miguelangel-nubla/{{ .ProjectName }}"
     tags:
@@ -77,6 +95,8 @@ dockers_v2:
 
 archives:
   - 
+    ids:
+      - ipv6disc
     files:
       - LICENSE*
       - README*
@@ -103,6 +123,8 @@ archives:
 # service: the command is run by hand, or by a program on the library.
 nfpms:
   -
+    ids:
+      - packages
     package_name: ipv6disc
     formats:
       - archlinux
