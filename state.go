@@ -18,8 +18,8 @@ import (
 // State is the addresses discovered, by MAC, and the names of the hosts, by MAC too.
 //
 // Its locks are taken in this order, never the other way: macsMutex, then an AddrCollection's
-// addressesMutex, then an Addr's mutex; and macsMutex, then namesMutex. subscribersMutex is taken
-// alone. An address seen again as
+// addressesMutex, then an Addr's mutex; and macsMutex, then namesMutex. subscribersMutex and
+// movesMutex are taken alone. An address seen again as
 // it expires is safe for it: seen and remove both hold macsMutex, and remove only takes out the very
 // address that expired, if it is still not valid.
 type State struct {
@@ -47,6 +47,10 @@ type State struct {
 	// The channels Subscribe gave, which hear of every change.
 	subscribers      map[chan struct{}]struct{}
 	subscribersMutex sync.Mutex
+
+	// The last move of each address, by where it moved, to tell one that goes back and forth.
+	moves      map[moveKey]move
+	movesMutex sync.Mutex
 }
 
 // SetLifetimes gives each family the lifetime of its addresses: Register uses it in place of the
@@ -223,6 +227,14 @@ func (s *State) register(hw net.HardwareAddr, ip netip.Addr, record Record, k ki
 		}
 	}
 
+	scope, scoped := scopeOf(record)
+	scoped = scoped && !k.self
+	if scoped && !k.seen.IsZero() && s.outdated(hw.String(), ip, scope, k.seen) {
+		// Another MAC showed the address there since: a neighbor table read later than it
+		// changed, as the kernel's whose entry still has the MAC the address left.
+		return nil, true
+	}
+
 	newAddr := NewAddr(hw, ip, source, lifetime, expire)
 	// Now, as the address it makes has it: its expiration is the record's, to the nanosecond.
 	seen := k.seen
@@ -238,6 +250,9 @@ func (s *State) register(hw net.HardwareAddr, ip netip.Addr, record Record, k ki
 	addr, existing, newSource := s.seen(newAddr, source)
 	if !existing || newSource {
 		defer s.changed()
+	}
+	if scoped {
+		s.moveOff(hw, ip, scope, seen)
 	}
 
 	if !existing {
@@ -319,6 +334,140 @@ func (s *State) seen(addr *Addr, source ...string) (*Addr, bool, bool) {
 	}
 
 	return collection.seen(addr, source...)
+}
+
+// moveOff takes the address ip, in scope, off every other MAC than hw that was last seen with it
+// there before seen: hw showed it since, and an address is at one MAC of a link, and of a
+// neighbor table, at a time. So the host it left loses it at once, not a lifetime later, and its
+// names no longer give the address of another: as when a device takes the place of another, a
+// container is made again with a new MAC, or a virtual address goes to the other machine of a
+// pair. One that it was the last address of is gone, and its names with it. A host that showed it
+// as late keeps it too: it is nobody's, until one of them shows it again.
+//
+// Seen at two MACs by turns, as by two devices given the same address, the address moves each
+// time, and the log warns of it.
+func (s *State) moveOff(hw net.HardwareAddr, ip netip.Addr, scope moveScope, seen time.Time) {
+	mac := hw.String()
+	if !s.elsewhere(mac, ip) {
+		return
+	}
+	var from []string
+	s.macsMutex.Lock()
+	for other, collection := range s.macs {
+		if other == mac {
+			continue
+		}
+		addr, _, empty := collection.moveOff(ip, scope, seen)
+		if addr == nil {
+			continue
+		}
+		from = append(from, other)
+		if empty {
+			delete(s.macs, other)
+			// A host is its addresses: without any, it is gone, and its names with it.
+			s.dropNames(other)
+		}
+	}
+	s.macsMutex.Unlock()
+	if len(from) == 0 {
+		return
+	}
+	s.changed()
+	slices.Sort(from)
+	for _, other := range from {
+		back := s.noteMove(moveKey{scope, ip}, other, mac, seen)
+		if s.logger == nil {
+			continue
+		}
+		fields := []any{zap.String("ip", ip.WithZone("").String()), zap.String("from", other), zap.String("to", mac), zap.String("on", scope.String())}
+		if back {
+			s.logger.Warnw("address moves back and forth between two MACs: two devices with the same address?", fields...)
+		} else {
+			s.logger.Infow("address moved", fields...)
+		}
+	}
+}
+
+// elsewhere tells whether a MAC other than mac has the address ip: what moveOff looks at first, as
+// it runs at every sighting, with the read lock alone.
+func (s *State) elsewhere(mac string, ip netip.Addr) bool {
+	key := ip.Unmap().WithZone("").String()
+	s.macsMutex.RLock()
+	defer s.macsMutex.RUnlock()
+	for other, collection := range s.macs {
+		if other == mac {
+			continue
+		}
+		collection.addressesMutex.RLock()
+		_, ok := collection.addresses[key]
+		collection.addressesMutex.RUnlock()
+		if ok {
+			return true
+		}
+	}
+	return false
+}
+
+// outdated tells whether a MAC other than mac was seen with the address ip in scope later than
+// seen: a sighting of mac then is of an address that moved since, which isn't mac's any more.
+func (s *State) outdated(mac string, ip netip.Addr, scope moveScope, seen time.Time) bool {
+	key := ip.Unmap().WithZone("").String()
+	s.macsMutex.RLock()
+	defer s.macsMutex.RUnlock()
+	for other, collection := range s.macs {
+		if other == mac {
+			continue
+		}
+		collection.addressesMutex.RLock()
+		addr, ok := collection.addresses[key]
+		collection.addressesMutex.RUnlock()
+		if ok && addr.lastIn(scope).After(seen) {
+			return true
+		}
+	}
+	return false
+}
+
+// moveKey is an address, where it moves.
+type moveKey struct {
+	scope moveScope
+	ip    netip.Addr
+}
+
+// move is the last move of an address: from which MAC to which, and when; and when the log last
+// warned that it goes back and forth.
+type move struct {
+	from, to string
+	at       time.Time
+	warned   time.Time
+}
+
+// moveFlapping is how soon after a move one back counts as the address going back and forth, and
+// how often the log warns of it: once in that time, of each address.
+const moveFlapping = 10 * time.Minute
+
+// noteMove keeps the move of an address from one MAC to another, at, and tells whether the log is
+// to warn of it: it went back to where it came from, within moveFlapping of the move before, and
+// the log didn't warn of it in that time. The moves older than that are forgotten.
+func (s *State) noteMove(key moveKey, from, to string, at time.Time) (warn bool) {
+	s.movesMutex.Lock()
+	defer s.movesMutex.Unlock()
+	if s.moves == nil {
+		s.moves = make(map[moveKey]move)
+	}
+	for k, m := range s.moves {
+		if at.Sub(m.at) > moveFlapping && at.Sub(m.warned) > moveFlapping {
+			delete(s.moves, k)
+		}
+	}
+	last, ok := s.moves[key]
+	next := move{from: from, to: to, at: at, warned: last.warned}
+	if ok && last.from == to && last.to == from && at.Sub(last.at) <= moveFlapping && at.Sub(last.warned) > moveFlapping {
+		warn = true
+		next.warned = at
+	}
+	s.moves[key] = next
+	return warn
 }
 
 // remove takes an expired address out of the state, unless it was seen again since. It returns

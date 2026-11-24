@@ -107,6 +107,47 @@ func (r Record) own() bool {
 	return r.By == ReportedByKernel && r.From == FromInterfaces && r.On != ""
 }
 
+// moveScope is where an address is at one MAC at a time: the link of a local interface, which
+// says so of the records seen on it; or the neighbor table of one reporter, which has one MAC for
+// each address, as the kernel's and a router's do. Elsewhere, as in DHCP leases, an address can
+// be at two MACs, and nothing moves.
+type moveScope struct {
+	on, by string
+}
+
+// scopeOf is the scope a record shows its address in, and whether it has one: a record of this
+// machine's own address has none, nor one attached, as a lease.
+func scopeOf(r Record) (moveScope, bool) {
+	switch {
+	case r.own() || r.attached:
+		return moveScope{}, false
+	case r.On != "":
+		return moveScope{on: r.On}, true
+	case r.By != "" && r.From == FromNeighbors:
+		return moveScope{by: r.By}, true
+	}
+	return moveScope{}, false
+}
+
+// String is the scope as the log says it: the interface, or the reporter's neighbor table.
+func (s moveScope) String() string {
+	if s.on != "" {
+		return s.on
+	}
+	return s.by + " " + FromNeighbors
+}
+
+// has tells whether the record is of the scope.
+func (s moveScope) has(r Record) bool {
+	if r.own() || r.attached {
+		return false
+	}
+	if s.on != "" {
+		return r.On == s.on
+	}
+	return r.On == "" && r.By == s.by && r.From == FromNeighbors
+}
+
 // recordKey tells records apart: the same one seen again is a record refreshed, not another.
 type recordKey struct {
 	protocol, way, by, from, on string

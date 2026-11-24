@@ -108,18 +108,64 @@ func (a *Addr) Interfaces() []string {
 	return interfaces
 }
 
-// lastSeenOn is when the address was last seen on the local interface iface, of its records that
-// count: the zero time when it wasn't.
-func (a *Addr) lastSeenOn(iface string) time.Time {
+// lastIn is when the address was last seen in scope, of its records that count: the zero time
+// when it wasn't, and for one of this machine's own.
+func (a *Addr) lastIn(scope moveScope) time.Time {
 	a.mutex.RLock()
 	defer a.mutex.RUnlock()
+	if a.self {
+		return time.Time{}
+	}
+	return a.lastInLocked(scope, time.Now())
+}
+
+// lastInLocked is lastIn, with the mutex held, at now.
+func (a *Addr) lastInLocked(scope moveScope, now time.Time) time.Time {
 	var last time.Time
-	for _, r := range a.liveRecords(time.Now()) {
-		if r.On == iface && r.LastSeen.After(last) {
+	for _, r := range a.records {
+		if scope.has(*r) && r.Live(now) && r.LastSeen.After(last) {
 			last = r.LastSeen
 		}
 	}
 	return last
+}
+
+// movesOff ends the address's records of scope, when the last of them is older than seen: another
+// MAC showed the address there since, and an address is at one MAC at a time, there. It tells
+// whether it ended any, and whether nothing is left that keeps the address, which is then to be
+// taken out: a lease attached to it doesn't. This machine's own addresses never move.
+func (a *Addr) movesOff(scope moveScope, seen time.Time) (moved, gone bool) {
+	now := time.Now()
+	a.mutex.Lock()
+	if a.self {
+		a.mutex.Unlock()
+		return false, false
+	}
+	last := a.lastInLocked(scope, now)
+	if last.IsZero() || !last.Before(seen) {
+		a.mutex.Unlock()
+		return false, false
+	}
+	for k, r := range a.records {
+		if scope.has(*r) {
+			delete(a.records, k)
+		}
+	}
+	lasting := a.lasting(now)
+	if lasting == nil || !lasting.Live(now) {
+		a.mutex.Unlock()
+		return true, true
+	}
+	// It stays as long as the record that keeps it now does.
+	from, changed := time.Time{}, false
+	if !lasting.Expiration().Equal(a.expirationTime) {
+		a.lifetime, from, changed = lasting.Lifetime, lasting.LastSeen, true
+	}
+	a.mutex.Unlock()
+	if changed {
+		a.resetTimersFrom(from, true)
+	}
+	return true, false
 }
 
 // FirstSeen is when the address was first seen, of its records that count.

@@ -450,6 +450,13 @@ Notes for specific systems:
 
 An address stays for its family's `lifetime` after anything last saw it, whether the local discovery or a plugin. Without a family `lifetime`, the general `lifetime` applies.
 
+**An address that moves to another MAC leaves the old one at once.** On one link, an address belongs to one MAC at a time, as the neighbor tables of the kernel and of a router have it. So when another MAC shows the address on the same link, by answering for it, announcing it or speaking from it, the MAC that had it loses it there at once, and doesn't keep it for the rest of its lifetime. A router's neighbor table works the same way: an address it reports at another MAC leaves the one it reported before. This happens when a device takes the place of another, a container is made again with a new MAC, or a virtual address goes to the other machine of a pair.
+
+- **A host left with no address is gone**, and its names go with it.
+- **The newest sighting wins.** A neighbor table read later, whose entry still has the old MAC from before the move, doesn't bring the address back.
+- **Nothing moves where an address can be at two MACs:** between two links, between two reporters, or in DHCP leases, which keep an address after its device left. This machine's own addresses never move.
+- **Two devices with the same address** make it move each time either one is seen. The log warns of it once in ten minutes: `address moves back and forth between two MACs`.
+
 The active discovery probes again every `rediscover`. By default that is a third of the shortest lifetime among the families that probe, so a quiet host is probed before it expires.
 
 A name stays for the `lifetime` of `hostnames`, in the same way: see [names](#the-lifetime).

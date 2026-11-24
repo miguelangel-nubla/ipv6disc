@@ -112,6 +112,27 @@ func (c *AddrCollection) removeSelf(ip netip.Addr, iface string) (addr *Addr, re
 	return addr, removed, len(c.addresses) == 0
 }
 
+// moveOff is State.moveOff, of the collection of a MAC other than the one that showed ip: it
+// returns the address if it moved off this one, whether it was taken out, and whether the
+// collection is left empty.
+func (c *AddrCollection) moveOff(ip netip.Addr, scope moveScope, seen time.Time) (addr *Addr, removed bool, empty bool) {
+	c.addressesMutex.Lock()
+	defer c.addressesMutex.Unlock()
+
+	key := ip.Unmap().WithZone("").String()
+	if existing, ok := c.addresses[key]; ok {
+		if moved, gone := existing.movesOff(scope, seen); moved {
+			addr = existing
+			if gone {
+				existing.Unwatch()
+				delete(c.addresses, key)
+				removed = true
+			}
+		}
+	}
+	return addr, removed, len(c.addresses) == 0
+}
+
 // Join adds the addresses of addrCollection to c. It locks c, then addrCollection, as Equal does:
 // two collections must not be joined, or compared, both ways at once.
 func (c *AddrCollection) Join(addrCollection *AddrCollection) {
