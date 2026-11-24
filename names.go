@@ -363,6 +363,11 @@ func (s *State) has(hw net.HardwareAddr, ip netip.Addr, iface string) bool {
 // from ip on the local interface iface: the one that interface saw it at, or without one the only
 // one there is. An address at two MACs, as a link-local one on two links, is nobody's when the
 // interface doesn't tell them apart.
+//
+// Where the interface saw it at two MACs, it is at the one it saw it at last: the address moved,
+// as to a device that took the place of another, or a container made again with a new MAC, and
+// the one it left keeps it until its lifetime ends. Seen at both at the same time, it is still
+// nobody's.
 func (s *State) macOf(ip netip.Addr, iface string) (net.HardwareAddr, bool) {
 	key := ip.Unmap().WithZone("").String()
 	var local, any []*Addr
@@ -387,6 +392,22 @@ func (s *State) macOf(ip netip.Addr, iface string) (net.HardwareAddr, bool) {
 		return local[0].Hw, true
 	case len(local) == 0 && len(any) == 1:
 		return any[0].Hw, true
+	case len(local) > 1:
+		var latest *Addr
+		var latestSeen time.Time
+		tied := false
+		for _, addr := range local {
+			seen := addr.lastSeenOn(iface)
+			switch {
+			case seen.After(latestSeen):
+				latest, latestSeen, tied = addr, seen, false
+			case seen.Equal(latestSeen):
+				tied = true
+			}
+		}
+		if latest != nil && !tied {
+			return latest.Hw, true
+		}
 	}
 	return nil, false
 }

@@ -108,6 +108,20 @@ func (a *Addr) Interfaces() []string {
 	return interfaces
 }
 
+// lastSeenOn is when the address was last seen on the local interface iface, of its records that
+// count: the zero time when it wasn't.
+func (a *Addr) lastSeenOn(iface string) time.Time {
+	a.mutex.RLock()
+	defer a.mutex.RUnlock()
+	var last time.Time
+	for _, r := range a.liveRecords(time.Now()) {
+		if r.On == iface && r.LastSeen.After(last) {
+			last = r.LastSeen
+		}
+	}
+	return last
+}
+
 // FirstSeen is when the address was first seen, of its records that count.
 func (a *Addr) FirstSeen() time.Time {
 	a.mutex.RLock()

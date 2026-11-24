@@ -466,7 +466,8 @@ func TestNamesRefreshedAtExpiration(t *testing.T) {
 }
 
 // The MAC of an address is the one the state has it at, among the valid ones: the one the
-// interface saw it at when two have it, and nobody's when that doesn't tell them apart.
+// interface saw it at when two have it, the one it saw it at last when it saw it at both, and
+// nobody's when that doesn't tell them apart.
 func TestMacOf(t *testing.T) {
 	state := NewState()
 	state.SetFamilies(true, true)
@@ -477,6 +478,11 @@ func TestMacOf(t *testing.T) {
 	state.registerLocal(namedMAC, netip.MustParseAddr("192.168.1.20"), Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, time.Hour, nil)
 	state.Register(otherMAC, netip.MustParseAddr("2001:db8::21"), "router", time.Hour, nil)
 	expired, _ := state.registerLocal(otherMAC, netip.MustParseAddr("2001:db8::22"), Record{Protocol: ProtocolNDP, Way: Heard, On: "eth0"}, time.Hour, nil)
+	// An address that moved: seen at otherMAC, then at namedMAC, on the same interface.
+	moved := netip.MustParseAddr("192.168.1.30")
+	state.registerLocal(otherMAC, moved, Record{Protocol: ProtocolARP, Way: Answered, On: "eth0"}, time.Hour, nil)
+	time.Sleep(2 * time.Millisecond)
+	state.registerLocal(namedMAC, moved, Record{Protocol: ProtocolARP, Way: Announced, On: "eth0"}, time.Hour, nil)
 	expired.mutex.Lock()
 	expired.expirationTime = time.Now().Add(-time.Second)
 	expired.mutex.Unlock()
@@ -495,6 +501,8 @@ func TestMacOf(t *testing.T) {
 		{"2001:db8::21", "eth0", otherMAC}, // a plugin's
 		{"2001:db8::22", "eth0", nil},      // expired
 		{"2001:db8::99", "eth0", nil},
+		{"192.168.1.30", "eth0", namedMAC}, // where it was seen last
+		{"192.168.1.30", "eth1", nil},      // at two MACs, on neither interface
 	} {
 		got, ok := state.macOf(netip.MustParseAddr(tt.ip), tt.iface)
 		if ok != (tt.want != nil) || got.String() != tt.want.String() {
