@@ -526,3 +526,18 @@ func TestPrettyPrintNames(t *testing.T) {
 		}
 	}
 }
+
+// The summary counts one host and one address in the singular.
+func TestCounted(t *testing.T) {
+	for n, want := range map[int]string{0: "0 hosts", 1: "1 host", 2: "2 hosts"} {
+		if got := counted(n, "host", "hosts"); got != want {
+			t.Errorf("counted(%d) = %q, want %q", n, got, want)
+		}
+	}
+	state := NewState()
+	defer state.Close()
+	state.Register(namedMAC, netip.MustParseAddr("2001:db8::1"), "eth0", time.Hour, nil)
+	if got := state.PrettyPrint("", false); !strings.Contains(got, "Discovery: 1 host, 0 named, 1 address\n") {
+		t.Errorf("the summary of one host:\n%s", got)
+	}
+}

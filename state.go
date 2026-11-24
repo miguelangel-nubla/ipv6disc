@@ -586,7 +586,7 @@ func (s *State) Page(prefix string) pretty.Page {
 		}
 	}
 	var t pretty.Table
-	t.Spans(pretty.As(pretty.Heading, "Discovery:"), pretty.Span{Text: fmt.Sprintf(" %d hosts, %d named, %d addresses", len(s.macs), named, addresses)})
+	t.Spans(pretty.As(pretty.Heading, "Discovery:"), pretty.Span{Text: fmt.Sprintf(" %s, %d named, %s", counted(len(s.macs), "host", "hosts"), named, counted(addresses, "address", "addresses"))})
 	now := time.Now()
 	for _, mac := range slices.Sorted(maps.Keys(s.macs)) {
 		t.Line("    " + mac)
@@ -609,4 +609,12 @@ func NewState() *State {
 	return &State{
 		macs: make(map[string]*AddrCollection),
 	}
+}
+
+// counted is n with the word for one, or for any other number: 1 host, 2 hosts, 0 hosts.
+func counted(n int, one, many string) string {
+	if n == 1 {
+		return "1 " + one
+	}
+	return fmt.Sprintf("%d %s", n, many)
 }
