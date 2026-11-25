@@ -231,7 +231,7 @@ func TestDiscoverErrors(t *testing.T) {
 		{"a wrong password", os, Config{Username: "admin", Password: "wrong"}, "logging in: HTTP 403: the username or the password is refused"},
 		{"a wrong password, self-hosted", self, Config{Username: "admin", Password: "wrong"}, "logging in: HTTP 400: the username or the password is refused"},
 		{"a key, self-hosted", self, Config{APIKey: "the-key"}, "a self-hosted Network Application needs username and password"},
-		{"another site", os, Config{APIKey: "the-key", Site: "other"}, `HTTP 404: no site "other" here`},
+		{"another site", os, Config{APIKey: "the-key", Site: "other"}, `HTTP 404: not here: the site "other"`},
 		{"another certificate", os, Config{APIKey: "the-key", TLSFingerprint: strings.Repeat("0", 64)}, "tls fingerprint mismatch"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -262,13 +262,13 @@ func TestParseConfig(t *testing.T) {
 	}
 	for config, want := range map[string]string{
 		"60s":                                   "invalid unifi config format",
-		"60s,https://u":                         "needs api_key, or username and password",
+		"60s,https://u":                         "give api_key, an API key of UniFi OS, or username and password",
 		"often,https://u,k,,":                   "invalid interval format",
 		"0s,https://u,k,,":                      "it must be positive",
-		"60s,,k,,":                              "needs its address",
+		"60s,,k,,":                              "no address",
 		"60s,192.168.1.1,k,,":                   "invalid address",
 		"60s,https://u,k,admin,p":               "not both",
-		"60s,https://u,,admin,":                 "needs api_key, or username and password",
+		"60s,https://u,,admin,":                 "give api_key, an API key of UniFi OS, or username and password",
 		"60s,https://u,k,,,default,abc":         "invalid tls_fingerprint",
 		"60s,https://u,k,,,default,abc,toomany": "invalid unifi config format",
 	} {
