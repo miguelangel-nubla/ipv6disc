@@ -10,7 +10,7 @@ require (
 	github.com/nsf/termbox-go v1.1.2
 	github.com/stretchr/testify v1.12.1
 	go.uber.org/zap v1.28.0
-	go.yaml.in/yaml/v2 v2.4.2
+	go.yaml.in/yaml/v2 v2.4.5
 	golang.org/x/crypto v0.59.0
 	golang.org/x/net v0.63.0
 	golang.org/x/sys v0.50.0
