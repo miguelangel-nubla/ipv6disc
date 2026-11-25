@@ -36,6 +36,8 @@ On another system, `tools/live-test.sh` runs the live test with Docker, in a pri
 
 The `unifi` plugin has a live test of its own, against a real UniFi Network: `tools/live-unifi.sh` runs it against a self-hosted UniFi Network Application in a container, of the version pinned there, and CI runs it too. Against UniFi OS, set `IPV6DISC_LIVE_UNIFI` to the plugin's params by name, one server a line, and run `go test -run TestLiveUniFi ./pkg/plugins/unifi`: ipv6ddns's `tools/unifi-os-server.sh` sets up UniFi OS Server on a Linux machine. Neither has a gateway, so they list no clients: the test checks the login and the request, not what a real gateway lists.
 
+Against a real console with a gateway, run the test with `-v`: it logs each client the gateway lists, with its MAC, its IPv4 address, its names, and every field of it whose name has IPv6. That shows what UniFi gives of the clients' IPv6 addresses, which no test server can: a report of it, with the MACs and addresses masked as you like, is welcome.
+
 ### What the live tests cover
 
 The live tests check what only a real socket can show:
