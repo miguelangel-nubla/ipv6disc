@@ -4,7 +4,7 @@
 [![release](https://img.shields.io/github/v/release/miguelangel-nubla/ipv6disc)](https://github.com/miguelangel-nubla/ipv6disc/releases/latest)
 [![Go Reference](https://pkg.go.dev/badge/github.com/miguelangel-nubla/ipv6disc.svg)](https://pkg.go.dev/github.com/miguelangel-nubla/ipv6disc)
 
-`ipv6disc` finds the hosts on the local network and their addresses, each with its MAC, over IPv6 and IPv4. It listens to the network, probes it, and reads routers' neighbor tables. The name dates from when it was IPv6 only.
+`ipv6disc` finds the hosts on the local network and their addresses, each with its MAC, over IPv6 and IPv4. It listens to the network, probes it, and reads routers' neighbor tables, and the clients a UniFi gateway knows. The name dates from when it was IPv6 only.
 
 It also learns the hosts' names, through each protocol that is turned on:
 
@@ -70,7 +70,7 @@ IPv6 local discovery needs root or `CAP_NET_RAW`. In Docker it also needs the ho
 The Docker image contains only the binary:
 
 - Mount the configuration file into the container, along with any file a plugin reads, such as an `identity_file`.
-- The image has no CA certificates. So a mikrotik plugin with `use_tls: true` needs its [`tls_fingerprint`](docs/plugins.md#a-mikrotik-user) there.
+- The image has no CA certificates. So a mikrotik plugin with `use_tls: true`, and a unifi plugin, need their `tls_fingerprint` there: see [a Mikrotik user](docs/plugins.md#a-mikrotik-user) and [UniFi](docs/plugins.md#unifi).
 
 ### The log
 
@@ -106,7 +106,7 @@ The two times on each line are how long it has left before it expires, and how l
 | | |
 |---|---|
 | [Discovery](docs/discovery.md) | How hosts are found: the families, each protocol, interfaces, lifetimes, solicitation, and names |
-| [Plugins](docs/plugins.md) | Reading routers' neighbor tables, and the names in their DHCP leases |
+| [Plugins](docs/plugins.md) | Reading routers' neighbor tables and the names in their DHCP leases, or a UniFi gateway's clients |
 | [The library](docs/library.md) | Using it from Go |
 | [Configuration reference](docs/reference/configuration.md) | Every key of the configuration file, generated from its schema |
 | [Flags reference](docs/reference/cli.md) | The three flags, generated from the code |

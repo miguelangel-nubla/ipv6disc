@@ -268,8 +268,8 @@ func TestParseErrors(t *testing.T) {
 		{"two documents", "ipv4:\n  enabled: true\n---\nipv4:\n  enabled: false\n", []string{"the configuration is more than one YAML document: it is one, without a --- after it"}},
 		{"what is no YAML", "ipv4: {enabled", []string{"not YAML: yaml: line 1: did not find expected ',' or '}'"}},
 
-		{"a plugin without its type", "plugins:\n  router:\n    address: 192.168.1.1", []string{"plugins.router: a plugin has a type: one of freebsd, linux, mikrotik"}},
-		{"a plugin of a type there is none of", "plugins:\n  router:\n    type: cisco", []string{`plugins.router.type: no such type of plugin, "cisco": they are freebsd, linux, mikrotik`}},
+		{"a plugin without its type", "plugins:\n  router:\n    address: 192.168.1.1", []string{"plugins.router: a plugin has a type: one of freebsd, linux, mikrotik, unifi"}},
+		{"a plugin of a type there is none of", "plugins:\n  router:\n    type: cisco", []string{`plugins.router.type: no such type of plugin, "cisco": they are freebsd, linux, mikrotik, unifi`}},
 		{"a field its type doesn't have", "plugins:\n  router:\n    type: linux\n    interval: 60s\n    address: 192.168.1.1\n    username: root\n    password: x\n    use_tls: true",
 			[]string{"plugins.router.use_tls: no such field of a linux plugin: it has interval, address, username, password, identity_file, host_key"}},
 		{"a plugin without what it needs", "plugins:\n  router:\n    type: mikrotik\n    interval: 60s",

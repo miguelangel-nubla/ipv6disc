@@ -213,4 +213,4 @@ Of either family. Asks DNS servers for each address's name, its PTR record, incl
 
 The plugins, by name. Each reads the neighbor tables of a router or another host, and its DHCP leases: the names in them, and that an address found otherwise is leased. The plugin's name is the source of what it finds.
 
-Each has its `type`, one of `freebsd`, `linux`, `mikrotik`, and the fields of that type, which the [plugins reference](plugins.md) lists.
+Each has its `type`, one of `freebsd`, `linux`, `mikrotik`, `unifi`, and the fields of that type, which the [plugins reference](plugins.md) lists.

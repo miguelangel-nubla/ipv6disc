@@ -1,6 +1,6 @@
 # Plugins
 
-A plugin reads the neighbor table of another host, usually a router, every `interval`, and registers the entries. It also reads that host's DHCP [leases](#leases).
+A plugin reads the neighbor table of another host, usually a router, every `interval`, and registers the entries. It also reads that host's DHCP [leases](#leases). A `unifi` plugin reads, instead, the clients a UniFi gateway knows are connected: see [UniFi](#unifi).
 
 Use a plugin to find the hosts of networks the local discovery doesn't reach, such as other VLANs. Or use plugins to find all hosts, where the local discovery can't run.
 
@@ -17,7 +17,7 @@ plugins:
 
 Each key of `plugins`, in the [configuration file](reference/configuration.md#plugins), is one plugin. The key is the plugin's name, and that name is the source of everything the plugin finds. You can have any number of plugins, for several hosts.
 
-- Each plugin has a `type`: `linux`, `freebsd` or `mikrotik`. It also has the fields of that type, which are listed in the [plugins reference](reference/plugins.md).
+- Each plugin has a `type`: `linux`, `freebsd`, `mikrotik` or `unifi`. It also has the fields of that type, which are listed in the [plugins reference](reference/plugins.md).
 - A field the type doesn't have, or a value of the wrong type, is an error at start.
 - A password is taken exactly as written, including its spaces. Put it in quotes when YAML would read it as something else, such as a password made of digits only.
 
@@ -103,6 +103,38 @@ openssl s_client -connect 192.168.88.1:8729 </dev/null 2>/dev/null | openssl x50
 ```
 
 To verify a certificate from a public CA in the Docker image instead, mount the host's CAs into the container: `-v /etc/ssl/certs:/etc/ssl/certs:ro`.
+
+## UniFi
+
+A `unifi` plugin reads the clients that a UniFi gateway's UniFi Network has connected now, UniFi's own devices included, through the UniFi Network API. It works with a UniFi OS console, such as a UDM, UDR, UCG or UXG, with UniFi OS Server, and with a self-hosted UniFi Network Application.
+
+```yaml
+plugins:
+  gateway:
+    type: unifi
+    interval: 60s
+    address: https://192.168.1.1
+    api_key: your-api-key
+    tls_fingerprint: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+```
+
+What it registers, of each client:
+
+- **Its IPv4 address**, with `ipv4` enabled, and **its IPv6 addresses**, where UniFi has them: as from the gateway's neighbors, since the clients listed are those connected now. UniFi doesn't always know a client's IPv6 addresses, privacy ones in particular: the local discovery, or a plugin of the router's neighbor table, finds those.
+- **Two [names](discovery.md#names)**, when names are on: the host name the client gave the gateway's DHCP server, and the name you gave it in UniFi, as a lease's name. Each is cleaned like any name: spaces become hyphens, and a name with a character no name has, such as an apostrophe, is left out.
+
+To log in:
+
+- **A UniFi OS console, or UniFi OS Server:** an `api_key`, which a console makes under Settings, Control Plane, Integrations. Or a `username` and `password`.
+- **A self-hosted Network Application:** a `username` and `password`. It has no API keys.
+
+The user only reads: give it a role that can't change anything. A user with two-factor authentication can't log in. The `site` is `default` unless you made others.
+
+A console's certificate is its own, so give its `tls_fingerprint`, which the certificate is then checked by, alone:
+
+```
+openssl s_client -connect 192.168.1.1:443 </dev/null 2>/dev/null | openssl x509 -noout -fingerprint -sha256
+```
 
 ## Writing one
 
