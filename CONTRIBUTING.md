@@ -34,6 +34,8 @@ The command is built next to the test, because the test runs two copies of it at
 
 On another system, `tools/live-test.sh` runs the live test with Docker, in a privileged container that is thrown away afterwards. It also runs the other tests under the race detector.
 
+The `unifi` plugin has a live test of its own, against a real UniFi Network: `tools/live-unifi.sh` runs it against a self-hosted UniFi Network Application in a container, of the version pinned there, and CI runs it too. Against UniFi OS, set `IPV6DISC_LIVE_UNIFI` to the plugin's params by name, one server a line, and run `go test -run TestLiveUniFi ./pkg/plugins/unifi`: ipv6ddns's `tools/unifi-os-server.sh` sets up UniFi OS Server on a Linux machine. Neither has a gateway, so they list no clients: the test checks the login and the request, not what a real gateway lists.
+
 ### What the live tests cover
 
 The live tests check what only a real socket can show:
