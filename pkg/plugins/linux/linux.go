@@ -152,8 +152,10 @@ func (p *LinuxPlugin) parseNeighbors(output string, state *ipv6disc.State) (int,
 			continue
 		}
 
+		// An address the table lists twice, as with two MACs, is one neighbor: its last MAC's.
+		_, listed := neighbors[ip.Unmap().WithZone("")]
 		neighbors[ip.Unmap().WithZone("")] = hw
-		if _, existing := state.Report(hw, ip, p.Name(), "linux", ipv6disc.FromNeighbors, p.lifetime, nil); !existing {
+		if _, existing := state.Report(hw, ip, p.Name(), "linux", ipv6disc.FromNeighbors, p.lifetime, nil); !existing && !listed {
 			count++
 		}
 	}

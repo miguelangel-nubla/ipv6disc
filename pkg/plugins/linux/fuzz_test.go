@@ -11,6 +11,8 @@ import (
 func FuzzParseNDPOutput(f *testing.F) {
 	f.Add("fe80::1 dev eth0 lladdr 00:1a:2b:3c:4d:08 STALE\n2001:db8::2 dev eth0  FAILED\n")
 	f.Add("2001:db8::1 dev eth0 lladdr 00:1a:2b:3c:4d:09 router REACHABLE\nlladdr\n lladdr lladdr lladdr lladdr lladdr\n")
+	// One address, listed with two MACs: one neighbor, as the nightly fuzzing found of FreeBSD's.
+	f.Add("2001:db8::1 dev eth0 lladdr 00:1a:2b:3c:4d:01 REACHABLE\n2001:db8::1 dev eth0 lladdr 00:1a:2b:3c:4d:02 REACHABLE\n")
 	f.Fuzz(func(t *testing.T, output string) {
 		state := ipv6disc.NewState()
 		plugin := &LinuxPlugin{name: "test", lifetime: time.Hour}
