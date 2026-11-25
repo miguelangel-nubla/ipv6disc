@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/go-routeros/routeros/v3 v3.0.1
 	github.com/google/uuid v1.6.0
-	github.com/mattn/go-runewidth v0.0.19
+	github.com/mattn/go-runewidth v0.0.31
 	github.com/mdlayher/ndp v1.1.0
 	github.com/nsf/termbox-go v1.1.2
 	github.com/stretchr/testify v1.12.1
